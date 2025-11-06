@@ -285,9 +285,58 @@ foreach ($ComponentProp in $Components) {
         }
     }
     
+
     # Extract component
     try {
-        Expand-Archive -Path $ComponentZip -DestinationPath $InstallPath -Force
+        # Extract to a temp location first to check for unwanted nested paths
+        $TempExtractDir = Join-Path $env:TEMP "rfq_extract_$ComponentName"
+        if (Test-Path $TempExtractDir) {
+            Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
+        
+        Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force
+        
+        # Check if there's an unwanted nested directory structure
+        # Look for expected files (RFQ_Application.exe or _internal directory) at the root
+        $rootExe = Get-ChildItem -Path $TempExtractDir -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $rootInternal = Test-Path (Join-Path $TempExtractDir "_internal")
+        
+        if (-not $rootExe -and -not $rootInternal) {
+            # Files are nested, find the actual content directory
+            Write-Info "    Detected nested directory structure, flattening..."
+            $contentDir = $null
+            
+            # Search for directory containing .exe or _internal
+            $allDirs = Get-ChildItem -Path $TempExtractDir -Recurse -Directory
+            foreach ($dir in $allDirs) {
+                $hasExe = Get-ChildItem -Path $dir.FullName -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                $hasInternal = Test-Path (Join-Path $dir.FullName "_internal")
+                if ($hasExe -or $hasInternal) {
+                    $contentDir = $dir.FullName
+                    break
+                }
+            }
+            
+            if ($contentDir) {
+                # Move content from nested directory to root
+                Get-ChildItem -Path $contentDir | Move-Item -Destination $TempExtractDir -Force
+                # Remove empty nested directories
+                $parentDir = Split-Path $contentDir -Parent
+                while ($parentDir -and $parentDir -ne $TempExtractDir) {
+                    if ((Get-ChildItem -Path $parentDir -ErrorAction SilentlyContinue).Count -eq 0) {
+                        Remove-Item $parentDir -Force -ErrorAction SilentlyContinue
+                    }
+                    $parentDir = Split-Path $parentDir -Parent
+                }
+            }
+        }
+        
+        # Copy all files from temp to install path
+        Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
+        
+        # Cleanup temp directory
+        Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     catch {
         Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
