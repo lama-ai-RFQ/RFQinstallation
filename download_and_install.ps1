@@ -214,8 +214,15 @@ foreach ($ComponentProp in $Components) {
     $ComponentName = $ComponentProp.Name
     $ComponentInfo = $ComponentProp.Value
     
+    # Check if component has any files
+    if (!$ComponentInfo.files -or $ComponentInfo.files.Count -eq 0) {
+        Write-Warning "  [$CurrentComponent/$TotalComponents] Skipping $ComponentName (no files in component)"
+        continue
+    }
+    
     Write-Info "  [$CurrentComponent/$TotalComponents] Downloading: $ComponentName"
     
+    $filesDownloaded = 0
     foreach ($FileInfo in $ComponentInfo.files) {
         $Filename = $FileInfo.filename
         
@@ -223,8 +230,8 @@ foreach ($ComponentProp in $Components) {
         $Asset = $Release.assets | Where-Object { $_.name -eq $Filename } | Select-Object -First 1
         
         if (!$Asset) {
-            Write-Error-Custom "ERROR: Asset not found: $Filename"
-            exit 1
+            Write-Warning "  [!] Asset not found: $Filename (component may be empty, skipping)"
+            continue
         }
         
         # Download file
@@ -236,11 +243,16 @@ foreach ($ComponentProp in $Components) {
             $ProgressPreference = 'SilentlyContinue'
             Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
             $ProgressPreference = 'Continue'
+            $filesDownloaded++
         }
         catch {
-            Write-Error-Custom "ERROR: Failed to download $Filename : $_"
-            exit 1
+            Write-Warning "  [!] Failed to download $Filename : $_ (skipping)"
+            continue
         }
+    }
+    
+    if ($filesDownloaded -eq 0) {
+        Write-Warning "  [!] No files downloaded for $ComponentName (component may be empty)"
     }
 }
 
@@ -254,11 +266,39 @@ foreach ($ComponentProp in $Components) {
     $ComponentInfo = $ComponentProp.Value
     $Files = $ComponentInfo.files
     
+    # Skip components with no files
+    if (!$Files -or $Files.Count -eq 0) {
+        Write-Info "  Skipping $ComponentName (no files to extract)"
+        continue
+    }
+    
+    # Check if any files were actually downloaded
+    $hasDownloadedFiles = $false
+    foreach ($FileInfo in $Files) {
+        $Filename = $FileInfo.filename
+        $FilePath = Join-Path $TempDownloadDir $Filename
+        if (Test-Path $FilePath) {
+            $hasDownloadedFiles = $true
+            break
+        }
+    }
+    
+    if (!$hasDownloadedFiles) {
+        Write-Info "  Skipping $ComponentName (no files downloaded)"
+        continue
+    }
+    
     Write-Info "  Extracting: $ComponentName"
     
     if ($Files.Count -eq 1) {
         # Single file, extract directly
         $ComponentZip = Join-Path $TempDownloadDir $Files[0].filename
+        
+        # Check if file exists (may have been skipped if empty)
+        if (!(Test-Path $ComponentZip)) {
+            Write-Info "    Skipping extraction (file not downloaded - component may be empty)"
+            continue
+        }
     }
     else {
         # Multi-part, rejoin first
@@ -266,6 +306,21 @@ foreach ($ComponentProp in $Components) {
         
         # Sort by part number
         $PartFiles = $Files | Sort-Object { [int]($_.filename -replace '.*\.part(\d+)', '$1') }
+        
+        # Check if all parts exist
+        $allPartsExist = $true
+        foreach ($PartFile in $PartFiles) {
+            $PartPath = Join-Path $TempDownloadDir $PartFile.filename
+            if (!(Test-Path $PartPath)) {
+                $allPartsExist = $false
+                break
+            }
+        }
+        
+        if (!$allPartsExist) {
+            Write-Info "    Skipping extraction (some parts not downloaded - component may be empty)"
+            continue
+        }
         
         # Output file name (remove .part1 extension)
         $OutputFilename = $PartFiles[0].filename -replace '\.part\d+$', ''
