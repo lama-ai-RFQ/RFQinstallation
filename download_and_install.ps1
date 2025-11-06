@@ -456,6 +456,285 @@ RFQ_USER_PASSWORD=your_database_password_here
 $VersionPath = Join-Path $InstallPath "version.txt"
 Set-Content -Path $VersionPath -Value $Version -Force
 
+# Download Mistral model (optional)
+Write-Info "`nModel download..."
+Write-Info "The application requires the Mistral-7B-Instruct-v0.3 language model."
+Write-Info "This is a large download (~4-5 GB) and may take some time."
+Write-Info ""
+Write-Info "Options:"
+Write-Info "  [Y] Yes - Download now (recommended)"
+Write-Info "  [n] No - Skip download (you can download later)"
+Write-Info ""
+$downloadModel = Read-Host "Would you like to download the model now? (Y/n)"
+
+if ($downloadModel -ne 'n' -and $downloadModel -ne 'N') {
+    Write-Info ""
+    Write-Info "Please choose where to download the model:"
+    Write-Info "  - The model will be downloaded to a subdirectory in your chosen location"
+    Write-Info "  - Default: $env:USERPROFILE\Documents\RFQ_Models"
+    Write-Info ""
+    
+    $defaultModelPath = Join-Path $env:USERPROFILE "Documents\RFQ_Models"
+    $modelBasePath = Read-Host "Enter model download directory (press Enter for default: $defaultModelPath)"
+    
+    if ([string]::IsNullOrWhiteSpace($modelBasePath)) {
+        $modelBasePath = $defaultModelPath
+    }
+    
+    # Normalize the path
+    $modelBasePath = [System.IO.Path]::GetFullPath($modelBasePath)
+    
+    # Create directory if it doesn't exist
+    if (!(Test-Path $modelBasePath)) {
+        try {
+            New-Item -ItemType Directory -Path $modelBasePath -Force | Out-Null
+            Write-Success "[OK] Created directory: $modelBasePath"
+        }
+        catch {
+            Write-Error-Custom "ERROR: Failed to create directory: $_"
+            Write-Info "Skipping model download"
+            $downloadModel = 'n'
+        }
+    }
+    
+    if ($downloadModel -ne 'n') {
+        # Model will be downloaded to a subdirectory
+        $modelDir = Join-Path $modelBasePath "Mistral-7B-Instruct-v0-3"
+        $modelPath = $modelBasePath  # MODEL_PATH should point to the base directory
+        
+        Write-Info ""
+        Write-Info "Downloading Mistral-7B-Instruct-v0.3 model from AWS S3..."
+        Write-Info "  Bucket: rfq-models"
+        Write-Info "  Destination: $modelDir"
+        Write-Info "  This may take 10-30 minutes depending on your internet connection..."
+        Write-Info ""
+        
+        # Read AWS credentials from .env file
+        $awsKey = ""
+        $awsSecret = ""
+        $awsRegion = "us-east-1"  # Default region
+        
+        if (Test-Path $EnvPath) {
+            $EnvContent = Get-Content $EnvPath -Raw
+            if ($EnvContent -match "AWS_KEY\s*=\s*([^\r\n]+)") {
+                $awsKey = $matches[1].Trim()
+            }
+            if ($EnvContent -match "AWS_SECRET\s*=\s*([^\r\n]+)") {
+                $awsSecret = $matches[1].Trim()
+            }
+            if ($EnvContent -match "AWS_REGION\s*=\s*([^\r\n]+)") {
+                $awsRegion = $matches[1].Trim()
+            }
+        }
+        
+        # Prompt for AWS credentials if not found
+        if ([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) {
+            Write-Info ""
+            Write-Info "AWS credentials required for model download"
+            Write-Info "============================================="
+            Write-Info ""
+            Write-Info "The model is stored in AWS S3 and requires credentials to download."
+            Write-Info ""
+            
+            if ([string]::IsNullOrWhiteSpace($awsKey)) {
+                $awsKey = Read-Host "Enter AWS Access Key ID"
+            }
+            if ([string]::IsNullOrWhiteSpace($awsSecret)) {
+                $awsSecret = Read-Host "Enter AWS Secret Access Key" -AsSecureString
+                $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($awsSecret)
+                $awsSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+            }
+            
+            $regionInput = Read-Host "Enter AWS Region (press Enter for us-east-1)"
+            if (![string]::IsNullOrWhiteSpace($regionInput)) {
+                $awsRegion = $regionInput.Trim()
+            }
+            
+            # Save credentials to .env file
+            if (Test-Path $EnvPath) {
+                $EnvContent = Get-Content $EnvPath -Raw
+                $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$awsKey"
+                $EnvContent = $EnvContent -replace "AWS_SECRET=.*", "AWS_SECRET=$awsSecret"
+                $EnvContent = $EnvContent -replace "AWS_REGION=.*", "AWS_REGION=$awsRegion"
+                
+                # Add if they don't exist
+                if ($EnvContent -notmatch "AWS_KEY") {
+                    $EnvContent += "`nAWS_KEY=$awsKey"
+                }
+                if ($EnvContent -notmatch "AWS_SECRET") {
+                    $EnvContent += "`nAWS_SECRET=$awsSecret"
+                }
+                if ($EnvContent -notmatch "AWS_REGION") {
+                    $EnvContent += "`nAWS_REGION=$awsRegion"
+                }
+                
+                Set-Content -Path $EnvPath -Value $EnvContent -Force
+                Write-Success "[OK] AWS credentials saved to .env file"
+            }
+        }
+        else {
+            # Create a temporary Python script to download the model from S3
+            $downloadScript = Join-Path $env:TEMP "download_mistral_model_s3.py"
+            $scriptContent = @"
+import os
+import sys
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+
+try:
+    print("Starting model download from AWS S3...")
+    print(f"Bucket: rfq-models")
+    print(f"Region: $awsRegion")
+    print(f"Destination: $modelDir")
+    
+    # Create destination directory
+    os.makedirs(r"$modelDir", exist_ok=True)
+    
+    # Initialize S3 client
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=r"$awsKey",
+        aws_secret_access_key=r"$awsSecret",
+        region_name=r"$awsRegion"
+    )
+    
+    bucket_name = "rfq-models"
+    model_prefix = "Mistral-7B-Instruct-v0-3/"
+    
+    # List all objects in the model directory
+    print("Listing model files in S3...")
+    paginator = s3.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=bucket_name, Prefix=model_prefix)
+    
+    files_downloaded = 0
+    total_size = 0
+    
+    for page in pages:
+        if 'Contents' not in page:
+            continue
+            
+        for obj in page['Contents']:
+            key = obj['Key']
+            size = obj['Size']
+            
+            # Skip directories
+            if key.endswith('/'):
+                continue
+            
+            # Get relative path from model prefix
+            relative_path = key[len(model_prefix):]
+            local_path = os.path.join(r"$modelDir", relative_path)
+            
+            # Create subdirectories if needed
+            local_dir = os.path.dirname(local_path)
+            if local_dir:
+                os.makedirs(local_dir, exist_ok=True)
+            
+            # Download file
+            print(f"Downloading: {relative_path} ({size / 1024 / 1024:.2f} MB)")
+            s3.download_file(bucket_name, key, local_path)
+            files_downloaded += 1
+            total_size += size
+    
+    if files_downloaded == 0:
+        print("")
+        print("WARNING: No files found in S3 bucket. Check bucket name and prefix.")
+        sys.exit(1)
+    
+    print("")
+    print(f"SUCCESS: Model downloaded successfully!")
+    print(f"Files downloaded: {files_downloaded}")
+    print(f"Total size: {total_size / 1024 / 1024 / 1024:.2f} GB")
+    print(f"Model location: $modelDir")
+    sys.exit(0)
+    
+except NoCredentialsError:
+    print("")
+    print("ERROR: AWS credentials not found or invalid")
+    print("Please check AWS_KEY, AWS_SECRET, and AWS_REGION in .env file")
+    sys.exit(1)
+except ClientError as e:
+    print("")
+    print(f"ERROR: AWS S3 error: {e}")
+    sys.exit(1)
+except Exception as e:
+    print("")
+    print(f"ERROR: Failed to download model: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+"@
+            
+            Set-Content -Path $downloadScript -Value $scriptContent -Encoding UTF8
+            
+            # Check if Python is available
+            $pythonFound = Get-Command python -ErrorAction SilentlyContinue
+            
+            if (!$pythonFound) {
+                Write-Warning "[!] Python not found in PATH"
+                Write-Info "  The model download requires Python and the boto3 package"
+                Write-Info "  Please install Python and run the download manually:"
+                Write-Info "    pip install boto3"
+                Write-Info "    python $downloadScript"
+            }
+            else {
+                # Check if boto3 is installed
+                $boto3Check = python -c "import boto3; print('OK')" 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Info "Installing boto3 package..."
+                    python -m pip install boto3 --quiet
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warning "[!] Failed to install boto3"
+                        Write-Info "  Please install it manually: pip install boto3"
+                        Write-Info "  Then run: python $downloadScript"
+                    }
+                }
+                
+                # Run the download script
+                Write-Info "Running model download script..."
+                python $downloadScript
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "[OK] Model downloaded successfully from S3"
+                    
+                    # Update MODEL_PATH in .env file
+                    if (Test-Path $EnvPath) {
+                        $EnvContent = Get-Content $EnvPath -Raw
+                        # Update MODEL_PATH - handle both Windows and Unix-style paths
+                        $modelPathNormalized = $modelPath.Replace('\', '/')
+                        $EnvContent = $EnvContent -replace "MODEL_PATH=.*", "MODEL_PATH=$modelPathNormalized"
+                        Set-Content -Path $EnvPath -Value $EnvContent -Force
+                        Write-Success "[OK] Updated MODEL_PATH in .env file: $modelPathNormalized"
+                    }
+                }
+                else {
+                    Write-Warning "[!] Model download failed or was interrupted"
+                    Write-Info "  You can download it later using:"
+                    Write-Info "    python $downloadScript"
+                }
+                
+                # Cleanup
+                Remove-Item $downloadScript -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+} else {
+    Write-Host ""
+    Write-Host "WARNING: Model download skipped" -ForegroundColor Yellow
+    Write-Host "=================================" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "The application requires the Mistral-7B-Instruct-v0.3 model to function." -ForegroundColor Yellow
+    Write-Host "Without the model, language processing features will not work." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "To download the model later:" -ForegroundColor Cyan
+    Write-Host "  1. Ensure AWS credentials (AWS_KEY, AWS_SECRET, AWS_REGION) are in .env" -ForegroundColor Cyan
+    Write-Host "  2. Run the model download script or use model_downloader.py" -ForegroundColor Cyan
+    Write-Host "  3. Configure MODEL_PATH in .env to point to the model directory" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Model location: AWS S3 bucket 'rfq-models' (prefix: Mistral-7B-Instruct-v0-3/)" -ForegroundColor Cyan
+    Write-Host ""
+}
+
 # Setup database (optional)
 Write-Info "`nDatabase setup..."
 $SetupDbScript = Join-Path $InstallPath "setup_database_auto.bat"
