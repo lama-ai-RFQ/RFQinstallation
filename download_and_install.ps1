@@ -164,6 +164,9 @@ catch {
 
 # Download component-based installation package
 Write-Info "`n[6/8] Downloading installation components..."
+Write-Info "  This may take several minutes depending on your internet connection."
+Write-Info "  Progress will be shown below for each file..."
+Write-Host ""
 
 # Check for manifest.json (component-based release)
 $ManifestAsset = $Release.assets | Where-Object { $_.name -eq "manifest.json" } | Select-Object -First 1
@@ -185,9 +188,10 @@ try {
     $DownloadHeaders = $Headers.Clone()
     $DownloadHeaders["Accept"] = "application/octet-stream"
     
-    $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
+    # Show progress for manifest download
+    Write-Info "    Downloading from: $($ManifestAsset.url)"
     $ProgressPreference = 'Continue'
+    Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
     
     $Manifest = Get-Content $ManifestPath | ConvertFrom-Json
     Write-Success "[OK] Downloaded manifest"
@@ -240,9 +244,15 @@ foreach ($ComponentProp in $Components) {
             $DownloadHeaders = $Headers.Clone()
             $DownloadHeaders["Accept"] = "application/octet-stream"
             
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+            # Show file size and progress
+            $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
+            Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+            
+            # Show progress bar during download
             $ProgressPreference = 'Continue'
+            Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+            
+            Write-Success "    [OK] Downloaded: $Filename"
             $filesDownloaded++
         }
         catch {

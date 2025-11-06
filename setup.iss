@@ -53,17 +53,18 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 
 [Run]
 ; Run the PowerShell installation script
+; Show PowerShell window so user can see download progress
 Filename: "powershell.exe"; \
-    Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\download_and_install.ps1"" -InstallPath ""{app}"""; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File ""{tmp}\download_and_install.ps1"" -InstallPath ""{app}"""; \
     StatusMsg: "Installing RFQ Application..."; \
-    Flags: runhidden waituntilterminated; \
-    Description: "Installing application files..."
+    Flags: waituntilterminated; \
+    Description: "Installing application files... (This may take several minutes - a PowerShell window will show progress)"
 
 [Code]
 var
   GitHubTokenPage: TInputQueryWizardPage;
   AWSKeyPage: TInputQueryWizardPage;
-  AWSSecretPage: TPasswordWizardPage;
+  AWSSecretPage: TInputQueryWizardPage;
   AWSRegionPage: TInputQueryWizardPage;
   ModelDownloadPage: TInputOptionWizardPage;
   ModelPathPage: TInputDirWizardPage;
@@ -84,9 +85,11 @@ begin
     'Please enter your AWS credentials:');
   AWSKeyPage.Add('AWS Access Key ID:', False);
   
-  AWSSecretPage := CreatePasswordPage(AWSKeyPage.ID,
+  // Create AWS Secret page (using TInputQueryWizardPage with password masking)
+  AWSSecretPage := CreateInputQueryPage(AWSKeyPage.ID,
     'AWS Secret Key', 'AWS Secret Access Key',
     'Please enter your AWS Secret Access Key:');
+  AWSSecretPage.Add('AWS Secret Access Key:', True);  // True = password field (masked)
   
   AWSRegionPage := CreateInputQueryPage(AWSSecretPage.ID,
     'AWS Region', 'AWS Region Configuration',
@@ -153,7 +156,11 @@ begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', BoolToStr(ModelDownload));
+    // Convert boolean to string manually
+    if ModelDownload then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'False');
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
   end;
 end;
