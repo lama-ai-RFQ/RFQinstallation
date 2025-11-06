@@ -572,6 +572,13 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N') {
                 Write-Success "[OK] AWS credentials saved to .env file"
             }
         }
+        
+        # Verify we have credentials before proceeding
+        if ([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) {
+            Write-Error-Custom "ERROR: AWS credentials are required but not provided"
+            Write-Info "  Please provide AWS_KEY and AWS_SECRET in the .env file or when prompted"
+            Write-Info "  Skipping model download"
+        }
         else {
             # Create a temporary Python script to download the model from S3
             $downloadScript = Join-Path $env:TEMP "download_mistral_model_s3.py"
