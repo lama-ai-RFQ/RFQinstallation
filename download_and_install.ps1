@@ -589,20 +589,25 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
 try:
+    model_dir = r"$modelDir"
+    aws_key = r"$awsKey"
+    aws_secret = r"$awsSecret"
+    aws_region = r"$awsRegion"
+    
     print("Starting model download from AWS S3...")
     print(f"Bucket: rfq-models")
-    print(f"Region: $awsRegion")
-    print(f"Destination: $modelDir")
+    print(f"Region: {aws_region}")
+    print(f"Destination: {model_dir}")
     
     # Create destination directory
-    os.makedirs(r"$modelDir", exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
     
     # Initialize S3 client
     s3 = boto3.client(
         "s3",
-        aws_access_key_id=r"$awsKey",
-        aws_secret_access_key=r"$awsSecret",
-        region_name=r"$awsRegion"
+        aws_access_key_id=aws_key,
+        aws_secret_access_key=aws_secret,
+        region_name=aws_region
     )
     
     bucket_name = "rfq-models"
@@ -610,38 +615,152 @@ try:
     
     # List all objects in the model directory
     print("Listing model files in S3...")
-    paginator = s3.get_paginator('list_objects_v2')
-    pages = paginator.paginate(Bucket=bucket_name, Prefix=model_prefix)
-    
     files_downloaded = 0
     total_size = 0
     
-    for page in pages:
-        if 'Contents' not in page:
-            continue
-            
-        for obj in page['Contents']:
-            key = obj['Key']
-            size = obj['Size']
-            
-            # Skip directories
-            if key.endswith('/'):
+    try:
+        paginator = s3.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=bucket_name, Prefix=model_prefix)
+        
+        for page in pages:
+            if 'Contents' not in page:
                 continue
+                
+            for obj in page['Contents']:
+                key = obj['Key']
+                size = obj['Size']
+                
+                # Skip directories
+                if key.endswith('/'):
+                    continue
+                
+                # Skip cache files and metadata files
+                if '.cache' in key or key.endswith('.lock') or key.endswith('.metadata'):
+                    continue
+                
+                # Get relative path from model prefix
+                relative_path = key[len(model_prefix):]
+                local_path = os.path.join(model_dir, relative_path)
+                
+                # Create subdirectories if needed
+                local_dir = os.path.dirname(local_path)
+                if local_dir:
+                    os.makedirs(local_dir, exist_ok=True)
+                
+                # Download file
+                print(f"Downloading: {relative_path} ({size / 1024 / 1024:.4f} MB)")
+                s3.download_file(bucket_name, key, local_path)
+                files_downloaded += 1
+                total_size += size
+    except ClientError as list_error:
+        error_code = list_error.response.get('Error', {}).get('Code', '')
+        if error_code == 'AccessDenied':
+            print("")
+            print("WARNING: Access denied when listing bucket contents.")
+            print("Your IAM user may not have s3:ListBucket permission.")
+            print("")
+            print("Attempting to download common model files directly...")
+            print("(This requires s3:GetObject permission)")
+            print("")
             
-            # Get relative path from model prefix
-            relative_path = key[len(model_prefix):]
-            local_path = os.path.join(r"$modelDir", relative_path)
+            # First, try to download the model index file to get the list of all files
+            index_file = "model.safetensors.index.json"
+            index_key = model_prefix + index_file
+            index_local_path = os.path.join(model_dir, index_file)
+            model_files_from_index = []
             
-            # Create subdirectories if needed
-            local_dir = os.path.dirname(local_path)
-            if local_dir:
-                os.makedirs(local_dir, exist_ok=True)
+            try:
+                # Try to get index file metadata first
+                obj_metadata = s3.head_object(Bucket=bucket_name, Key=index_key)
+                index_size = obj_metadata['ContentLength']
+                
+                # Create directory if needed
+                local_dir = os.path.dirname(index_local_path)
+                if local_dir:
+                    os.makedirs(local_dir, exist_ok=True)
+                
+                # Try to download the index file first
+                print(f"Downloading index file: {index_file} ({index_size / 1024 / 1024:.4f} MB)")
+                s3.download_file(bucket_name, index_key, index_local_path)
+                files_downloaded += 1
+                total_size += index_size
+                
+                # Parse the index file to get list of all model files
+                import json
+                with open(index_local_path, 'r') as f:
+                    index_data = json.load(f)
+                    if 'weight_map' in index_data:
+                        # Extract unique filenames from weight_map
+                        model_files_from_index = list(set(index_data['weight_map'].values()))
+                        print(f"Found {len(model_files_from_index)} model files in index")
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                if error_code == 'AccessDenied':
+                    print(f"Access denied for index file, trying common files...")
+                else:
+                    print(f"Index file not available, trying common files...")
+            except Exception as e:
+                print(f"Could not parse index file: {e}")
             
-            # Download file
-            print(f"Downloading: {relative_path} ({size / 1024 / 1024:.2f} MB)")
-            s3.download_file(bucket_name, key, local_path)
-            files_downloaded += 1
-            total_size += size
+            # Try to download common model files directly
+            common_files = [
+                "config.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+                "generation_config.json",
+            ]
+            
+            # Combine files from index with common files
+            all_files = list(set(common_files + model_files_from_index))
+            
+            for filename in all_files:
+                key = model_prefix + filename
+                local_path = os.path.join(model_dir, filename)
+                
+                try:
+                    # Try to get object metadata first to check if it exists
+                    try:
+                        obj_metadata = s3.head_object(Bucket=bucket_name, Key=key)
+                        size = obj_metadata['ContentLength']
+                    except ClientError:
+                        # File doesn't exist, skip
+                        continue
+                    
+                    # Create subdirectories if needed
+                    local_dir = os.path.dirname(local_path)
+                    if local_dir:
+                        os.makedirs(local_dir, exist_ok=True)
+                    
+                    # Download file
+                    print(f"Downloading: {filename} ({size / 1024 / 1024:.4f} MB)")
+                    s3.download_file(bucket_name, key, local_path)
+                    files_downloaded += 1
+                    total_size += size
+                except ClientError as download_error:
+                    error_code = download_error.response.get('Error', {}).get('Code', '')
+                    if error_code == 'AccessDenied':
+                        print(f"  [!] Access denied for: {filename}")
+                    else:
+                        print(f"  [!] Error downloading {filename}: {download_error}")
+                    continue
+                except Exception as e:
+                    print(f"  [!] Error downloading {filename}: {e}")
+                    continue
+            
+            if files_downloaded == 0:
+                print("")
+                print("ERROR: Could not download any files.")
+                print("")
+                print("Required AWS IAM permissions:")
+                print("  - s3:ListBucket on arn:aws:s3:::rfq-models")
+                print("  - s3:GetObject on arn:aws:s3:::rfq-models/Mistral-7B-Instruct-v0-3/*")
+                print("")
+                print("Please contact your AWS administrator to grant these permissions.")
+                sys.exit(1)
+        else:
+            # Re-raise if it's not an AccessDenied error
+            raise
     
     if files_downloaded == 0:
         print("")
@@ -652,7 +771,7 @@ try:
     print(f"SUCCESS: Model downloaded successfully!")
     print(f"Files downloaded: {files_downloaded}")
     print(f"Total size: {total_size / 1024 / 1024 / 1024:.2f} GB")
-    print(f"Model location: $modelDir")
+    print(f"Model location: {model_dir}")
     sys.exit(0)
     
 except NoCredentialsError:
