@@ -19,6 +19,10 @@ param(
     [string]$AzureKeyCustom = ""
 )
 
+# TEMPORARILY DISABLE STEPS - Set to $true to enable
+$ENABLE_STEP_6_DOWNLOAD = $true  # Step 6: Downloading installation components
+$ENABLE_STEP_7_EXTRACT = $true   # Step 7: Extracting installation files
+
 # Colors for output
 function Write-Info { Write-Host $args -ForegroundColor Cyan }
 function Write-Success { Write-Host $args -ForegroundColor Green }
@@ -179,256 +183,283 @@ catch {
 }
 
 # Download component-based installation package
-Write-Info "`n[6/8] Downloading installation components..."
-Write-Info "  This may take several minutes depending on your internet connection."
-Write-Info "  Progress will be shown below for each file..."
-Write-Host ""
+if ($ENABLE_STEP_6_DOWNLOAD) {
+    Write-Info "`n[6/8] Downloading installation components..."
+    Write-Info "  This may take several minutes depending on your internet connection."
+    Write-Info "  Progress will be shown below for each file..."
+    Write-Host ""
 
-# Check for manifest.json (component-based release)
-$ManifestAsset = $Release.assets | Where-Object { $_.name -eq "manifest.json" } | Select-Object -First 1
+    # Check for manifest.json (component-based release)
+    $ManifestAsset = $Release.assets | Where-Object { $_.name -eq "manifest.json" } | Select-Object -First 1
 
-if (!$ManifestAsset) {
-    Write-Error-Custom "ERROR: No manifest.json found in release"
-    Write-Error-Custom "  This installer requires a component-based release"
-    Write-Error-Custom "  Available assets:"
-    foreach ($asset in $Release.assets) {
-        Write-Error-Custom "    - $($asset.name)"
+    if (!$ManifestAsset) {
+        Write-Error-Custom "ERROR: No manifest.json found in release"
+        Write-Error-Custom "  This installer requires a component-based release"
+        Write-Error-Custom "  Available assets:"
+        foreach ($asset in $Release.assets) {
+            Write-Error-Custom "    - $($asset.name)"
+        }
+        exit 1
     }
-    exit 1
-}
 
-# Download manifest
-Write-Info "  Downloading manifest..."
-$ManifestPath = Join-Path $env:TEMP "manifest.json"
-try {
-    $DownloadHeaders = $Headers.Clone()
-    $DownloadHeaders["Accept"] = "application/octet-stream"
-    
-    # Show progress for manifest download
-    Write-Info "    Downloading from: $($ManifestAsset.url)"
-    $ProgressPreference = 'Continue'
-    Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
-    
-    $Manifest = Get-Content $ManifestPath | ConvertFrom-Json
-    Write-Success "[OK] Downloaded manifest"
-}
-catch {
-    Write-Error-Custom "ERROR: Failed to download manifest: $_"
-    exit 1
-}
-
-# Create temp directory for downloads
-$TempDownloadDir = Join-Path $env:TEMP "rfq_install_temp"
-if (Test-Path $TempDownloadDir) {
-    Remove-Item $TempDownloadDir -Recurse -Force
-}
-New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
-
-# Download all component files
-$Components = $Manifest.components.PSObject.Properties
-$TotalComponents = $Components.Count
-$CurrentComponent = 0
-
-foreach ($ComponentProp in $Components) {
-    $CurrentComponent++
-    $ComponentName = $ComponentProp.Name
-    $ComponentInfo = $ComponentProp.Value
-    
-    # Check if component has any files
-    if (!$ComponentInfo.files -or $ComponentInfo.files.Count -eq 0) {
-        Write-Warning "  [$CurrentComponent/$TotalComponents] Skipping $ComponentName (no files in component)"
-        continue
+    # Download manifest
+    Write-Info "  Downloading manifest..."
+    $ManifestPath = Join-Path $env:TEMP "manifest.json"
+    try {
+        $DownloadHeaders = $Headers.Clone()
+        $DownloadHeaders["Accept"] = "application/octet-stream"
+        
+        # Show progress for manifest download
+        Write-Info "    Downloading from: $($ManifestAsset.url)"
+        $ProgressPreference = 'Continue'
+        Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
+        
+        $Manifest = Get-Content $ManifestPath | ConvertFrom-Json
+        Write-Success "[OK] Downloaded manifest"
     }
-    
-    Write-Info "  [$CurrentComponent/$TotalComponents] Downloading: $ComponentName"
-    
-    $filesDownloaded = 0
-    foreach ($FileInfo in $ComponentInfo.files) {
-        $Filename = $FileInfo.filename
+    catch {
+        Write-Error-Custom "ERROR: Failed to download manifest: $_"
+        exit 1
+    }
+
+    # Create temp directory for downloads
+    $TempDownloadDir = Join-Path $env:TEMP "rfq_install_temp"
+    if (Test-Path $TempDownloadDir) {
+        Remove-Item $TempDownloadDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
+
+    # Download all component files
+    $Components = $Manifest.components.PSObject.Properties
+    $TotalComponents = $Components.Count
+    $CurrentComponent = 0
+
+    foreach ($ComponentProp in $Components) {
+        $CurrentComponent++
+        $ComponentName = $ComponentProp.Name
+        $ComponentInfo = $ComponentProp.Value
         
-        # Find the asset
-        $Asset = $Release.assets | Where-Object { $_.name -eq $Filename } | Select-Object -First 1
-        
-        if (!$Asset) {
-            Write-Warning "  [!] Asset not found: $Filename (component may be empty, skipping)"
+        # Check if component has any files
+        if (!$ComponentInfo.files -or $ComponentInfo.files.Count -eq 0) {
+            Write-Warning "  [$CurrentComponent/$TotalComponents] Skipping $ComponentName (no files in component)"
             continue
         }
         
-        # Download file
-        $FilePath = Join-Path $TempDownloadDir $Filename
-        try {
-            $DownloadHeaders = $Headers.Clone()
-            $DownloadHeaders["Accept"] = "application/octet-stream"
+        Write-Info "  [$CurrentComponent/$TotalComponents] Downloading: $ComponentName"
+        
+        $filesDownloaded = 0
+        foreach ($FileInfo in $ComponentInfo.files) {
+            $Filename = $FileInfo.filename
             
-            # Show file size and progress
-            $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
-            Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+            # Find the asset
+            $Asset = $Release.assets | Where-Object { $_.name -eq $Filename } | Select-Object -First 1
             
-            # Show progress bar during download
-            $ProgressPreference = 'Continue'
-            Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+            if (!$Asset) {
+                Write-Warning "  [!] Asset not found: $Filename (component may be empty, skipping)"
+                continue
+            }
             
-            Write-Success "    [OK] Downloaded: $Filename"
-            $filesDownloaded++
+            # Download file
+            $FilePath = Join-Path $TempDownloadDir $Filename
+            try {
+                $DownloadHeaders = $Headers.Clone()
+                $DownloadHeaders["Accept"] = "application/octet-stream"
+                
+                # Show file size and progress
+                $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
+                Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                
+                # Show progress bar during download
+                $ProgressPreference = 'Continue'
+                Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+                
+                Write-Success "    [OK] Downloaded: $Filename"
+                $filesDownloaded++
+            }
+            catch {
+                Write-Warning "  [!] Failed to download $Filename : $_ (skipping)"
+                continue
+            }
         }
-        catch {
-            Write-Warning "  [!] Failed to download $Filename : $_ (skipping)"
-            continue
+        
+        if ($filesDownloaded -eq 0) {
+            Write-Warning "  [!] No files downloaded for $ComponentName (component may be empty)"
         }
     }
+
+    Write-Success "[OK] All components downloaded"
+}
+else {
+    Write-Info ""
+    Write-Info "Step 6 (Downloading installation components) is disabled."
+    Write-Info "Skipping component download..."
     
-    if ($filesDownloaded -eq 0) {
-        Write-Warning "  [!] No files downloaded for $ComponentName (component may be empty)"
+    # Still need to create the install directory if it doesn't exist
+    if (!(Test-Path $InstallPath)) {
+        New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
+        Write-Success "[OK] Created installation directory: $InstallPath"
     }
 }
-
-Write-Success "[OK] All components downloaded"
 
 # Rejoin multi-part files and extract
-Write-Info "`n[7/8] Extracting installation files..."
-
-foreach ($ComponentProp in $Components) {
-    $ComponentName = $ComponentProp.Name
-    $ComponentInfo = $ComponentProp.Value
-    $Files = $ComponentInfo.files
-    
-    # Skip components with no files
-    if (!$Files -or $Files.Count -eq 0) {
-        Write-Info "  Skipping $ComponentName (no files to extract)"
-        continue
-    }
-    
-    # Check if any files were actually downloaded
-    $hasDownloadedFiles = $false
-    foreach ($FileInfo in $Files) {
-        $Filename = $FileInfo.filename
-        $FilePath = Join-Path $TempDownloadDir $Filename
-        if (Test-Path $FilePath) {
-            $hasDownloadedFiles = $true
-            break
-        }
-    }
-    
-    if (!$hasDownloadedFiles) {
-        Write-Info "  Skipping $ComponentName (no files downloaded)"
-        continue
-    }
-    
-    Write-Info "  Extracting: $ComponentName"
-    
-    if ($Files.Count -eq 1) {
-        # Single file, extract directly
-        $ComponentZip = Join-Path $TempDownloadDir $Files[0].filename
-        
-        # Check if file exists (may have been skipped if empty)
-        if (!(Test-Path $ComponentZip)) {
-            Write-Info "    Skipping extraction (file not downloaded - component may be empty)"
-            continue
-        }
+if ($ENABLE_STEP_7_EXTRACT) {
+    if (-not $ENABLE_STEP_6_DOWNLOAD) {
+        Write-Info ""
+        Write-Info "Step 7 (Extracting installation files) requires Step 6 (Download) to be enabled."
+        Write-Info "Skipping extraction..."
     }
     else {
-        # Multi-part, rejoin first
-        Write-Info "    Rejoining $($Files.Count) parts..."
-        
-        # Sort by part number
-        $PartFiles = $Files | Sort-Object { [int]($_.filename -replace '.*\.part(\d+)', '$1') }
-        
-        # Check if all parts exist
-        $allPartsExist = $true
-        foreach ($PartFile in $PartFiles) {
-            $PartPath = Join-Path $TempDownloadDir $PartFile.filename
-            if (!(Test-Path $PartPath)) {
-                $allPartsExist = $false
-                break
-            }
-        }
-        
-        if (!$allPartsExist) {
-            Write-Info "    Skipping extraction (some parts not downloaded - component may be empty)"
-            continue
-        }
-        
-        # Output file name (remove .part1 extension)
-        $OutputFilename = $PartFiles[0].filename -replace '\.part\d+$', ''
-        $ComponentZip = Join-Path $TempDownloadDir $OutputFilename
-        
-        # Rejoin parts
-        $OutputFile = [System.IO.File]::Create($ComponentZip)
-        try {
-            foreach ($PartFile in $PartFiles) {
-                $PartPath = Join-Path $TempDownloadDir $PartFile.filename
-                $PartBytes = [System.IO.File]::ReadAllBytes($PartPath)
-                $OutputFile.Write($PartBytes, 0, $PartBytes.Length)
-            }
-        }
-        finally {
-            $OutputFile.Close()
-        }
-    }
-    
+        Write-Info "`n[7/8] Extracting installation files..."
 
-    # Extract component
-    try {
-        # Extract to a temp location first to check for unwanted nested paths
-        $TempExtractDir = Join-Path $env:TEMP "rfq_extract_$ComponentName"
-        if (Test-Path $TempExtractDir) {
-            Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
-        
-        Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force
-        
-        # Check if there's an unwanted nested directory structure
-        # Look for expected files (RFQ_Application.exe or _internal directory) at the root
-        $rootExe = Get-ChildItem -Path $TempExtractDir -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-        $rootInternal = Test-Path (Join-Path $TempExtractDir "_internal")
-        
-        if (-not $rootExe -and -not $rootInternal) {
-            # Files are nested, find the actual content directory
-            Write-Info "    Detected nested directory structure, flattening..."
-            $contentDir = $null
+        foreach ($ComponentProp in $Components) {
+            $ComponentName = $ComponentProp.Name
+            $ComponentInfo = $ComponentProp.Value
+            $Files = $ComponentInfo.files
             
-            # Search for directory containing .exe or _internal
-            $allDirs = Get-ChildItem -Path $TempExtractDir -Recurse -Directory
-            foreach ($dir in $allDirs) {
-                $hasExe = Get-ChildItem -Path $dir.FullName -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-                $hasInternal = Test-Path (Join-Path $dir.FullName "_internal")
-                if ($hasExe -or $hasInternal) {
-                    $contentDir = $dir.FullName
+            # Skip components with no files
+            if (!$Files -or $Files.Count -eq 0) {
+                Write-Info "  Skipping $ComponentName (no files to extract)"
+                continue
+            }
+            
+            # Check if any files were actually downloaded
+            $hasDownloadedFiles = $false
+            foreach ($FileInfo in $Files) {
+                $Filename = $FileInfo.filename
+                $FilePath = Join-Path $TempDownloadDir $Filename
+                if (Test-Path $FilePath) {
+                    $hasDownloadedFiles = $true
                     break
                 }
             }
             
-            if ($contentDir) {
-                # Move content from nested directory to root
-                Get-ChildItem -Path $contentDir | Move-Item -Destination $TempExtractDir -Force
-                # Remove empty nested directories
-                $parentDir = Split-Path $contentDir -Parent
-                while ($parentDir -and $parentDir -ne $TempExtractDir) {
-                    if ((Get-ChildItem -Path $parentDir -ErrorAction SilentlyContinue).Count -eq 0) {
-                        Remove-Item $parentDir -Force -ErrorAction SilentlyContinue
-                    }
-                    $parentDir = Split-Path $parentDir -Parent
+            if (!$hasDownloadedFiles) {
+                Write-Info "  Skipping $ComponentName (no files downloaded)"
+                continue
+            }
+            
+            Write-Info "  Extracting: $ComponentName"
+            
+            if ($Files.Count -eq 1) {
+                # Single file, extract directly
+                $ComponentZip = Join-Path $TempDownloadDir $Files[0].filename
+                
+                # Check if file exists (may have been skipped if empty)
+                if (!(Test-Path $ComponentZip)) {
+                    Write-Info "    Skipping extraction (file not downloaded - component may be empty)"
+                    continue
                 }
             }
+            else {
+                # Multi-part, rejoin first
+                Write-Info "    Rejoining $($Files.Count) parts..."
+                
+                # Sort by part number
+                $PartFiles = $Files | Sort-Object { [int]($_.filename -replace '.*\.part(\d+)', '$1') }
+                
+                # Check if all parts exist
+                $allPartsExist = $true
+                foreach ($PartFile in $PartFiles) {
+                    $PartPath = Join-Path $TempDownloadDir $PartFile.filename
+                    if (!(Test-Path $PartPath)) {
+                        $allPartsExist = $false
+                        break
+                    }
+                }
+                
+                if (!$allPartsExist) {
+                    Write-Info "    Skipping extraction (some parts not downloaded - component may be empty)"
+                    continue
+                }
+                
+                # Output file name (remove .part1 extension)
+                $OutputFilename = $PartFiles[0].filename -replace '\.part\d+$', ''
+                $ComponentZip = Join-Path $TempDownloadDir $OutputFilename
+                
+                # Rejoin parts
+                $OutputFile = [System.IO.File]::Create($ComponentZip)
+                try {
+                    foreach ($PartFile in $PartFiles) {
+                        $PartPath = Join-Path $TempDownloadDir $PartFile.filename
+                        $PartBytes = [System.IO.File]::ReadAllBytes($PartPath)
+                        $OutputFile.Write($PartBytes, 0, $PartBytes.Length)
+                    }
+                }
+                finally {
+                    $OutputFile.Close()
+                }
+            }
+            
+
+            # Extract component
+            try {
+                # Extract to a temp location first to check for unwanted nested paths
+                $TempExtractDir = Join-Path $env:TEMP "rfq_extract_$ComponentName"
+                if (Test-Path $TempExtractDir) {
+                    Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
+                
+                Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force
+                
+                # Check if there's an unwanted nested directory structure
+                # Look for expected files (RFQ_Application.exe or _internal directory) at the root
+                $rootExe = Get-ChildItem -Path $TempExtractDir -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                $rootInternal = Test-Path (Join-Path $TempExtractDir "_internal")
+                
+                if (-not $rootExe -and -not $rootInternal) {
+                    # Files are nested, find the actual content directory
+                    Write-Info "    Detected nested directory structure, flattening..."
+                    $contentDir = $null
+                    
+                    # Search for directory containing .exe or _internal
+                    $allDirs = Get-ChildItem -Path $TempExtractDir -Recurse -Directory
+                    foreach ($dir in $allDirs) {
+                        $hasExe = Get-ChildItem -Path $dir.FullName -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                        $hasInternal = Test-Path (Join-Path $dir.FullName "_internal")
+                        if ($hasExe -or $hasInternal) {
+                            $contentDir = $dir.FullName
+                            break
+                        }
+                    }
+                    
+                    if ($contentDir) {
+                        # Move content from nested directory to root
+                        Get-ChildItem -Path $contentDir | Move-Item -Destination $TempExtractDir -Force
+                        # Remove empty nested directories
+                        $parentDir = Split-Path $contentDir -Parent
+                        while ($parentDir -and $parentDir -ne $TempExtractDir) {
+                            if ((Get-ChildItem -Path $parentDir -ErrorAction SilentlyContinue).Count -eq 0) {
+                                Remove-Item $parentDir -Force -ErrorAction SilentlyContinue
+                            }
+                            $parentDir = Split-Path $parentDir -Parent
+                        }
+                    }
+                }
+                
+                # Copy all files from temp to install path
+                Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
+                
+                # Cleanup temp directory
+                Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
+                exit 1
+            }
         }
-        
-        # Copy all files from temp to install path
-        Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
-        
+
+        Write-Success "[OK] Extracted all components to: $InstallPath"
+
         # Cleanup temp directory
-        Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    catch {
-        Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
-        exit 1
+        Remove-Item $TempDownloadDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-
-Write-Success "[OK] Extracted all components to: $InstallPath"
-
-# Cleanup temp directory
-Remove-Item $TempDownloadDir -Recurse -Force -ErrorAction SilentlyContinue
+else {
+    Write-Info ""
+    Write-Info "Step 7 (Extracting installation files) is disabled."
+    Write-Info "Skipping extraction..."
+}
 
 # Setup .env file with GitHub token
 Write-Info "`n[8/8] Configuring application..."
