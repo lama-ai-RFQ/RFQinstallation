@@ -16,9 +16,13 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
+; Default installation directory - user can change on directory selection page
+; {autopf} expands to "C:\Program Files" on 64-bit systems
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+; Show directory selection page so user can see and modify install location
+DisableDirPage=no
 LicenseFile=
 InfoBeforeFile=
 InfoAfterFile=
@@ -77,6 +81,60 @@ var
   ServerURLPage: TInputQueryWizardPage;
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
+
+function ValidatePassword(Password: String; PasswordName: String): Boolean;
+var
+  HasUpper, HasLower, HasDigit, HasSpecial: Boolean;
+  i: Integer;
+  ch: Char;
+begin
+  Result := False;
+  
+  // Check minimum length
+  if Length(Password) < 8 then
+  begin
+    MsgBox(PasswordName + ' must be at least 8 characters long.', mbError, MB_OK);
+    Exit;
+  end;
+  
+  // Check for complexity requirements
+  HasUpper := False;
+  HasLower := False;
+  HasDigit := False;
+  HasSpecial := False;
+  
+  for i := 1 to Length(Password) do
+  begin
+    ch := Password[i];
+    if (ch >= 'A') and (ch <= 'Z') then
+      HasUpper := True
+    else if (ch >= 'a') and (ch <= 'z') then
+      HasLower := True
+    else if (ch >= '0') and (ch <= '9') then
+      HasDigit := True
+    else if (ch = '!') or (ch = '@') or (ch = '#') or (ch = '$') or (ch = '%') or 
+            (ch = '^') or (ch = '&') or (ch = '*') or (ch = '(') or (ch = ')') or
+            (ch = '-') or (ch = '_') or (ch = '=') or (ch = '+') or (ch = '[') or
+            (ch = ']') or (ch = '{') or (ch = '}') or (ch = '|') or (ch = '\') or
+            (ch = ';') or (ch = ':') or (ch = '"') or (ch = '''') or (ch = '<') or
+            (ch = '>') or (ch = ',') or (ch = '.') or (ch = '?') or (ch = '/') then
+      HasSpecial := True;
+  end;
+  
+  // Require at least 3 out of 4 character types
+  if ((Ord(HasUpper) + Ord(HasLower) + Ord(HasDigit) + Ord(HasSpecial)) < 3) then
+  begin
+    MsgBox(PasswordName + ' must contain at least 3 of the following:' + #13#10 +
+           '  - Uppercase letters (A-Z)' + #13#10 +
+           '  - Lowercase letters (a-z)' + #13#10 +
+           '  - Numbers (0-9)' + #13#10 +
+           '  - Special characters (!@#$%^&*()_+-=[]{}|;:,.<>?/)', 
+           mbError, MB_OK);
+    Exit;
+  end;
+  
+  Result := True;
+end;
 
 function CheckPostgreSQLInstalled(): Boolean;
 var
@@ -326,17 +384,26 @@ begin
   // Create database password pages
   SettingsPasswordPage := CreateInputQueryPage(ModelPathPage.ID,
     'Database Configuration', 'Settings Password',
-    'Enter a password for the application settings database access:');
+    'Enter a password for the application settings database access.' + #13#10 + #13#10 +
+    'Password Requirements:' + #13#10 +
+    '  - Minimum 8 characters' + #13#10 +
+    '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SettingsPasswordPage.Add('Settings Password:', True);  // True = password field (masked)
   
   SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
     'Database Configuration', 'PostgreSQL Super User Password',
-    'Enter the PostgreSQL super user password (for database setup):');
+    'Enter the PostgreSQL super user password (for database setup).' + #13#10 + #13#10 +
+    'Password Requirements:' + #13#10 +
+    '  - Minimum 8 characters' + #13#10 +
+    '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SuperUserPasswordPage.Add('PostgreSQL Super User Password:', True);  // True = password field (masked)
   
   RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
     'Database Configuration', 'RFQ User Password',
-    'Enter the password for the RFQ database user:');
+    'Enter the password for the RFQ database user.' + #13#10 + #13#10 +
+    'Password Requirements:' + #13#10 +
+    '  - Minimum 8 characters' + #13#10 +
+    '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
   
   // Create Server URL page
@@ -481,9 +548,35 @@ begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
   end;
   
-  // Store database passwords when on the last password page
+  // Validate Settings Password
+  if CurPageID = SettingsPasswordPage.ID then
+  begin
+    if not ValidatePassword(SettingsPasswordPage.Values[0], 'Settings Password') then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+  
+  // Validate PostgreSQL Super User Password
+  if CurPageID = SuperUserPasswordPage.ID then
+  begin
+    if not ValidatePassword(SuperUserPasswordPage.Values[0], 'PostgreSQL Super User Password') then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+  
+  // Validate RFQ User Password
   if CurPageID = RFQUserPasswordPage.ID then
   begin
+    if not ValidatePassword(RFQUserPasswordPage.Values[0], 'RFQ User Password') then
+    begin
+      Result := False;
+      Exit;
+    end;
+    // Store database passwords when on the last password page
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPasswordPage.Values[0]);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
