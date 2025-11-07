@@ -721,7 +721,7 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
     if ($downloadModel -ne 'n') {
         # Model will be downloaded to a subdirectory
         $modelDir = Join-Path $modelBasePath "Mistral-7B-Instruct-v0-3"
-        $modelPath = $modelBasePath  # MODEL_PATH should point to the base directory
+        $modelPath = $modelDir  # MODEL_PATH should point to the model directory
         
         Write-Info ""
         Write-Info "Downloading Mistral-7B-Instruct-v0.3 model from AWS S3..."
