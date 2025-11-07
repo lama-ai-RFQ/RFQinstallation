@@ -533,6 +533,16 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
     $EnvContent = $EnvContent -replace "WINDOWS=.*", "WINDOWS=true"
     $EnvContent = $EnvContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
+    # Only update AWS credentials if they are non-empty
+    if (![string]::IsNullOrWhiteSpace($AWSKey)) {
+        $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
+    }
+    if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
+        $EnvContent = $EnvContent -replace "AWS_SECRET=.*", "AWS_SECRET=$AWSSecret"
+    }
+    if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
+        $EnvContent = $EnvContent -replace "AWS_REGION=.*", "AWS_REGION=$AWSRegion"
+    }
     
     # Add if they don't exist
     if ($EnvContent -notmatch "GITHUB_USERNAME") {
@@ -567,6 +577,16 @@ if (Test-Path $EnvTemplatePath) {
     }
     if ($EnvContent -notmatch "AZURE_CONFIG_ENCRYPTION_KEY") {
         $EnvContent += "`nAZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
+    }
+    # Only add AWS credentials if they are non-empty
+    if ($EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
+        $EnvContent += "`nAWS_KEY=$AWSKey"
+    }
+    if ($EnvContent -notmatch "AWS_SECRET" -and ![string]::IsNullOrWhiteSpace($AWSSecret)) {
+        $EnvContent += "`nAWS_SECRET=$AWSSecret"
+    }
+    if ($EnvContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
+        $EnvContent += "`nAWS_REGION=$AWSRegion"
     }
     
     # Add generation timestamp as comment
@@ -617,6 +637,22 @@ SETTINGS_PASSWORD=$SettingsPassword
 # Azure Configuration
 AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
 "@
+    
+    # Add AWS Configuration section only if credentials are provided
+    if (![string]::IsNullOrWhiteSpace($AWSKey) -or ![string]::IsNullOrWhiteSpace($AWSSecret) -or ![string]::IsNullOrWhiteSpace($AWSRegion)) {
+        $EnvContent += "`n"
+        $EnvContent += "# AWS Configuration (for model download)`n"
+        if (![string]::IsNullOrWhiteSpace($AWSKey)) {
+            $EnvContent += "AWS_KEY=$AWSKey`n"
+        }
+        if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
+            $EnvContent += "AWS_SECRET=$AWSSecret`n"
+        }
+        if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
+            $EnvContent += "AWS_REGION=$AWSRegion`n"
+        }
+    }
+    
     Set-Content -Path $EnvPath -Value $EnvContent -Force
     Write-Success "[OK] Created .env configuration with all values"
 }
@@ -703,28 +739,42 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
         # Check if credentials were provided via parameters (even if empty, means installer provided them)
         $credentialsProvidedViaParams = ($PSBoundParameters.ContainsKey('AWSKey') -or $PSBoundParameters.ContainsKey('AWSSecret'))
         
-        # Use provided parameters if available
+        # Debug: Show what parameters were received
+        Write-Info "  Debug: Checking AWS parameters..."
+        Write-Info "    AWSKey parameter provided: $($PSBoundParameters.ContainsKey('AWSKey')), Value length: $($AWSKey.Length)"
+        Write-Info "    AWSSecret parameter provided: $($PSBoundParameters.ContainsKey('AWSSecret')), Value length: $($AWSSecret.Length)"
+        Write-Info "    AWSRegion parameter: '$AWSRegion'"
+        Write-Info "    credentialsProvidedViaParams: $credentialsProvidedViaParams"
+        
+        # Use provided parameters if available and non-empty
         if ($PSBoundParameters.ContainsKey('AWSKey') -and $AWSKey -and $AWSKey.Trim() -ne "") {
             $awsKey = $AWSKey
+            Write-Info "    Using AWSKey from parameters"
         }
         if ($PSBoundParameters.ContainsKey('AWSSecret') -and $AWSSecret -and $AWSSecret.Trim() -ne "") {
             $awsSecret = $AWSSecret
+            Write-Info "    Using AWSSecret from parameters"
         }
         if ($PSBoundParameters.ContainsKey('AWSRegion') -and $AWSRegion -and $AWSRegion.Trim() -ne "") {
             $awsRegion = $AWSRegion
+            Write-Info "    Using AWSRegion from parameters"
         }
         
-        # If not provided via parameters, try reading from .env file
-        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and (Test-Path $EnvPath) -and -not $credentialsProvidedViaParams) {
+        # If credentials are still empty, try reading from .env file (regardless of whether params were provided)
+        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and (Test-Path $EnvPath)) {
+            Write-Info "  Reading AWS credentials from .env file..."
             $EnvContent = Get-Content $EnvPath -Raw
             if ([string]::IsNullOrWhiteSpace($awsKey) -and $EnvContent -match "AWS_KEY\s*=\s*([^\r\n]+)") {
                 $awsKey = $matches[1].Trim()
+                Write-Info "  Found AWS_KEY in .env: $($awsKey.Substring(0, [Math]::Min(10, $awsKey.Length)))..."
             }
             if ([string]::IsNullOrWhiteSpace($awsSecret) -and $EnvContent -match "AWS_SECRET\s*=\s*([^\r\n]+)") {
                 $awsSecret = $matches[1].Trim()
+                Write-Info "  Found AWS_SECRET in .env: $($awsSecret.Substring(0, [Math]::Min(10, $awsSecret.Length)))..."
             }
             if ([string]::IsNullOrWhiteSpace($awsRegion) -and $EnvContent -match "AWS_REGION\s*=\s*([^\r\n]+)") {
                 $awsRegion = $matches[1].Trim()
+                Write-Info "  Found AWS_REGION in .env: $awsRegion"
             }
         }
         

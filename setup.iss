@@ -404,12 +404,39 @@ begin
       Result := False;
       Exit;
     end;
+    // Store GitHub token to registry
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
+  end;
+  
+  // Store AWS Key to registry when leaving AWS Key page
+  if CurPageID = AWSKeyPage.ID then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKeyPage.Values[0]);
+  end;
+  
+  // Store AWS Secret to registry when leaving AWS Secret page
+  if CurPageID = AWSSecretPage.ID then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecretPage.Values[0]);
+  end;
+  
+  // Store AWS Region to registry when leaving AWS Region page
+  if CurPageID = AWSRegionPage.ID then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegionPage.Values[0]);
   end;
   
   // Validate AWS credentials if model download is selected
   if CurPageID = ModelDownloadPage.ID then
   begin
     ModelDownload := ModelDownloadPage.SelectedValueIndex = 0;
+    
+    // Store ModelDownload flag to registry
+    if ModelDownload then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'False');
+    
     if ModelDownload then
     begin
       AWSKey := Trim(AWSKeyPage.Values[0]);
@@ -521,54 +548,36 @@ var
   AzureKeyGenerate: Boolean;
   AzureKeyCustom: String;
   ModelDownloadStr: String;
+  AzureKeyGenerateStr: String;
   Params: String;
 begin
   // Get installation path
   InstallPath := ExpandConstant('{app}');
   
-  // Try to get values from pages first, fallback to registry
-  try
-    GitHubToken := GitHubTokenPage.Values[0];
-    AWSKey := AWSKeyPage.Values[0];
-    AWSSecret := AWSSecretPage.Values[0];
-    AWSRegion := AWSRegionPage.Values[0];
-    ModelDownload := ModelDownloadPage.SelectedValueIndex = 0;
-    ModelPath := ModelPathPage.Values[0];
-    SettingsPassword := SettingsPasswordPage.Values[0];
-    SuperUserPassword := SuperUserPasswordPage.Values[0];
-    RFQUserPassword := RFQUserPasswordPage.Values[0];
-    ServerURL := ServerURLPage.Values[0];
-    AzureKeyGenerate := AzureKeyPage.SelectedValueIndex = 0;
-    if not AzureKeyGenerate then
-      AzureKeyCustom := AzureKeyInputPage.Values[0]
-    else
-      AzureKeyCustom := '';
-  except
-    // Fallback to registry if pages not available
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURL);
-    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyCustom);
-    if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', ModelDownloadStr) then
-      AzureKeyGenerate := (ModelDownloadStr = 'True')
-    else
-      AzureKeyGenerate := True;
-  end;
+  // Always read from registry since that's where values are stored during wizard
+  // Pages may not be accessible during the [Run] section
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURL);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyCustom);
   
-  // Read ModelDownload from registry if not set from pages
-  if not ModelDownload then
-  begin
-    if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', ModelDownloadStr) then
-      ModelDownload := (ModelDownloadStr = 'True')
-    else
-      ModelDownload := False;
-  end;
+  // Read ModelDownload from registry
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', ModelDownloadStr) then
+    ModelDownload := (ModelDownloadStr = 'True')
+  else
+    ModelDownload := False;
+  
+  // Read AzureKeyGenerate from registry
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', AzureKeyGenerateStr) then
+    AzureKeyGenerate := (AzureKeyGenerateStr = 'True')
+  else
+    AzureKeyGenerate := True;
   
   // If ModelPath is empty, use default
   if ModelPath = '' then
