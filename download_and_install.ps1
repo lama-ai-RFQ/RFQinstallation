@@ -667,20 +667,24 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
         $awsKey = ""
         $awsSecret = ""
         $awsRegion = "us-east-1"  # Default region
+        $credentialsProvidedViaParams = $false
+        
+        # Check if credentials were provided via parameters (even if empty, means installer provided them)
+        $credentialsProvidedViaParams = ($PSBoundParameters.ContainsKey('AWSKey') -or $PSBoundParameters.ContainsKey('AWSSecret'))
         
         # Use provided parameters if available
-        if ($AWSKey -and $AWSKey.Trim() -ne "") {
+        if ($PSBoundParameters.ContainsKey('AWSKey') -and $AWSKey -and $AWSKey.Trim() -ne "") {
             $awsKey = $AWSKey
         }
-        if ($AWSSecret -and $AWSSecret.Trim() -ne "") {
+        if ($PSBoundParameters.ContainsKey('AWSSecret') -and $AWSSecret -and $AWSSecret.Trim() -ne "") {
             $awsSecret = $AWSSecret
         }
-        if ($AWSRegion -and $AWSRegion.Trim() -ne "") {
+        if ($PSBoundParameters.ContainsKey('AWSRegion') -and $AWSRegion -and $AWSRegion.Trim() -ne "") {
             $awsRegion = $AWSRegion
         }
         
         # If not provided via parameters, try reading from .env file
-        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and (Test-Path $EnvPath)) {
+        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and (Test-Path $EnvPath) -and -not $credentialsProvidedViaParams) {
             $EnvContent = Get-Content $EnvPath -Raw
             if ([string]::IsNullOrWhiteSpace($awsKey) -and $EnvContent -match "AWS_KEY\s*=\s*([^\r\n]+)") {
                 $awsKey = $matches[1].Trim()
@@ -693,8 +697,9 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
             }
         }
         
-        # Prompt for AWS credentials if not found
-        if ([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) {
+        # Only prompt for AWS credentials if not provided via parameters and not found in .env
+        # If credentials were provided via parameters but are empty, that means user didn't enter them in installer
+        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and -not $credentialsProvidedViaParams) {
             Write-Info ""
             Write-Info "AWS credentials required for model download"
             Write-Info "============================================="

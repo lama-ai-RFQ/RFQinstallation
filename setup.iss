@@ -406,6 +406,25 @@ begin
     end;
   end;
   
+  // Validate AWS credentials if model download is selected
+  if CurPageID = ModelDownloadPage.ID then
+  begin
+    ModelDownload := ModelDownloadPage.SelectedValueIndex = 0;
+    if ModelDownload then
+    begin
+      AWSKey := Trim(AWSKeyPage.Values[0]);
+      AWSSecret := Trim(AWSSecretPage.Values[0]);
+      if (AWSKey = '') or (AWSSecret = '') then
+      begin
+        MsgBox('AWS credentials are required for model download.' + #13#10 + #13#10 +
+               'Please go back and enter your AWS Access Key ID and Secret Access Key.',
+               mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end;
+  end;
+  
   if CurPageID = ModelPathPage.ID then
   begin
     // Prepare installation parameters
@@ -591,12 +610,10 @@ begin
   if ModelDownload then
   begin
     Params := Params + ' -ModelPath "' + ModelPath + '"';
-    if AWSKey <> '' then
-      Params := Params + ' -AWSKey "' + AWSKey + '"';
-    if AWSSecret <> '' then
-      Params := Params + ' -AWSSecret "' + AWSSecret + '"';
-    if AWSRegion <> '' then
-      Params := Params + ' -AWSRegion "' + AWSRegion + '"';
+    // Always pass AWS credentials if model download is selected (even if empty, so script knows they were provided by installer)
+    Params := Params + ' -AWSKey "' + AWSKey + '"';
+    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
+    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
   end;
   
   Result := Params;
