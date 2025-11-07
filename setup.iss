@@ -63,6 +63,8 @@ Filename: "powershell.exe"; \
 
 [Code]
 var
+  DependencyCheckPage: TWizardPage;
+  DependencyCheckLabel: TLabel;
   GitHubTokenPage: TInputQueryWizardPage;
   AWSKeyPage: TInputQueryWizardPage;
   AWSSecretPage: TInputQueryWizardPage;
@@ -73,8 +75,208 @@ var
   SuperUserPasswordPage: TInputQueryWizardPage;
   RFQUserPasswordPage: TInputQueryWizardPage;
 
-procedure InitializeWizard;
+function CheckPostgreSQLInstalled(): Boolean;
+var
+  ResultCode: Integer;
+  PsqlPath: String;
+  RegPath: String;
+  RegValue: String;
 begin
+  Result := False;
+  
+  // Check if psql.exe is in PATH using 'where' command
+  if Exec('cmd.exe', '/c where psql >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check PostgreSQL registry keys for installation path
+  // PostgreSQL typically stores installation info in registry
+  RegPath := 'SOFTWARE\PostgreSQL\Installations';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, 'Base Directory', RegValue) then
+  begin
+    PsqlPath := RegValue + '\bin\psql.exe';
+    if FileExists(PsqlPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check common PostgreSQL installation locations
+  // Try common version paths
+  PsqlPath := ExpandConstant('{pf}\PostgreSQL\16\bin\psql.exe');
+  if FileExists(PsqlPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PsqlPath := ExpandConstant('{pf}\PostgreSQL\15\bin\psql.exe');
+  if FileExists(PsqlPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PsqlPath := ExpandConstant('{pf}\PostgreSQL\14\bin\psql.exe');
+  if FileExists(PsqlPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PsqlPath := ExpandConstant('{pf}\PostgreSQL\13\bin\psql.exe');
+  if FileExists(PsqlPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  // Check Program Files (x86)
+  PsqlPath := ExpandConstant('{pf32}\PostgreSQL\16\bin\psql.exe');
+  if FileExists(PsqlPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PsqlPath := ExpandConstant('{pf32}\PostgreSQL\15\bin\psql.exe');
+  if FileExists(PsqlPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+end;
+
+function CheckOpenSSLInstalled(): Boolean;
+var
+  ResultCode: Integer;
+  OpensslPath: String;
+begin
+  Result := False;
+  
+  // Check if openssl.exe is in PATH using 'where' command
+  if Exec('cmd.exe', '/c where openssl >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check common OpenSSL installation locations
+  // OpenSSL is often installed in Program Files
+  OpensslPath := ExpandConstant('{pf}\OpenSSL-Win64\bin\openssl.exe');
+  if FileExists(OpensslPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  OpensslPath := ExpandConstant('{pf}\OpenSSL\bin\openssl.exe');
+  if FileExists(OpensslPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  // Check Program Files (x86)
+  OpensslPath := ExpandConstant('{pf32}\OpenSSL-Win32\bin\openssl.exe');
+  if FileExists(OpensslPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  OpensslPath := ExpandConstant('{pf32}\OpenSSL\bin\openssl.exe');
+  if FileExists(OpensslPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  // Check common alternative locations
+  if FileExists('C:\OpenSSL-Win64\bin\openssl.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  if FileExists('C:\OpenSSL\bin\openssl.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  // Dependencies will be checked and shown on the dependency check page
+  Result := True;
+end;
+
+procedure InitializeWizard;
+var
+  StatusText: String;
+  PostgreSQLStatus: String;
+  OpenSSLStatus: String;
+begin
+  // Create dependency check page - appears FIRST
+  DependencyCheckPage := CreateCustomPage(wpWelcome,
+    'System Requirements Check', 'Checking for required dependencies...');
+  
+  // Create label to show dependency status
+  DependencyCheckLabel := TLabel.Create(DependencyCheckPage);
+  DependencyCheckLabel.Parent := DependencyCheckPage.Surface;
+  DependencyCheckLabel.Left := 0;
+  DependencyCheckLabel.Top := 0;
+  DependencyCheckLabel.Width := DependencyCheckPage.SurfaceWidth;
+  DependencyCheckLabel.Height := DependencyCheckPage.SurfaceHeight;
+  DependencyCheckLabel.AutoSize := False;
+  DependencyCheckLabel.WordWrap := True;
+  DependencyCheckLabel.Font.Size := 9;
+  
+  // Check dependencies and build status text
+  if CheckPostgreSQLInstalled() then
+    PostgreSQLStatus := '✓ PostgreSQL: Installed'
+  else
+    PostgreSQLStatus := '✗ PostgreSQL: Not found';
+    
+  if CheckOpenSSLInstalled() then
+    OpenSSLStatus := '✓ OpenSSL: Installed'
+  else
+    OpenSSLStatus := '✗ OpenSSL: Not found';
+  
+  // Build status text
+  StatusText := 'Checking system requirements...' + #13#10 + #13#10;
+  StatusText := StatusText + PostgreSQLStatus + #13#10;
+  StatusText := StatusText + OpenSSLStatus + #13#10 + #13#10;
+  
+  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() then
+  begin
+    StatusText := StatusText + 'All required dependencies are installed.' + #13#10;
+    StatusText := StatusText + 'You can proceed with the installation.';
+    DependencyCheckLabel.Font.Color := clGreen;
+  end
+  else
+  begin
+    StatusText := StatusText + 'Some required dependencies are missing.' + #13#10;
+    StatusText := StatusText + 'Please install the missing components before continuing.' + #13#10 + #13#10;
+    StatusText := StatusText + 'Download links:' + #13#10;
+    StatusText := StatusText + 'PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
+    StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10 + #13#10;
+    StatusText := StatusText + 'After installing the missing components, please restart this installer.';
+    DependencyCheckLabel.Font.Color := clRed;
+  end;
+  
+  DependencyCheckLabel.Caption := StatusText;
+  
   // Create GitHub Token page - appears AFTER directory selection
   GitHubTokenPage := CreateInputQueryPage(wpSelectDir,
     'GitHub Authentication', 'GitHub Personal Access Token Required',
@@ -148,6 +350,19 @@ var
   Params: String;
 begin
   Result := True;
+  
+  // Prevent proceeding from dependency check page if dependencies are missing
+  if CurPageID = DependencyCheckPage.ID then
+  begin
+    if not CheckPostgreSQLInstalled() or not CheckOpenSSLInstalled() then
+    begin
+      MsgBox('Please install the missing dependencies before continuing.' + #13#10 + #13#10 +
+             'You can cancel this installer, install the missing components, and restart.',
+             mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
   
   // Validate GitHub token is mandatory
   if CurPageID = GitHubTokenPage.ID then
