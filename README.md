@@ -1,220 +1,186 @@
-# RFQ Application - Windows Installation Scripts
+# RFQ Application - Windows Installer (Developer Guide)
 
-This directory contains scripts and documentation for creating and distributing the RFQ Application Windows installer.
+This directory contains the Inno Setup installer script for creating the Windows installer.
 
 ## 📁 Directory Contents
 
-### For Creating Installation Packages
-
 | File | Purpose |
 |------|---------|
-| `prepare_installer_package.ps1` | Prepares a ZIP package for the public installation repo |
-| `README_RFQinstallation_repo.md` | Documentation for setting up the `lama-ai-RFQ/RFQinstallation` repository |
-
-### For End Users (to be distributed)
-
-| File | Purpose |
-|------|---------|
-| `download_and_install.ps1` | PowerShell installer script (download from GitHub releases) |
-| `install.bat` | Simple batch wrapper for the PowerShell script |
+| `setup.iss` | Inno Setup installer script - compiles to `RFQ_Application_Setup.exe` |
+| `download_and_install.ps1` | PowerShell script used by the installer to download and install components |
 | `USER_QUICK_START.md` | End-user installation guide |
 
-## 🎯 Purpose
+## 🚀 Creating the Installer
 
-This directory supports a **two-repository installation and update system**:
+### Prerequisites
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│  PUBLIC REPO: lama-ai-RFQ/RFQinstallation                      │
-│  Purpose: First-time installation (bootstrap)                   │
-│  Contains: Complete application package (~3-4 GB)               │
-│  Access: Public (no token required for download)                │
-└────────────────────────────────────────────────────────────────┘
-                              ↓
-┌────────────────────────────────────────────────────────────────┐
-│  PRIVATE REPO: lama-ai-rfq/rfqwindowspackages                 │
-│  Purpose: Ongoing updates (component-based)                     │
-│  Contains: Incremental update packages with manifest.json       │
-│  Access: Requires GITHUB_PAT token                              │
-└────────────────────────────────────────────────────────────────┘
-```
+- Inno Setup 6.x installed
+- Built Windows application (from PyInstaller or your build process)
+- GitHub Personal Access Token (for downloading from private repo)
 
-## 🚀 Quick Start
-
-### For Developers: Creating an Installation Package
+### Build Process
 
 1. **Build your Windows application** (using PyInstaller or your build process)
 
-2. **Prepare the installer package**:
-   ```powershell
-   cd windows\installation
-   .\prepare_installer_package.ps1 -SourcePath "..\..\dist\RFQ_Application" -Version "3.0.815"
-   ```
+2. **Compile the installer**:
+   - Open `setup.iss` in Inno Setup Compiler
+   - Or use command line:
+     ```powershell
+     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
+     ```
 
-3. **This creates**: `RFQ-windows-installer-v3.0.815.zip`
+3. **Output**: `installer_output\RFQ_Application_Setup.exe`
 
-4. **Upload to GitHub**:
-   - Go to https://github.com/lama-ai-RFQ/RFQinstallation/releases/new
-   - Create tag: `v3.0.815`
-   - Upload the ZIP file
-   - Publish as latest release
+4. **Upload to GitHub releases**:
+   - Go to your GitHub releases page
+   - Create a new release with version tag
+   - Upload `RFQ_Application_Setup.exe`
+   - Publish release
 
-5. **Also upload the installer scripts**:
-   - Upload `download_and_install.ps1` as a release asset
-   - Upload `install.bat` as a release asset (optional)
+### Installer Features
 
-### For End Users: Installing the Application
+The Inno Setup installer (`setup.iss`) provides:
+- ✅ Directory selection page
+- ✅ GitHub token input (mandatory)
+- ✅ AWS credentials input (for model download)
+- ✅ Model download option and path selection
+- ✅ Database password configuration (Settings, Super User, RFQ User)
+- ✅ Automatic component download from private GitHub repo
+- ✅ Model download from AWS S3 (optional, ~30 GB)
+- ✅ Desktop shortcut creation
+- ✅ Progress display during installation
 
-Users download `download_and_install.ps1` from the releases page and run:
+### For End Users
 
-```powershell
-.\download_and_install.ps1 -GitHubToken "ghp_xxxxxxxxxxxxx"
-```
-
-See `USER_QUICK_START.md` for detailed end-user instructions.
+Users download `RFQ_Application_Setup.exe` from GitHub releases and run it. See `USER_QUICK_START.md` for detailed end-user instructions.
 
 ## 📋 Workflow
 
-### 1. Initial Setup (One-Time)
-
-Create the public installation repository:
-
-```bash
-# Create new public repository on GitHub
-https://github.com/lama-ai-RFQ/RFQinstallation
-
-# Initialize with README_RFQinstallation_repo.md content
-```
-
-### 2. Creating a Release
+### Creating a Release
 
 ```powershell
 # 1. Build Windows application
 cd windows
 .\build_windows_exe.ps1
 
-# 2. Prepare installer package
+# 2. Compile installer
 cd installation
-.\prepare_installer_package.ps1 -SourcePath "..\..\dist\RFQ_Application" -Version "3.0.815"
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
 
 # 3. Upload to GitHub releases
-# - Go to https://github.com/lama-ai-RFQ/RFQinstallation/releases/new
-# - Upload RFQ-windows-installer-v3.0.815.zip
-# - Upload download_and_install.ps1
-# - Upload install.bat
+# - Go to your GitHub releases page
+# - Create new release with version tag
+# - Upload installer_output\RFQ_Application_Setup.exe
 # - Publish release
 ```
 
-### 3. User Installation Flow
+### User Installation Flow
 
 ```
-User downloads → download_and_install.ps1
+User downloads → RFQ_Application_Setup.exe
        ↓
-Script fetches → RFQ-windows-installer-vX.X.XXX.zip from GitHub
+Runs installer → Collects configuration (GitHub token, AWS creds, passwords)
        ↓
-Extracts to → %LOCALAPPDATA%\RFQApplication
+Installer runs → download_and_install.ps1 script
        ↓
-Creates .env → with GITHUB_PAT for updates
+Downloads components → From private GitHub repo (component-based)
+       ↓
+Extracts to → Selected installation directory
+       ↓
+Creates .env → With all provided credentials
+       ↓
+Downloads model → From AWS S3 (optional, ~30 GB)
        ↓
 User launches → RFQ_Application.exe
        ↓
-Future updates → via built-in update manager (from private repo)
+Future updates → Via built-in update manager (from private repo)
 ```
 
 ## 🔧 Script Details
 
-### prepare_installer_package.ps1
+### setup.iss
 
-**Purpose**: Packages your built Windows application into a clean ZIP file.
+**Purpose**: Inno Setup installer script that creates the Windows installer.
 
 **Features**:
-- Copies application files
-- Excludes unnecessary files (logs, cache, temp files)
-- Creates version.txt
-- Creates .env.template
-- Produces ZIP ready for GitHub release
+- Directory selection
+- GitHub token input (mandatory)
+- AWS credentials input
+- Model download option and path selection
+- Database password configuration
+- Calls `download_and_install.ps1` to perform actual installation
+- Creates desktop shortcut
 
-**Usage**:
+**Compilation**:
 ```powershell
-.\prepare_installer_package.ps1 -SourcePath "path\to\build" -Version "3.0.815"
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
 ```
 
 ### download_and_install.ps1
 
-**Purpose**: End-user installer that downloads and installs the application.
+**Purpose**: PowerShell script that performs the actual installation (called by the installer).
 
 **Features**:
-- Downloads latest release from GitHub
+- Downloads components from private GitHub repo
 - Validates prerequisites (PowerShell version, disk space)
-- Extracts to installation directory
-- Configures .env with GitHub PAT
+- Extracts components to installation directory
+- Configures .env with all provided credentials
+- Downloads model from AWS S3 (optional)
 - Creates desktop shortcut
 - Provides progress indicators
 
-**Usage**:
-```powershell
-.\download_and_install.ps1 -GitHubToken "ghp_xxxxx"
-.\download_and_install.ps1 -InstallPath "C:\MyApps\RFQ" -GitHubToken "ghp_xxxxx"
-```
-
-### install.bat
-
-**Purpose**: Simple batch wrapper for users uncomfortable with PowerShell.
-
-**Usage**: Double-click to run
-
-## 📝 File Exclusions
-
-When preparing installer packages, these patterns are excluded:
-
-- `*.pyc` - Python bytecode
-- `__pycache__` - Python cache directories  
-- `logs` - Log files
-- `temp*` - Temporary files
-- `*.log` - Individual log files
-- `local_manifest.json` - Update manager state
-- `updates` - Downloaded update files
-- `backup` - Backup files
-- `email_attachments` - User data
-- `quotations` - User data
-- `.git` - Git repository
-- `.idea` - IDE settings
-- `node_modules` - Node dependencies
+**Parameters**:
+- `-InstallPath`: Installation directory
+- `-GitHubToken`: GitHub Personal Access Token (mandatory)
+- `-OverwriteExisting`: Skip overwrite prompt
+- `-ModelPath`: Model download directory (optional)
+- `-AWSKey`, `-AWSSecret`, `-AWSRegion`: AWS credentials (optional)
+- `-SettingsPassword`, `-SuperUserPassword`, `-RFQUserPassword`: Database passwords
 
 ## 🔐 Security
 
-- **Public repo**: Contains installer scripts and packaged application
-- **No secrets**: Never include GitHub PAT or passwords in installer
-- **User-provided**: GitHub PAT is provided by user during installation
-- **Local storage**: PAT stored in `.env` file locally (not in repo)
+- **No secrets in installer**: Never include GitHub PAT or passwords in the installer
+- **User-provided**: All credentials (GitHub token, AWS credentials, database passwords) are provided by user during installation
+- **Local storage**: Credentials stored in `.env` file locally (not in repo or installer)
+- **Private repo access**: Installer downloads from private GitHub repo using user-provided token
 
 ## 📚 Documentation
 
-- `README_RFQinstallation_repo.md` - Setup instructions for the public GitHub repo
 - `USER_QUICK_START.md` - End-user installation guide
 - This file - Developer/maintainer reference
 
 ## 🆘 Troubleshooting
 
-### Script execution blocked
+### Compilation Issues
 
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass
-```
+**Problem**: Inno Setup compiler not found
+**Solution**: Install Inno Setup 6.x from https://jrsoftware.org/isdl.php
 
-### Package too large for GitHub
+**Problem**: Compilation errors in setup.iss
+**Solution**: 
+- Check syntax in setup.iss
+- Verify all referenced files exist
+- Check Inno Setup compiler output for specific errors
 
-- GitHub has 2 GB file limit
-- If installer exceeds this, consider:
-  - Splitting into multiple parts
-  - Hosting on alternative service
-  - Using Git LFS for release assets
+### Installation Issues
 
-### Installation fails
+**Problem**: Installer fails to download components
+**Solution**:
+- Verify GitHub token is correct
+- Check internet connection
+- Ensure private repo access with the token
 
-- Check logs created by installer
-- Verify disk space (4 GB minimum)
-- Ensure PowerShell 5.1+
+**Problem**: Model download fails
+**Solution**:
+- Verify AWS credentials are correct
+- Check AWS S3 bucket permissions
+- Ensure sufficient disk space (~30 GB for model)
+
+**Problem**: Installation fails
+**Solution**:
+- Check logs in installation directory
+- Verify disk space (4 GB minimum for app, 30 GB for model)
+- Ensure PowerShell 5.1+ is installed
 - Check antivirus settings
 
 ## 🔗 Related

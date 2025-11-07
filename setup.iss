@@ -54,8 +54,9 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 [Run]
 ; Run the PowerShell installation script
 ; Show PowerShell window so user can see download progress
+; Parameters will be built dynamically in CurStepChanged
 Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File ""{tmp}\download_and_install.ps1"" -InstallPath ""{app}"""; \
+    Parameters: "{code:GetPowerShellParams}"; \
     StatusMsg: "Installing RFQ Application..."; \
     Flags: waituntilterminated; \
     Description: "Installing application files... (This may take several minutes - a PowerShell window will show progress)"
@@ -68,11 +69,14 @@ var
   AWSRegionPage: TInputQueryWizardPage;
   ModelDownloadPage: TInputOptionWizardPage;
   ModelPathPage: TInputDirWizardPage;
+  SettingsPasswordPage: TInputQueryWizardPage;
+  SuperUserPasswordPage: TInputQueryWizardPage;
+  RFQUserPasswordPage: TInputQueryWizardPage;
 
 procedure InitializeWizard;
 begin
-  // Create GitHub Token page
-  GitHubTokenPage := CreateInputQueryPage(wpWelcome,
+  // Create GitHub Token page - appears AFTER directory selection
+  GitHubTokenPage := CreateInputQueryPage(wpSelectDir,
     'GitHub Authentication', 'GitHub Personal Access Token Required',
     'The installation package is in a private repository and requires authentication.' + #13#10 +
     'Please enter your GitHub Personal Access Token:');
@@ -100,7 +104,8 @@ begin
   // Create model download option page
   ModelDownloadPage := CreateInputOptionPage(AWSRegionPage.ID,
     'Model Download', 'Download Language Model',
-    'The application requires the Mistral-7B-Instruct-v0.3 language model (~4-5 GB).',
+    'The application requires the Mistral-7B-Instruct-v0.3 language model.' + #13#10 +
+    'This is a LARGE download (~30 GB) and may take 30-60 minutes depending on your internet connection.',
     True, False);
   ModelDownloadPage.Add('Download model now (recommended)');
   ModelDownloadPage.Add('Skip download (download later)');
@@ -109,8 +114,25 @@ begin
   // Create model path page (if downloading)
   ModelPathPage := CreateInputDirPage(ModelDownloadPage.ID,
     'Model Location', 'Where should the model be downloaded?',
-    'Select the directory where the model should be downloaded:', False, '');
+    'The model is LARGE (~30 GB). Select the directory where the model should be downloaded:' + #13#10 +
+    '(Default: Documents\RFQ_Models)', False, '');
   ModelPathPage.Add('');
+  
+  // Create database password pages
+  SettingsPasswordPage := CreateInputQueryPage(ModelPathPage.ID,
+    'Database Configuration', 'Settings Password',
+    'Enter a password for the application settings database access:');
+  SettingsPasswordPage.Add('Settings Password:', True);  // True = password field (masked)
+  
+  SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
+    'Database Configuration', 'PostgreSQL Super User Password',
+    'Enter the PostgreSQL super user password (for database setup):');
+  SuperUserPasswordPage.Add('PostgreSQL Super User Password:', True);  // True = password field (masked)
+  
+  RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
+    'Database Configuration', 'RFQ User Password',
+    'Enter the password for the RFQ database user:');
+  RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -127,10 +149,28 @@ var
 begin
   Result := True;
   
+  // Validate GitHub token is mandatory
+  if CurPageID = GitHubTokenPage.ID then
+  begin
+    GitHubToken := Trim(GitHubTokenPage.Values[0]);
+    if (GitHubToken = '') then
+    begin
+      MsgBox('GitHub Personal Access Token is required to continue.' + #13#10 + #13#10 +
+             'Please enter a valid GitHub token (starts with ghp_...).' + #13#10 + #13#10 +
+             'The software provider should supply you with a GitHub Personal Access Token.' + #13#10 +
+             'Please contact your software provider if you do not have a token.',
+             mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+  
   if CurPageID = ModelPathPage.ID then
   begin
     // Prepare installation parameters
+    // {app} is now available since directory selection page has been shown
     InstallPath := ExpandConstant('{app}');
+    
     GitHubToken := GitHubTokenPage.Values[0];
     AWSKey := AWSKeyPage.Values[0];
     AWSSecret := AWSSecretPage.Values[0];
@@ -140,16 +180,6 @@ begin
     
     if ModelPath = '' then
       ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
-    
-    // Build parameters for PowerShell script
-    Params := '-ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
-    Params := Params + ' -InstallPath "' + InstallPath + '"';
-    Params := Params + ' -GitHubToken "' + GitHubToken + '"';
-    
-    if ModelDownload then
-    begin
-      Params := Params + ' -ModelPath "' + ModelPath + '"';
-    end;
     
     // Store values in registry for the PowerShell script to read
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
@@ -163,6 +193,14 @@ begin
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'False');
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
   end;
+  
+  // Store database passwords when on the last password page
+  if CurPageID = RFQUserPasswordPage.ID then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPasswordPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -172,6 +210,93 @@ begin
   // Skip model path page if not downloading model
   if PageID = ModelPathPage.ID then
     Result := ModelDownloadPage.SelectedValueIndex <> 0;
+end;
+
+function GetPowerShellParams(Param: String): String;
+var
+  InstallPath: String;
+  GitHubToken: String;
+  AWSKey: String;
+  AWSSecret: String;
+  AWSRegion: String;
+  ModelDownload: Boolean;
+  ModelPath: String;
+  SettingsPassword: String;
+  SuperUserPassword: String;
+  RFQUserPassword: String;
+  ModelDownloadStr: String;
+  Params: String;
+begin
+  // Get installation path
+  InstallPath := ExpandConstant('{app}');
+  
+  // Try to get values from pages first, fallback to registry
+  try
+    GitHubToken := GitHubTokenPage.Values[0];
+    AWSKey := AWSKeyPage.Values[0];
+    AWSSecret := AWSSecretPage.Values[0];
+    AWSRegion := AWSRegionPage.Values[0];
+    ModelDownload := ModelDownloadPage.SelectedValueIndex = 0;
+    ModelPath := ModelPathPage.Values[0];
+    SettingsPassword := SettingsPasswordPage.Values[0];
+    SuperUserPassword := SuperUserPasswordPage.Values[0];
+    RFQUserPassword := RFQUserPasswordPage.Values[0];
+  except
+    // Fallback to registry if pages not available
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
+  end;
+  
+  // Read ModelDownload from registry if not set from pages
+  if not ModelDownload then
+  begin
+    if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', ModelDownloadStr) then
+      ModelDownload := (ModelDownloadStr = 'True')
+    else
+      ModelDownload := False;
+  end;
+  
+  // If ModelPath is empty, use default
+  if ModelPath = '' then
+    ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
+  
+  // If AWSRegion is empty, use default
+  if AWSRegion = '' then
+    AWSRegion := 'us-east-1';
+  
+  // Build PowerShell command parameters
+  Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
+  Params := Params + ' -InstallPath "' + InstallPath + '"';
+  Params := Params + ' -GitHubToken "' + GitHubToken + '"';
+  Params := Params + ' -OverwriteExisting';
+  
+  // Add database passwords
+  if SettingsPassword <> '' then
+    Params := Params + ' -SettingsPassword "' + SettingsPassword + '"';
+  if SuperUserPassword <> '' then
+    Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
+  if RFQUserPassword <> '' then
+    Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
+  
+  // Add AWS credentials and model path if downloading
+  if ModelDownload then
+  begin
+    Params := Params + ' -ModelPath "' + ModelPath + '"';
+    if AWSKey <> '' then
+      Params := Params + ' -AWSKey "' + AWSKey + '"';
+    if AWSSecret <> '' then
+      Params := Params + ' -AWSSecret "' + AWSSecret + '"';
+    if AWSRegion <> '' then
+      Params := Params + ' -AWSRegion "' + AWSRegion + '"';
+  end;
+  
+  Result := Params;
 end;
 
 [UninstallDelete]
