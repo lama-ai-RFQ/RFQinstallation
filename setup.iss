@@ -74,6 +74,9 @@ var
   SettingsPasswordPage: TInputQueryWizardPage;
   SuperUserPasswordPage: TInputQueryWizardPage;
   RFQUserPasswordPage: TInputQueryWizardPage;
+  ServerURLPage: TInputQueryWizardPage;
+  AzureKeyPage: TInputOptionWizardPage;
+  AzureKeyInputPage: TInputQueryWizardPage;
 
 function CheckPostgreSQLInstalled(): Boolean;
 var
@@ -335,6 +338,29 @@ begin
     'Database Configuration', 'RFQ User Password',
     'Enter the password for the RFQ database user:');
   RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
+  
+  // Create Server URL page
+  ServerURLPage := CreateInputQueryPage(RFQUserPasswordPage.ID,
+    'Server Configuration', 'Server URL',
+    'Enter the server URL for OAuth redirects (default: https://localhost):');
+  ServerURLPage.Add('Server URL:', False);
+  ServerURLPage.Values[0] := 'https://localhost';
+  
+  // Create Azure Encryption Key page
+  AzureKeyPage := CreateInputOptionPage(ServerURLPage.ID,
+    'Azure Configuration', 'Azure Config Encryption Key',
+    'The application uses an encryption key for Azure configuration.' + #13#10 +
+    'You can generate this automatically using OpenSSL, or enter your own key.',
+    True, False);
+  AzureKeyPage.Add('Generate automatically using OpenSSL (recommended)');
+  AzureKeyPage.Add('Enter custom key');
+  AzureKeyPage.SelectedValueIndex := 0;
+  
+  // Create Azure Key Input page (shown only if custom key is selected)
+  AzureKeyInputPage := CreateInputQueryPage(AzureKeyPage.ID,
+    'Azure Configuration', 'Custom Encryption Key',
+    'Enter your custom Azure configuration encryption key (base64 encoded):');
+  AzureKeyInputPage.Add('Azure Config Encryption Key:', False);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -416,6 +442,35 @@ begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
   end;
+  
+  // Store Server URL when on Server URL page
+  if CurPageID = ServerURLPage.ID then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURLPage.Values[0]);
+  end;
+  
+  // Store Azure key settings when on Azure key page
+  if CurPageID = AzureKeyPage.ID then
+  begin
+    if AzureKeyPage.SelectedValueIndex = 0 then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', 'False');
+  end;
+  
+  // Validate Azure key input if custom key is selected
+  if CurPageID = AzureKeyInputPage.ID then
+  begin
+    if Trim(AzureKeyInputPage.Values[0]) = '' then
+    begin
+      MsgBox('Azure configuration encryption key is required when using a custom key.' + #13#10 + #13#10 +
+             'Please enter a valid base64-encoded encryption key, or go back and select automatic generation.',
+             mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyInputPage.Values[0]);
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -425,6 +480,10 @@ begin
   // Skip model path page if not downloading model
   if PageID = ModelPathPage.ID then
     Result := ModelDownloadPage.SelectedValueIndex <> 0;
+  
+  // Skip Azure key input page if auto-generate is selected
+  if PageID = AzureKeyInputPage.ID then
+    Result := AzureKeyPage.SelectedValueIndex = 0;
 end;
 
 function GetPowerShellParams(Param: String): String;
@@ -439,6 +498,9 @@ var
   SettingsPassword: String;
   SuperUserPassword: String;
   RFQUserPassword: String;
+  ServerURL: String;
+  AzureKeyGenerate: Boolean;
+  AzureKeyCustom: String;
   ModelDownloadStr: String;
   Params: String;
 begin
@@ -456,6 +518,12 @@ begin
     SettingsPassword := SettingsPasswordPage.Values[0];
     SuperUserPassword := SuperUserPasswordPage.Values[0];
     RFQUserPassword := RFQUserPasswordPage.Values[0];
+    ServerURL := ServerURLPage.Values[0];
+    AzureKeyGenerate := AzureKeyPage.SelectedValueIndex = 0;
+    if not AzureKeyGenerate then
+      AzureKeyCustom := AzureKeyInputPage.Values[0]
+    else
+      AzureKeyCustom := '';
   except
     // Fallback to registry if pages not available
     RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
@@ -466,6 +534,12 @@ begin
     RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
     RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
     RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURL);
+    RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyCustom);
+    if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', ModelDownloadStr) then
+      AzureKeyGenerate := (ModelDownloadStr = 'True')
+    else
+      AzureKeyGenerate := True;
   end;
   
   // Read ModelDownload from registry if not set from pages
@@ -485,6 +559,10 @@ begin
   if AWSRegion = '' then
     AWSRegion := 'us-east-1';
   
+  // If ServerURL is empty, use default
+  if ServerURL = '' then
+    ServerURL := 'https://localhost';
+  
   // Build PowerShell command parameters
   Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
   Params := Params + ' -InstallPath "' + InstallPath + '"';
@@ -498,6 +576,16 @@ begin
     Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
   if RFQUserPassword <> '' then
     Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
+  
+  // Add Server URL
+  if ServerURL <> '' then
+    Params := Params + ' -ServerURL "' + ServerURL + '"';
+  
+  // Add Azure key settings
+  if AzureKeyGenerate then
+    Params := Params + ' -AzureKeyGenerate'
+  else if AzureKeyCustom <> '' then
+    Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
   
   // Add AWS credentials and model path if downloading
   if ModelDownload then
