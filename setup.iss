@@ -708,14 +708,20 @@ begin
   else if AzureKeyCustom <> '' then
     Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
   
-  // Add AWS credentials and model path if downloading
+  // Add model download options
   if ModelDownload then
   begin
+    // User chose to download - pass model path and AWS credentials
     Params := Params + ' -ModelPath "' + ModelPath + '"';
     // Always pass AWS credentials if model download is selected (even if empty, so script knows they were provided by installer)
     Params := Params + ' -AWSKey "' + AWSKey + '"';
     Params := Params + ' -AWSSecret "' + AWSSecret + '"';
     Params := Params + ' -AWSRegion "' + AWSRegion + '"';
+  end
+  else
+  begin
+    // User chose to skip download - tell script not to prompt
+    Params := Params + ' -SkipModelDownload';
   end;
   
   Result := Params;

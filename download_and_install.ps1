@@ -8,6 +8,7 @@ param(
     [switch]$Help,
     [switch]$OverwriteExisting,
     [string]$ModelPath = "",
+    [switch]$SkipModelDownload,
     [string]$AWSKey = "",
     [string]$AWSSecret = "",
     [string]$AWSRegion = "us-east-1",
@@ -28,6 +29,14 @@ function Write-Info { Write-Host $args -ForegroundColor Cyan }
 function Write-Success { Write-Host $args -ForegroundColor Green }
 function Write-Warning { Write-Host $args -ForegroundColor Yellow }
 function Write-Error-Custom { Write-Host $args -ForegroundColor Red }
+
+# Exit with error and pause
+function Exit-WithError {
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
 
 # Show help
 if ($Help) {
@@ -89,7 +98,7 @@ Write-Info "`n[1/8] Checking PowerShell version..."
 if ($PSVersionTable.PSVersion.Major -lt 5) {
     Write-Error-Custom "ERROR: PowerShell 5.1 or later is required"
     Write-Error-Custom "Current version: $($PSVersionTable.PSVersion)"
-    exit 1
+    Exit-WithError
 }
 Write-Success "[OK] PowerShell version: $($PSVersionTable.PSVersion)"
 
@@ -102,7 +111,7 @@ if ($FreeSpace -lt 4) {
     Write-Warning "WARNING: Low disk space - $FreeSpaceFormatted GB free. Need at least 4 GB."
     $continue = Read-Host "Continue anyway? (y/N)"
     if ($continue -ne 'y') {
-        exit 1
+        Exit-WithError
     }
 }
 Write-Success "[OK] Available disk space: $FreeSpaceFormatted GB"
@@ -116,7 +125,7 @@ if (!(Test-Path $InstallPath)) {
     }
     catch {
         Write-Error-Custom "ERROR: Failed to create directory: $_"
-        exit 1
+        Exit-WithError
     }
 }
 else {
@@ -127,7 +136,7 @@ else {
     else {
         $overwrite = Read-Host "Overwrite existing installation? (y/N)"
         if ($overwrite -ne 'y') {
-            exit 1
+            Exit-WithError
         }
     }
 }
@@ -153,7 +162,7 @@ if (!$GitHubToken) {
     
     if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
         Write-Error-Custom "`nERROR: GitHub token is required to continue"
-        exit 1
+        Exit-WithError
     }
     
     Write-Host ""
@@ -175,11 +184,62 @@ try {
     Write-Success "[OK] Found version: $Version"
 }
 catch {
+    $StatusCode = $_.Exception.Response.StatusCode.value__
+    
     Write-Error-Custom "ERROR: Failed to fetch release information"
-    Write-Error-Custom "  Make sure the repository exists: https://github.com/$GITHUB_REPO"
-    Write-Error-Custom "  Make sure you provided a valid GitHub token (private repo)"
-    Write-Error-Custom "  Error: $_"
-    exit 1
+    Write-Error-Custom ""
+    
+    # Provide specific error messages based on HTTP status code
+    if ($StatusCode -eq 401) {
+        Write-Error-Custom "  → Authentication Failed (401 Unauthorized)"
+        Write-Error-Custom ""
+        Write-Error-Custom "  Your GitHub Personal Access Token is invalid or expired."
+        Write-Error-Custom ""
+        Write-Error-Custom "  Please check:"
+        Write-Error-Custom "    1. Token is correctly copied (should start with 'ghp_')"
+        Write-Error-Custom "    2. Token hasn't expired (check: https://github.com/settings/tokens)"
+        Write-Error-Custom "    3. Token hasn't been revoked"
+        Write-Error-Custom ""
+        Write-Error-Custom "  To create a new token:"
+        Write-Error-Custom "    → Go to: https://github.com/settings/tokens"
+        Write-Error-Custom "    → Generate new token (classic)"
+        Write-Error-Custom "    → Select scope: repo (Full control of private repositories)"
+    }
+    elseif ($StatusCode -eq 403) {
+        Write-Error-Custom "  → Access Forbidden (403 Forbidden)"
+        Write-Error-Custom ""
+        Write-Error-Custom "  Your token doesn't have permission to access this repository."
+        Write-Error-Custom ""
+        Write-Error-Custom "  Please check:"
+        Write-Error-Custom "    1. Token has 'repo' scope enabled"
+        Write-Error-Custom "    2. You have access to: https://github.com/$GITHUB_REPO"
+        Write-Error-Custom "    3. The repository owner has granted you access"
+        Write-Error-Custom ""
+        Write-Error-Custom "  Contact the repository owner if you need access."
+    }
+    elseif ($StatusCode -eq 404) {
+        Write-Error-Custom "  → Repository Not Found (404 Not Found)"
+        Write-Error-Custom ""
+        Write-Error-Custom "  The repository doesn't exist or you don't have access to it."
+        Write-Error-Custom ""
+        Write-Error-Custom "  Repository: https://github.com/$GITHUB_REPO"
+        Write-Error-Custom ""
+        Write-Error-Custom "  Please verify:"
+        Write-Error-Custom "    1. The repository exists"
+        Write-Error-Custom "    2. The repository name is spelled correctly"
+        Write-Error-Custom "    3. Your token has access to the repository"
+    }
+    else {
+        Write-Error-Custom "  General error occurred:"
+        Write-Error-Custom "  $($_.Exception.Message)"
+        Write-Error-Custom ""
+        Write-Error-Custom "  Please check:"
+        Write-Error-Custom "    1. Internet connection is working"
+        Write-Error-Custom "    2. GitHub is accessible (https://www.githubstatus.com/)"
+        Write-Error-Custom "    3. Repository exists: https://github.com/$GITHUB_REPO"
+    }
+    
+    Exit-WithError
 }
 
 # Download component-based installation package
@@ -199,7 +259,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         foreach ($asset in $Release.assets) {
             Write-Error-Custom "    - $($asset.name)"
         }
-        exit 1
+        Exit-WithError
     }
 
     # Download manifest
@@ -219,7 +279,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     }
     catch {
         Write-Error-Custom "ERROR: Failed to download manifest: $_"
-        exit 1
+        Exit-WithError
     }
 
     # Create temp directory for downloads
@@ -445,7 +505,7 @@ if ($ENABLE_STEP_7_EXTRACT) {
             }
             catch {
                 Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
-                exit 1
+                Exit-WithError
             }
         }
 
@@ -668,7 +728,12 @@ Write-Info "`nModel download..."
 $downloadModel = 'n'
 $modelBasePath = ""
 
-if ($ModelPath -and $ModelPath.Trim() -ne "") {
+if ($SkipModelDownload) {
+    # Installer explicitly requested to skip download - don't prompt
+    Write-Info "Model download skipped as requested by installer"
+    $downloadModel = 'n'
+}
+elseif ($ModelPath -and $ModelPath.Trim() -ne "") {
     # Model path provided via parameter - skip prompts
     Write-Info "Model download path provided by installer: $ModelPath"
     $modelBasePath = $ModelPath
