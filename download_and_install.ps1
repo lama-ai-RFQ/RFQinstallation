@@ -681,6 +681,23 @@ except Exception as e:
         }
 
         Write-Success "[OK] Extracted all components to: $InstallPath"
+        
+        # Save manifest to installation directory as local_manifest.json
+        # This allows the update manager to know what was installed
+        if ($Manifest) {
+            Write-Info "  Saving manifest to installation directory..."
+            $LocalManifestPath = Join-Path $InstallPath "local_manifest.json"
+            try {
+                $Manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $LocalManifestPath -Encoding UTF8 -Force
+                Write-Success "  [OK] Saved local manifest: $LocalManifestPath"
+            }
+            catch {
+                Write-Warning "  [!] Failed to save local manifest: $_"
+                # Not critical, continue with installation
+            }
+        } else {
+            Write-Warning "  [!] Manifest not available, skipping local manifest save"
+        }
 
         # Cleanup temp directory
         Remove-Item $TempDownloadDir -Recurse -Force -ErrorAction SilentlyContinue
