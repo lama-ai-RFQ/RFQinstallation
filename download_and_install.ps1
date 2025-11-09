@@ -289,6 +289,31 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     }
     New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
 
+    # Helper function to get a release by tag
+    function Get-ReleaseByTag {
+        param([string]$Tag)
+        try {
+            $ReleaseUrl = "$GITHUB_API/$GITHUB_REPO/releases/tags/$Tag"
+            $Release = Invoke-RestMethod -Uri $ReleaseUrl -Headers $Headers -ErrorAction Stop
+            return $Release
+        }
+        catch {
+            return $null
+        }
+    }
+
+    # Helper function to find asset in a release
+    function Find-AssetInRelease {
+        param(
+            [object]$ReleaseObj,
+            [string]$Filename
+        )
+        if (!$ReleaseObj -or !$ReleaseObj.assets) {
+            return $null
+        }
+        return $ReleaseObj.assets | Where-Object { $_.name -eq $Filename } | Select-Object -First 1
+    }
+
     # Download all component files
     $Components = $Manifest.components.PSObject.Properties
     $TotalComponents = $Components.Count
@@ -311,11 +336,27 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         foreach ($FileInfo in $ComponentInfo.files) {
             $Filename = $FileInfo.filename
             
-            # Find the asset
-            $Asset = $Release.assets | Where-Object { $_.name -eq $Filename } | Select-Object -First 1
+            # Try to find the asset in current release first
+            $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+            $SourceTag = $Version
+            
+            # If not found in current release, check previous release from minimum_versions
+            if (!$Asset -and $Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName) {
+                $PreviousVersion = $Manifest.minimum_versions.$ComponentName
+                Write-Info "    File not found in current release, checking previous release: $PreviousVersion"
+                
+                $PreviousRelease = Get-ReleaseByTag -Tag $PreviousVersion
+                if ($PreviousRelease) {
+                    $Asset = Find-AssetInRelease -ReleaseObj $PreviousRelease -Filename $Filename
+                    if ($Asset) {
+                        $SourceTag = $PreviousVersion
+                        Write-Info "    Found in previous release: $PreviousVersion"
+                    }
+                }
+            }
             
             if (!$Asset) {
-                Write-Warning "  [!] Asset not found: $Filename (component may be empty, skipping)"
+                Write-Warning "  [!] Asset not found: $Filename (checked current and previous releases, skipping)"
                 continue
             }
             
@@ -327,13 +368,21 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 
                 # Show file size and progress
                 $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
-                Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                if ($SourceTag -ne $Version) {
+                    Write-Info "    Downloading: $Filename ($FileSizeMB MB) from release $SourceTag..."
+                } else {
+                    Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                }
                 
                 # Show progress bar during download
                 $ProgressPreference = 'Continue'
                 Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
                 
-                Write-Success "    [OK] Downloaded: $Filename"
+                if ($SourceTag -ne $Version) {
+                    Write-Success "    [OK] Downloaded: $Filename from release $SourceTag"
+                } else {
+                    Write-Success "    [OK] Downloaded: $Filename"
+                }
                 $filesDownloaded++
             }
             catch {
