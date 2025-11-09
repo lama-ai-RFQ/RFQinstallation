@@ -444,10 +444,24 @@ if ($ENABLE_STEP_7_EXTRACT) {
                         $PartBytes = [System.IO.File]::ReadAllBytes($PartPath)
                         $OutputFile.Write($PartBytes, 0, $PartBytes.Length)
                     }
+                    $OutputFile.Flush()
                 }
                 finally {
                     $OutputFile.Close()
                 }
+                
+                # Verify the rejoined file exists and has content
+                Start-Sleep -Milliseconds 100  # Give filesystem time to sync
+                if (!(Test-Path $ComponentZip)) {
+                    Write-Error-Custom "ERROR: Failed to rejoin parts - output file not found"
+                    Exit-WithError
+                }
+                $fileSize = (Get-Item $ComponentZip).Length
+                if ($fileSize -eq 0) {
+                    Write-Error-Custom "ERROR: Rejoined file is empty"
+                    Exit-WithError
+                }
+                Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB"
             }
             
 
@@ -460,7 +474,115 @@ if ($ENABLE_STEP_7_EXTRACT) {
                 }
                 New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
                 
-                Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force
+                # Try multiple extraction methods
+                $extractionSuccess = $false
+                
+                # Method 1: Try 7-Zip (best for split archives)
+                $sevenZipPath = $null
+                $sevenZipLocations = @(
+                    "C:\Program Files\7-Zip\7z.exe",
+                    "C:\Program Files (x86)\7-Zip\7z.exe",
+                    "$env:ProgramFiles\7-Zip\7z.exe",
+                    "$env:ProgramFiles(x86)\7-Zip\7z.exe"
+                )
+                
+                # Check common locations
+                foreach ($location in $sevenZipLocations) {
+                    if (Test-Path $location) {
+                        $sevenZipPath = $location
+                        break
+                    }
+                }
+                
+                # Check PATH if not found in common locations
+                if (-not $sevenZipPath) {
+                    $sevenZipCmd = Get-Command 7z -ErrorAction SilentlyContinue
+                    if ($sevenZipCmd) {
+                        $sevenZipPath = $sevenZipCmd.Path
+                    }
+                }
+                
+                if ($sevenZipPath) {
+                    Write-Info "    Using 7-Zip to extract..."
+                    try {
+                        # 7-Zip output format: -o"path" (no space, path can have quotes)
+                        $outputArg = "-o`"$TempExtractDir`""
+                        $process = Start-Process -FilePath $sevenZipPath -ArgumentList "x", "`"$ComponentZip`"", $outputArg, "-y" -Wait -PassThru -NoNewWindow
+                        if ($process.ExitCode -eq 0) {
+                            $extractionSuccess = $true
+                            Write-Success "    [OK] Extracted using 7-Zip"
+                        } else {
+                            Write-Warning "    7-Zip returned exit code: $($process.ExitCode)"
+                        }
+                    }
+                    catch {
+                        Write-Warning "    7-Zip extraction failed: $_"
+                    }
+                }
+                
+                # Method 2: Try Python zipfile (if 7-Zip failed or not available)
+                if (-not $extractionSuccess) {
+                    $pythonFound = Get-Command python -ErrorAction SilentlyContinue
+                    if ($pythonFound) {
+                        Write-Info "    Using Python zipfile to extract..."
+                        try {
+                            $extractScript = Join-Path $env:TEMP "extract_zip_$ComponentName.py"
+                            $scriptContent = @"
+import zipfile
+import sys
+import os
+
+zip_path = r"$ComponentZip"
+extract_to = r"$TempExtractDir"
+
+try:
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_to)
+    print("SUCCESS")
+    sys.exit(0)
+except Exception as e:
+    print(f"ERROR: {e}")
+    sys.exit(1)
+"@
+                            Set-Content -Path $extractScript -Value $scriptContent -Encoding UTF8
+                            $output = python $extractScript 2>&1
+                            if ($LASTEXITCODE -eq 0) {
+                                $extractionSuccess = $true
+                                Write-Success "    [OK] Extracted using Python"
+                            } else {
+                                Write-Warning "    Python extraction failed: $output"
+                            }
+                            Remove-Item $extractScript -Force -ErrorAction SilentlyContinue
+                        }
+                        catch {
+                            Write-Warning "    Python extraction error: $_"
+                        }
+                    }
+                }
+                
+                # Method 3: Try PowerShell Expand-Archive (last resort)
+                if (-not $extractionSuccess) {
+                    Write-Info "    Using PowerShell Expand-Archive to extract..."
+                    try {
+                        Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force -ErrorAction Stop
+                        $extractionSuccess = $true
+                        Write-Success "    [OK] Extracted using PowerShell"
+                    }
+                    catch {
+                        Write-Error-Custom "ERROR: All extraction methods failed"
+                        Write-Error-Custom "  7-Zip: Not available or failed"
+                        Write-Error-Custom "  Python: Not available or failed"
+                        Write-Error-Custom "  PowerShell: $_"
+                        Write-Error-Custom ""
+                        Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
+                        Exit-WithError
+                    }
+                }
+                
+                if (-not $extractionSuccess) {
+                    Write-Error-Custom "ERROR: Failed to extract archive using any method"
+                    Exit-WithError
+                }
                 
                 # Check if there's an unwanted nested directory structure
                 # Look for expected files (RFQ_Application.exe or _internal directory) at the root
