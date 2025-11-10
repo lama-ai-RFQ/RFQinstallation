@@ -310,7 +310,18 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 $ReleasesUrl = "$GITHUB_API/$GITHUB_REPO/releases?per_page=100"
                 $script:AllReleasesCache = Invoke-RestMethod -Uri $ReleasesUrl -Headers $Headers -ErrorAction Stop
                 # Sort by published_at descending (newest first)
-                $script:AllReleasesCache = $script:AllReleasesCache | Sort-Object { [DateTime]::Parse($_.published_at) } -Descending
+                # Filter out releases with invalid or null published_at, then sort
+                $script:AllReleasesCache = $script:AllReleasesCache | Where-Object {
+                    $_.published_at -and $_.published_at -ne ""
+                } | Sort-Object {
+                    try {
+                        [DateTime]::Parse($_.published_at)
+                    }
+                    catch {
+                        # If parsing fails, use a very old date so these releases appear last
+                        [DateTime]::MinValue
+                    }
+                } -Descending
             }
             catch {
                 Write-Warning "    Warning: Could not fetch all releases: $_"
