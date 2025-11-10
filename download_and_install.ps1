@@ -588,6 +588,7 @@ if ($ENABLE_STEP_7_EXTRACT) {
                 
                 # Try multiple extraction methods
                 $extractionSuccess = $false
+                $extractionError = ""
                 
                 # Method 1: Try 7-Zip (best for split archives)
                 $sevenZipPath = $null
@@ -624,12 +625,16 @@ if ($ENABLE_STEP_7_EXTRACT) {
                             $extractionSuccess = $true
                             Write-Success "    [OK] Extracted using 7-Zip"
                         } else {
+                            $extractionError += "7-Zip returned exit code: $($process.ExitCode). "
                             Write-Warning "    7-Zip returned exit code: $($process.ExitCode)"
                         }
                     }
                     catch {
+                        $extractionError += "7-Zip extraction failed: $_. "
                         Write-Warning "    7-Zip extraction failed: $_"
                     }
+                } else {
+                    $extractionError += "7-Zip not found. "
                 }
                 
                 # Method 2: Try Python zipfile (if 7-Zip failed or not available)
@@ -662,13 +667,17 @@ except Exception as e:
                                 $extractionSuccess = $true
                                 Write-Success "    [OK] Extracted using Python"
                             } else {
+                                $extractionError += "Python extraction failed: $output. "
                                 Write-Warning "    Python extraction failed: $output"
                             }
                             Remove-Item $extractScript -Force -ErrorAction SilentlyContinue
                         }
                         catch {
+                            $extractionError += "Python extraction error: $_. "
                             Write-Warning "    Python extraction error: $_"
                         }
+                    } else {
+                        $extractionError += "Python not found. "
                     }
                 }
                 
@@ -677,22 +686,62 @@ except Exception as e:
                     Write-Info "    Using PowerShell Expand-Archive to extract..."
                     try {
                         Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force -ErrorAction Stop
-                        $extractionSuccess = $true
-                        Write-Success "    [OK] Extracted using PowerShell"
+                        # Verify extraction actually worked by checking if files were extracted
+                        $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
+                        if ($extractedFiles -and $extractedFiles.Count -gt 0) {
+                            $extractionSuccess = $true
+                            Write-Success "    [OK] Extracted using PowerShell"
+                        } else {
+                            throw "Extraction completed but no files were found in destination"
+                        }
                     }
                     catch {
+                        $extractionError += "PowerShell Expand-Archive failed: $_. "
                         Write-Error-Custom "ERROR: All extraction methods failed"
-                        Write-Error-Custom "  7-Zip: Not available or failed"
-                        Write-Error-Custom "  Python: Not available or failed"
-                        Write-Error-Custom "  PowerShell: $_"
+                        Write-Error-Custom ""
+                        Write-Error-Custom "Extraction tool status:"
+                        if ($sevenZipPath) {
+                            Write-Error-Custom "  7-Zip: Found at $sevenZipPath, but extraction failed"
+                        } else {
+                            Write-Error-Custom "  7-Zip: Not found (not installed or not in PATH)"
+                        }
+                        $pythonFound = Get-Command python -ErrorAction SilentlyContinue
+                        if ($pythonFound) {
+                            Write-Error-Custom "  Python: Found at $($pythonFound.Path), but extraction failed"
+                        } else {
+                            Write-Error-Custom "  Python: Not found (not installed or not in PATH)"
+                        }
+                        Write-Error-Custom "  PowerShell Expand-Archive: Failed - $_"
+                        Write-Error-Custom ""
+                        Write-Error-Custom "Error details: $extractionError"
                         Write-Error-Custom ""
                         Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
+                        Write-Error-Custom "Or install Python and ensure it's in your PATH"
                         Exit-WithError
                     }
                 }
                 
                 if (-not $extractionSuccess) {
                     Write-Error-Custom "ERROR: Failed to extract archive using any method"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Extraction tool status:"
+                    if ($sevenZipPath) {
+                        Write-Error-Custom "  7-Zip: Found at $sevenZipPath, but extraction failed"
+                    } else {
+                        Write-Error-Custom "  7-Zip: Not found (not installed or not in PATH)"
+                    }
+                    $pythonFound = Get-Command python -ErrorAction SilentlyContinue
+                    if ($pythonFound) {
+                        Write-Error-Custom "  Python: Found at $($pythonFound.Path), but extraction failed"
+                    } else {
+                        Write-Error-Custom "  Python: Not found (not installed or not in PATH)"
+                    }
+                    Write-Error-Custom "  PowerShell Expand-Archive: Not attempted or failed"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Error details: $extractionError"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
+                    Write-Error-Custom "Or install Python and ensure it's in your PATH"
                     Exit-WithError
                 }
                 
