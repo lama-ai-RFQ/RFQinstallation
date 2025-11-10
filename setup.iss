@@ -276,6 +276,195 @@ begin
   end;
 end;
 
+function CheckPythonInstalled(): Boolean;
+var
+  ResultCode: Integer;
+  PythonPath: String;
+  RegPath: String;
+  RegValue: String;
+begin
+  Result := False;
+  
+  // Check if python.exe is in PATH using 'where' command
+  if Exec('cmd.exe', '/c where python >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check Python registry keys for common versions
+  // Python typically stores installation info in registry
+  RegPath := 'SOFTWARE\Python\PythonCore\3.12\InstallPath';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, '', RegValue) then
+  begin
+    PythonPath := RegValue + 'python.exe';
+    if FileExists(PythonPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  RegPath := 'SOFTWARE\Python\PythonCore\3.11\InstallPath';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, '', RegValue) then
+  begin
+    PythonPath := RegValue + 'python.exe';
+    if FileExists(PythonPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  RegPath := 'SOFTWARE\Python\PythonCore\3.10\InstallPath';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, '', RegValue) then
+  begin
+    PythonPath := RegValue + 'python.exe';
+    if FileExists(PythonPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check 32-bit registry
+  RegPath := 'SOFTWARE\WOW6432Node\Python\PythonCore\3.12\InstallPath';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, '', RegValue) then
+  begin
+    PythonPath := RegValue + 'python.exe';
+    if FileExists(PythonPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  RegPath := 'SOFTWARE\WOW6432Node\Python\PythonCore\3.11\InstallPath';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, '', RegValue) then
+  begin
+    PythonPath := RegValue + 'python.exe';
+    if FileExists(PythonPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  RegPath := 'SOFTWARE\WOW6432Node\Python\PythonCore\3.10\InstallPath';
+  if RegQueryStringValue(HKEY_LOCAL_MACHINE, RegPath, '', RegValue) then
+  begin
+    PythonPath := RegValue + 'python.exe';
+    if FileExists(PythonPath) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check common Python installation locations
+  // Try common version paths
+  PythonPath := ExpandConstant('{pf}\Python312\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{pf}\Python311\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{pf}\Python310\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{pf}\Python39\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{pf}\Python38\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  // Check Program Files (x86)
+  PythonPath := ExpandConstant('{pf32}\Python312\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{pf32}\Python311\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{pf32}\Python310\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  // Check user installation locations
+  PythonPath := ExpandConstant('{localappdata}\Programs\Python\Python312\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{localappdata}\Programs\Python\Python311\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  PythonPath := ExpandConstant('{localappdata}\Programs\Python\Python310\python.exe');
+  if FileExists(PythonPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  // Check common alternative locations
+  if FileExists('C:\Python312\python.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  if FileExists('C:\Python311\python.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  if FileExists('C:\Python310\python.exe') then
+  begin
+    Result := True;
+    Exit;
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 begin
   // Dependencies will be checked and shown on the dependency check page
@@ -287,6 +476,7 @@ var
   StatusText: String;
   PostgreSQLStatus: String;
   OpenSSLStatus: String;
+  PythonStatus: String;
 begin
   // Create dependency check page - appears FIRST
   DependencyCheckPage := CreateCustomPage(wpWelcome,
@@ -313,13 +503,19 @@ begin
     OpenSSLStatus := '✓ OpenSSL: Installed'
   else
     OpenSSLStatus := '✗ OpenSSL: Not found';
+    
+  if CheckPythonInstalled() then
+    PythonStatus := '✓ Python: Installed'
+  else
+    PythonStatus := '✗ Python: Not found';
   
   // Build status text
   StatusText := 'Checking system requirements...' + #13#10 + #13#10;
   StatusText := StatusText + PostgreSQLStatus + #13#10;
-  StatusText := StatusText + OpenSSLStatus + #13#10 + #13#10;
+  StatusText := StatusText + OpenSSLStatus + #13#10;
+  StatusText := StatusText + PythonStatus + #13#10 + #13#10;
   
-  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() then
+  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() then
   begin
     StatusText := StatusText + 'All required dependencies are installed.' + #13#10;
     StatusText := StatusText + 'You can proceed with the installation.';
@@ -331,7 +527,8 @@ begin
     StatusText := StatusText + 'Please install the missing components before continuing.' + #13#10 + #13#10;
     StatusText := StatusText + 'Download links:' + #13#10;
     StatusText := StatusText + 'PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
-    StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10 + #13#10;
+    StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
+    StatusText := StatusText + 'Python: https://www.python.org/downloads/' + #13#10 + #13#10;
     StatusText := StatusText + 'After installing the missing components, please restart this installer.';
     DependencyCheckLabel.Font.Color := clRed;
   end;
@@ -447,7 +644,7 @@ begin
   // Prevent proceeding from dependency check page if dependencies are missing
   if CurPageID = DependencyCheckPage.ID then
   begin
-    if not CheckPostgreSQLInstalled() or not CheckOpenSSLInstalled() then
+    if not CheckPostgreSQLInstalled() or not CheckOpenSSLInstalled() or not CheckPythonInstalled() then
     begin
       MsgBox('Please install the missing dependencies before continuing.' + #13#10 + #13#10 +
              'You can cancel this installer, install the missing components, and restart.',
