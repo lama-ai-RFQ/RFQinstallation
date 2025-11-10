@@ -24,6 +24,9 @@ param(
 $ENABLE_STEP_6_DOWNLOAD = $true  # Step 6: Downloading installation components
 $ENABLE_STEP_7_EXTRACT = $true   # Step 7: Extracting installation files
 
+# Track skipped steps for final summary
+$script:SkippedSteps = @()
+
 # Colors for output
 function Write-Info { Write-Host $args -ForegroundColor Cyan }
 function Write-Success { Write-Host $args -ForegroundColor Green }
@@ -476,6 +479,7 @@ else {
     Write-Info ""
     Write-Info "Step 6 (Downloading installation components) is disabled."
     Write-Info "Skipping component download..."
+    $script:SkippedSteps += "Component download (Step 6 disabled)"
     
     # Still need to create the install directory if it doesn't exist
     if (!(Test-Path $InstallPath)) {
@@ -490,6 +494,7 @@ if ($ENABLE_STEP_7_EXTRACT) {
         Write-Info ""
         Write-Info "Step 7 (Extracting installation files) requires Step 6 (Download) to be enabled."
         Write-Info "Skipping extraction..."
+        $script:SkippedSteps += "File extraction (Step 6 disabled)"
     }
     else {
         Write-Info "`n[7/8] Extracting installation files..."
@@ -883,6 +888,7 @@ else {
     Write-Info ""
     Write-Info "Step 7 (Extracting installation files) is disabled."
     Write-Info "Skipping extraction..."
+    $script:SkippedSteps += "File extraction (Step 7 disabled)"
 }
 
 # Setup .env file with GitHub token
@@ -1096,6 +1102,7 @@ if ($SkipModelDownload) {
     # Installer explicitly requested to skip download - don't prompt
     Write-Info "Model download skipped as requested by installer"
     $downloadModel = 'n'
+    $script:SkippedSteps += "Model download (skipped by installer)"
 }
 elseif ($ModelPath -and $ModelPath.Trim() -ne "") {
     # Model path provided via parameter - skip prompts
@@ -1144,6 +1151,7 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
             Write-Error-Custom "ERROR: Failed to create directory: $_"
             Write-Info "Skipping model download"
             $downloadModel = 'n'
+            $script:SkippedSteps += "Model download (failed to create directory)"
         }
     }
     
@@ -1259,6 +1267,7 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
             Write-Error-Custom "ERROR: AWS credentials are required but not provided"
             Write-Info "  Please provide AWS_KEY and AWS_SECRET in the .env file or when prompted"
             Write-Info "  Skipping model download"
+            $script:SkippedSteps += "Model download (AWS credentials missing)"
         }
         else {
             # Create a temporary Python script to download the model from S3
@@ -1483,6 +1492,7 @@ except Exception as e:
                 Write-Info "  Please install Python and run the download manually:"
                 Write-Info "    pip install boto3"
                 Write-Info "    python $downloadScript"
+                $script:SkippedSteps += "Model download (Python not found)"
             }
             else {
                 # Check if boto3 is installed
@@ -1518,6 +1528,7 @@ except Exception as e:
                     Write-Warning "[!] Model download failed or was interrupted"
                     Write-Info "  You can download it later using:"
                     Write-Info "    python $downloadScript"
+                    $script:SkippedSteps += "Model download (download failed or interrupted)"
                 }
                 
                 # Cleanup
@@ -1540,6 +1551,14 @@ except Exception as e:
     Write-Host ""
     Write-Host "Model location: AWS S3 bucket 'rfq-models' (prefix: Mistral-7B-Instruct-v0-3/)" -ForegroundColor Cyan
     Write-Host ""
+    # Only add to skipped steps if not already added (to avoid duplicates)
+    if ($script:SkippedSteps -notcontains "Model download (skipped by installer)" -and 
+        $script:SkippedSteps -notcontains "Model download (AWS credentials missing)" -and
+        $script:SkippedSteps -notcontains "Model download (Python not found)" -and
+        $script:SkippedSteps -notcontains "Model download (download failed or interrupted)" -and
+        $script:SkippedSteps -notcontains "Model download (failed to create directory)") {
+        $script:SkippedSteps += "Model download (skipped by user)"
+    }
 }
 
 # Setup database (optional)
@@ -1575,6 +1594,7 @@ if (Test-Path $SetupDbScript) {
                     Write-Info "    RFQ_USER_PASSWORD=your_database_password"
                     Write-Info ""
                     Write-Info "  After editing .env, you can run: $SetupDbScript"
+                    $script:SkippedSteps += "Database setup (passwords not configured)"
                 } else {
                     # Run database setup
                     Write-Info "Running database setup..."
@@ -1585,11 +1605,13 @@ if (Test-Path $SetupDbScript) {
                             Write-Success "[OK] Database setup completed"
                         } else {
                             Write-Warning "[!] Database setup may have encountered issues. Check the output above."
+                            $script:SkippedSteps += "Database setup (setup encountered issues)"
                         }
                     }
                     catch {
                         Write-Warning "[!] Failed to run database setup: $_"
                         Write-Info "  You can run it manually later: $SetupDbScript"
+                        $script:SkippedSteps += "Database setup (setup failed)"
                     }
                     finally {
                         Pop-Location
@@ -1599,14 +1621,17 @@ if (Test-Path $SetupDbScript) {
         } else {
             Write-Info "  Skipping database setup. You can run it manually later:"
             Write-Info "  $SetupDbScript"
+            $script:SkippedSteps += "Database setup (skipped by user)"
         }
     } else {
         Write-Warning "[!] PostgreSQL (psql) not found in PATH"
         Write-Info "  Database setup script is available at: $SetupDbScript"
         Write-Info "  Please install PostgreSQL first, then run the setup script manually"
+        $script:SkippedSteps += "Database setup (PostgreSQL not found)"
     }
 } else {
     Write-Warning "[!] Database setup script not found in installation"
+    $script:SkippedSteps += "Database setup (setup script not found)"
 }
 
 # Create desktop shortcut (optional)
@@ -1648,7 +1673,7 @@ if ($EnvContent) {
 }
 
 # Success message
-Write-Host @"
+$SuccessMessage = @"
 
 ================================================================================
 *** Installation Complete! ***
@@ -1657,6 +1682,18 @@ Write-Host @"
 Installation Path: $InstallPath
 Version: $Version
 
+"@
+
+# Add skipped steps section if any steps were skipped
+if ($script:SkippedSteps.Count -gt 0) {
+    $SuccessMessage += "SKIPPED STEPS:`n"
+    foreach ($step in $script:SkippedSteps) {
+        $SuccessMessage += "  - $step`n"
+    }
+    $SuccessMessage += "`n"
+}
+
+$SuccessMessage += @"
 NEXT STEPS:
   1. Run the application from: $($ExePath.FullName)
   2. Or use the desktop shortcut: RFQ Application
@@ -1677,7 +1714,9 @@ SUPPORT:
   - GitHub: https://github.com/$GITHUB_REPO
 
 ================================================================================
-"@ -ForegroundColor Green
+"@
+
+Write-Host $SuccessMessage -ForegroundColor Green
 
 # Check and warn about missing parameters
 if ($MissingParams.Count -gt 0) {
