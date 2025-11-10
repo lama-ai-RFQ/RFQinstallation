@@ -681,7 +681,72 @@ except Exception as e:
                     }
                 }
                 
-                # Method 3: Try PowerShell Expand-Archive (last resort)
+                # Method 3: Try Windows tar.exe (built-in on Windows 10/11 1803+)
+                if (-not $extractionSuccess) {
+                    $tarFound = Get-Command tar -ErrorAction SilentlyContinue
+                    if ($tarFound) {
+                        Write-Info "    Using Windows tar.exe to extract..."
+                        try {
+                            # tar.exe can extract zip files on Windows 10/11
+                            # Use -C to change directory, xf to extract
+                            $tarArgs = @("xf", $ComponentZip, "-C", $TempExtractDir)
+                            $process = Start-Process -FilePath "tar" -ArgumentList $tarArgs -Wait -PassThru -NoNewWindow -RedirectStandardError "$env:TEMP\tar_error_$ComponentName.txt"
+                            if ($process.ExitCode -eq 0) {
+                                # Verify extraction actually worked
+                                $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
+                                if ($extractedFiles -and $extractedFiles.Count -gt 0) {
+                                    $extractionSuccess = $true
+                                    Write-Success "    [OK] Extracted using Windows tar.exe"
+                                } else {
+                                    throw "Extraction completed but no files were found in destination"
+                                }
+                            } else {
+                                $tarError = Get-Content "$env:TEMP\tar_error_$ComponentName.txt" -ErrorAction SilentlyContinue
+                                if ($tarError) {
+                                    throw "tar.exe returned exit code: $($process.ExitCode). Error: $tarError"
+                                } else {
+                                    throw "tar.exe returned exit code: $($process.ExitCode)"
+                                }
+                            }
+                            Remove-Item "$env:TEMP\tar_error_$ComponentName.txt" -Force -ErrorAction SilentlyContinue
+                        }
+                        catch {
+                            $extractionError += "Windows tar.exe failed: $_. "
+                            Write-Warning "    Windows tar.exe extraction failed: $_"
+                            Remove-Item "$env:TEMP\tar_error_$ComponentName.txt" -Force -ErrorAction SilentlyContinue
+                        }
+                    } else {
+                        $extractionError += "Windows tar.exe not found. "
+                    }
+                }
+                
+                # Method 4: Try .NET System.IO.Compression (always available in PowerShell)
+                if (-not $extractionSuccess) {
+                    Write-Info "    Using .NET System.IO.Compression to extract..."
+                    try {
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        # .NET ExtractToDirectory requires the destination to not exist, so ensure it's clean
+                        if (Test-Path $TempExtractDir) {
+                            Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                        New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
+                        [System.IO.Compression.ZipFile]::ExtractToDirectory($ComponentZip, $TempExtractDir)
+                        # Verify extraction actually worked
+                        $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
+                        if ($extractedFiles -and $extractedFiles.Count -gt 0) {
+                            $extractionSuccess = $true
+                            Write-Success "    [OK] Extracted using .NET Compression"
+                        } else {
+                            throw "Extraction completed but no files were found in destination"
+                        }
+                    }
+                    catch {
+                        $extractionError += ".NET Compression failed: $_. "
+                        Write-Warning "    .NET Compression extraction failed: $_"
+                    }
+                }
+                
+                # Method 5: Try PowerShell Expand-Archive (last resort)
                 if (-not $extractionSuccess) {
                     Write-Info "    Using PowerShell Expand-Archive to extract..."
                     try {
@@ -690,34 +755,15 @@ except Exception as e:
                         $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
                         if ($extractedFiles -and $extractedFiles.Count -gt 0) {
                             $extractionSuccess = $true
-                            Write-Success "    [OK] Extracted using PowerShell"
+                            Write-Success "    [OK] Extracted using PowerShell Expand-Archive"
                         } else {
                             throw "Extraction completed but no files were found in destination"
                         }
                     }
                     catch {
                         $extractionError += "PowerShell Expand-Archive failed: $_. "
-                        Write-Error-Custom "ERROR: All extraction methods failed"
-                        Write-Error-Custom ""
-                        Write-Error-Custom "Extraction tool status:"
-                        if ($sevenZipPath) {
-                            Write-Error-Custom "  7-Zip: Found at $sevenZipPath, but extraction failed"
-                        } else {
-                            Write-Error-Custom "  7-Zip: Not found (not installed or not in PATH)"
-                        }
-                        $pythonFound = Get-Command python -ErrorAction SilentlyContinue
-                        if ($pythonFound) {
-                            Write-Error-Custom "  Python: Found at $($pythonFound.Path), but extraction failed"
-                        } else {
-                            Write-Error-Custom "  Python: Not found (not installed or not in PATH)"
-                        }
-                        Write-Error-Custom "  PowerShell Expand-Archive: Failed - $_"
-                        Write-Error-Custom ""
-                        Write-Error-Custom "Error details: $extractionError"
-                        Write-Error-Custom ""
-                        Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
-                        Write-Error-Custom "Or install Python and ensure it's in your PATH"
-                        Exit-WithError
+                        # Don't exit here - we'll show comprehensive error at the end
+                        Write-Warning "    PowerShell Expand-Archive failed: $_"
                     }
                 }
                 
@@ -736,7 +782,14 @@ except Exception as e:
                     } else {
                         Write-Error-Custom "  Python: Not found (not installed or not in PATH)"
                     }
-                    Write-Error-Custom "  PowerShell Expand-Archive: Not attempted or failed"
+                    $tarFound = Get-Command tar -ErrorAction SilentlyContinue
+                    if ($tarFound) {
+                        Write-Error-Custom "  Windows tar.exe: Found at $($tarFound.Path), but extraction failed"
+                    } else {
+                        Write-Error-Custom "  Windows tar.exe: Not found (Windows 10/11 1803+ required)"
+                    }
+                    Write-Error-Custom "  .NET Compression: Available but extraction failed"
+                    Write-Error-Custom "  PowerShell Expand-Archive: Available but extraction failed"
                     Write-Error-Custom ""
                     Write-Error-Custom "Error details: $extractionError"
                     Write-Error-Custom ""
