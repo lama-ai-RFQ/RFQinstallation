@@ -302,6 +302,24 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         }
     }
 
+    # Helper function to get all releases (cached)
+    $script:AllReleasesCache = $null
+    function Get-AllReleases {
+        if ($null -eq $script:AllReleasesCache) {
+            try {
+                $ReleasesUrl = "$GITHUB_API/$GITHUB_REPO/releases?per_page=100"
+                $script:AllReleasesCache = Invoke-RestMethod -Uri $ReleasesUrl -Headers $Headers -ErrorAction Stop
+                # Sort by published_at descending (newest first)
+                $script:AllReleasesCache = $script:AllReleasesCache | Sort-Object { [DateTime]::Parse($_.published_at) } -Descending
+            }
+            catch {
+                Write-Warning "    Warning: Could not fetch all releases: $_"
+                $script:AllReleasesCache = @()
+            }
+        }
+        return $script:AllReleasesCache
+    }
+
     # Helper function to find asset in a release
     function Find-AssetInRelease {
         param(
@@ -336,27 +354,72 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         foreach ($FileInfo in $ComponentInfo.files) {
             $Filename = $FileInfo.filename
             
-            # Try to find the asset in current release first
-            $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+            # The manifest tells us which release contains each component via minimum_versions
+            # Check that release first (it may be current or a previous release)
+            $Asset = $null
             $SourceTag = $Version
             
-            # If not found in current release, check previous release from minimum_versions
-            if (!$Asset -and $Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName) {
-                $PreviousVersion = $Manifest.minimum_versions.$ComponentName
-                Write-Info "    File not found in current release, checking previous release: $PreviousVersion"
+            # First, check the version specified in minimum_versions (this is where the manifest says the files are)
+            if ($Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName) {
+                $ComponentVersion = $Manifest.minimum_versions.$ComponentName
                 
-                $PreviousRelease = Get-ReleaseByTag -Tag $PreviousVersion
-                if ($PreviousRelease) {
+                if ($ComponentVersion -eq $Version) {
+                    # Component is in current release, check current release
+                    $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+                    if ($Asset) {
+                        Write-Info "    Found in current release: $Version"
+                    }
+                } else {
+                    # Component is in a previous release according to manifest
+                    Write-Info "    Component specified in manifest for release: $ComponentVersion (checking that release first)"
+                    $ComponentRelease = Get-ReleaseByTag -Tag $ComponentVersion
+                    if ($ComponentRelease) {
+                        $Asset = Find-AssetInRelease -ReleaseObj $ComponentRelease -Filename $Filename
+                        if ($Asset) {
+                            $SourceTag = $ComponentVersion
+                            Write-Info "    Found in release specified by manifest: $ComponentVersion"
+                        } else {
+                            Write-Warning "    File not found in release specified by manifest ($ComponentVersion), searching other releases..."
+                        }
+                    } else {
+                        Write-Warning "    Release specified by manifest ($ComponentVersion) not found, searching other releases..."
+                    }
+                }
+            } else {
+                # No minimum_versions specified, check current release first
+                $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+                if ($Asset) {
+                    Write-Info "    Found in current release: $Version"
+                }
+            }
+            
+            # If still not found, iterate through all previous releases as fallback
+            if (!$Asset) {
+                Write-Info "    Searching all previous releases..."
+                $AllReleases = Get-AllReleases
+                foreach ($PreviousRelease in $AllReleases) {
+                    # Skip current release
+                    if ($PreviousRelease.tag_name -eq $Version) {
+                        continue
+                    }
+                    
+                    # Skip the version from minimum_versions if we already checked it
+                    if ($Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName -and 
+                        $PreviousRelease.tag_name -eq $Manifest.minimum_versions.$ComponentName) {
+                        continue
+                    }
+                    
                     $Asset = Find-AssetInRelease -ReleaseObj $PreviousRelease -Filename $Filename
                     if ($Asset) {
-                        $SourceTag = $PreviousVersion
-                        Write-Info "    Found in previous release: $PreviousVersion"
+                        $SourceTag = $PreviousRelease.tag_name
+                        Write-Info "    Found in previous release: $($PreviousRelease.tag_name)"
+                        break
                     }
                 }
             }
             
             if (!$Asset) {
-                Write-Warning "  [!] Asset not found: $Filename (checked current and previous releases, skipping)"
+                Write-Warning "  [!] Asset not found: $Filename (checked current and all previous releases, skipping)"
                 continue
             }
             
