@@ -17,7 +17,8 @@ param(
     [string]$RFQUserPassword = "",
     [string]$ServerURL = "https://localhost",
     [switch]$AzureKeyGenerate,
-    [string]$AzureKeyCustom = ""
+    [string]$AzureKeyCustom = "",
+    [switch]$CleanReinstall
 )
 
 # TEMPORARILY DISABLE STEPS - Set to $true to enable
@@ -287,10 +288,21 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
 
     # Create temp directory for downloads
     $TempDownloadDir = Join-Path $env:TEMP "rfq_install_temp"
-    if (Test-Path $TempDownloadDir) {
-        Remove-Item $TempDownloadDir -Recurse -Force
+    if ($CleanReinstall) {
+        # Clean reinstall: delete existing downloads
+        if (Test-Path $TempDownloadDir) {
+            Write-Info "  Cleaning existing downloads (clean reinstall requested)..."
+            Remove-Item $TempDownloadDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
+    } else {
+        # Reuse existing downloads if available
+        if (!(Test-Path $TempDownloadDir)) {
+            New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
+        } else {
+            Write-Info "  Reusing existing downloads from previous installation attempt..."
+        }
     }
-    New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
 
     # Helper function to get a release by tag
     function Get-ReleaseByTag {
@@ -437,14 +449,33 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 continue
             }
             
-            # Download file
+            # Download file (check if already exists with correct size first, unless clean reinstall)
             $FilePath = Join-Path $TempDownloadDir $Filename
+            $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
+            $ExpectedSize = $Asset.size
+            
+            # Check if file already exists and has correct size (only if not doing clean reinstall)
+            if (!$CleanReinstall -and (Test-Path $FilePath)) {
+                $ExistingFile = Get-Item $FilePath
+                if ($ExistingFile.Length -eq $ExpectedSize) {
+                    Write-Info "    Skipping: $Filename ($FileSizeMB MB) - already downloaded"
+                    $filesDownloaded++
+                    continue
+                } else {
+                    Write-Info "    File exists but size mismatch ($($ExistingFile.Length) vs $ExpectedSize bytes), re-downloading..."
+                    Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+                }
+            } elseif ($CleanReinstall -and (Test-Path $FilePath)) {
+                # Clean reinstall: delete existing file even if size matches
+                Write-Info "    Clean reinstall: removing existing file $Filename..."
+                Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+            }
+            
             try {
                 $DownloadHeaders = $Headers.Clone()
                 $DownloadHeaders["Accept"] = "application/octet-stream"
                 
                 # Show file size and progress
-                $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
                 if ($SourceTag -ne $Version) {
                     Write-Info "    Downloading: $Filename ($FileSizeMB MB) from release $SourceTag..."
                 } else {
@@ -455,10 +486,17 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 $ProgressPreference = 'Continue'
                 Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
                 
-                if ($SourceTag -ne $Version) {
-                    Write-Success "    [OK] Downloaded: $Filename from release $SourceTag"
+                # Verify downloaded file size matches expected size
+                $DownloadedFile = Get-Item $FilePath
+                if ($DownloadedFile.Length -ne $ExpectedSize) {
+                    Write-Warning "    [!] Downloaded file size mismatch: $($DownloadedFile.Length) vs expected $ExpectedSize bytes"
+                    Write-Warning "    [!] File may be corrupted, will be re-downloaded on next run"
                 } else {
-                    Write-Success "    [OK] Downloaded: $Filename"
+                    if ($SourceTag -ne $Version) {
+                        Write-Success "    [OK] Downloaded: $Filename from release $SourceTag"
+                    } else {
+                        Write-Success "    [OK] Downloaded: $Filename"
+                    }
                 }
                 $filesDownloaded++
             }

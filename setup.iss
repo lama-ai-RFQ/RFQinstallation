@@ -69,6 +69,7 @@ Filename: "powershell.exe"; \
 var
   DependencyCheckPage: TWizardPage;
   DependencyCheckLabel: TLabel;
+  CleanReinstallPage: TInputOptionWizardPage;
   GitHubTokenPage: TInputQueryWizardPage;
   AWSKeyPage: TInputQueryWizardPage;
   AWSSecretPage: TInputQueryWizardPage;
@@ -535,8 +536,19 @@ begin
   
   DependencyCheckLabel.Caption := StatusText;
   
-  // Create GitHub Token page - appears AFTER directory selection
-  GitHubTokenPage := CreateInputQueryPage(wpSelectDir,
+  // Create Clean Reinstall page - appears AFTER directory selection
+  CleanReinstallPage := CreateInputOptionPage(wpSelectDir,
+    'Installation Options', 'Clean Reinstall',
+    'Choose whether to perform a clean reinstall (delete existing downloads) or reuse existing downloads.' + #13#10 + #13#10 +
+    'Clean reinstall will delete any previously downloaded files and download everything fresh.' + #13#10 +
+    'Reusing downloads will skip files that are already downloaded with the correct size.',
+    True, False);
+  CleanReinstallPage.Add('Clean reinstall (delete existing downloads) - Recommended');
+  CleanReinstallPage.Add('Reuse existing downloads (faster if files are already downloaded)');
+  CleanReinstallPage.SelectedValueIndex := 0;  // Default to clean reinstall (true)
+  
+  // Create GitHub Token page - appears AFTER clean reinstall page
+  GitHubTokenPage := CreateInputQueryPage(CleanReinstallPage.ID,
     'GitHub Authentication', 'GitHub Personal Access Token Required',
     'The installation package is in a private repository and requires authentication.' + #13#10 +
     'Please enter your GitHub Personal Access Token:');
@@ -652,6 +664,15 @@ begin
       Result := False;
       Exit;
     end;
+  end;
+  
+  // Store Clean Reinstall setting when leaving the page
+  if CurPageID = CleanReinstallPage.ID then
+  begin
+    if CleanReinstallPage.SelectedValueIndex = 0 then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', 'False');
   end;
   
   // Validate GitHub token is mandatory
@@ -837,8 +858,10 @@ var
   ServerURL: String;
   AzureKeyGenerate: Boolean;
   AzureKeyCustom: String;
+  CleanReinstall: Boolean;
   ModelDownloadStr: String;
   AzureKeyGenerateStr: String;
+  CleanReinstallStr: String;
   Params: String;
 begin
   // Get installation path
@@ -869,6 +892,12 @@ begin
   else
     AzureKeyGenerate := True;
   
+  // Read CleanReinstall from registry (default to True if not set)
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', CleanReinstallStr) then
+    CleanReinstall := (CleanReinstallStr = 'True')
+  else
+    CleanReinstall := True;  // Default to clean reinstall
+  
   // If ModelPath is empty, use default
   if ModelPath = '' then
     ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
@@ -886,6 +915,10 @@ begin
   Params := Params + ' -InstallPath "' + InstallPath + '"';
   Params := Params + ' -GitHubToken "' + GitHubToken + '"';
   Params := Params + ' -OverwriteExisting';
+  
+  // Add Clean Reinstall flag
+  if CleanReinstall then
+    Params := Params + ' -CleanReinstall';
   
   // Add database passwords
   if SettingsPassword <> '' then
