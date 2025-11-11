@@ -1,0 +1,3 @@
+installer_output/*.exe
+.claude/
+test_install*.log

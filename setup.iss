@@ -75,6 +75,11 @@ var
   AWSRegionPage: TInputQueryWizardPage;
   ModelDownloadPage: TInputOptionWizardPage;
   ModelPathPage: TInputDirWizardPage;
+  DatabaseTypePage: TInputOptionWizardPage;
+  LocalDBPasswordPage: TInputQueryWizardPage;
+  DockerDetailsPage: TInputQueryWizardPage;
+  RemoteServerPage: TInputQueryWizardPage;
+  RemotePasswordPage: TInputQueryWizardPage;
   SettingsPasswordPage: TInputQueryWizardPage;
   SuperUserPasswordPage: TInputQueryWizardPage;
   RFQUserPasswordPage: TInputQueryWizardPage;
@@ -220,7 +225,7 @@ var
   OpensslPath: String;
 begin
   Result := False;
-  
+
   // Check if openssl.exe is in PATH using 'where' command
   if Exec('cmd.exe', '/c where openssl >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
@@ -230,7 +235,7 @@ begin
       Exit;
     end;
   end;
-  
+
   // Check common OpenSSL installation locations
   // OpenSSL is often installed in Program Files
   OpensslPath := ExpandConstant('{pf}\OpenSSL-Win64\bin\openssl.exe');
@@ -239,14 +244,14 @@ begin
     Result := True;
     Exit;
   end;
-  
+
   OpensslPath := ExpandConstant('{pf}\OpenSSL\bin\openssl.exe');
   if FileExists(OpensslPath) then
   begin
     Result := True;
     Exit;
   end;
-  
+
   // Check Program Files (x86)
   OpensslPath := ExpandConstant('{pf32}\OpenSSL-Win32\bin\openssl.exe');
   if FileExists(OpensslPath) then
@@ -254,25 +259,70 @@ begin
     Result := True;
     Exit;
   end;
-  
+
   OpensslPath := ExpandConstant('{pf32}\OpenSSL\bin\openssl.exe');
   if FileExists(OpensslPath) then
   begin
     Result := True;
     Exit;
   end;
-  
+
   // Check common alternative locations
   if FileExists('C:\OpenSSL-Win64\bin\openssl.exe') then
   begin
     Result := True;
     Exit;
   end;
-  
+
   if FileExists('C:\OpenSSL\bin\openssl.exe') then
   begin
     Result := True;
     Exit;
+  end;
+end;
+
+function CheckDockerInstalled(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+
+  // Check if docker is in PATH using 'where' command
+  if Exec('cmd.exe', '/c where docker >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+function CheckPostgreSQLRunning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+
+  // Try to connect to PostgreSQL on localhost:5432 using psql
+  // This checks if PostgreSQL service is actually running and accepting connections
+  if Exec('cmd.exe', '/c psql -h localhost -p 5432 -U postgres -c "SELECT 1" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+
+  // Alternative: Check if port 5432 is listening (using PowerShell)
+  if Exec('powershell.exe', '-Command "Test-NetConnection -ComputerName localhost -Port 5432 -InformationLevel Quiet"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
   end;
 end;
 
@@ -285,8 +335,6 @@ end;
 procedure InitializeWizard;
 var
   StatusText: String;
-  PostgreSQLStatus: String;
-  OpenSSLStatus: String;
 begin
   // Create dependency check page - appears FIRST
   DependencyCheckPage := CreateCustomPage(wpWelcome,
@@ -303,39 +351,44 @@ begin
   DependencyCheckLabel.WordWrap := True;
   DependencyCheckLabel.Font.Size := 9;
   
-  // Check dependencies and build status text
+  // Check all dependencies and build detailed status text
+  StatusText := 'System Check (Informational Only - Does Not Block Installation)' + #13#10 + #13#10;
+  StatusText := StatusText + 'PostgreSQL Status:' + #13#10;
+
+  // Check 1: PostgreSQL command-line tools
   if CheckPostgreSQLInstalled() then
-    PostgreSQLStatus := '✓ PostgreSQL: Installed'
+    StatusText := StatusText + '  ✓ psql command available' + #13#10
   else
-    PostgreSQLStatus := '✗ PostgreSQL: Not found';
-    
+    StatusText := StatusText + '  ✗ psql command not found' + #13#10;
+
+  // Check 2: PostgreSQL service running on localhost:5432
+  if CheckPostgreSQLRunning() then
+    StatusText := StatusText + '  ✓ PostgreSQL service running (localhost:5432)' + #13#10
+  else
+    StatusText := StatusText + '  ✗ PostgreSQL service not detected on localhost:5432' + #13#10;
+
+  StatusText := StatusText + #13#10 + 'Docker Status:' + #13#10;
+
+  // Check 3: Docker
+  if CheckDockerInstalled() then
+    StatusText := StatusText + '  ✓ Docker installed and available' + #13#10
+  else
+    StatusText := StatusText + '  ✗ Docker not found' + #13#10;
+
+  StatusText := StatusText + #13#10 + 'Other Tools:' + #13#10;
+
+  // Check 4: OpenSSL
   if CheckOpenSSLInstalled() then
-    OpenSSLStatus := '✓ OpenSSL: Installed'
+    StatusText := StatusText + '  ✓ OpenSSL available' + #13#10
   else
-    OpenSSLStatus := '✗ OpenSSL: Not found';
-  
-  // Build status text
-  StatusText := 'Checking system requirements...' + #13#10 + #13#10;
-  StatusText := StatusText + PostgreSQLStatus + #13#10;
-  StatusText := StatusText + OpenSSLStatus + #13#10 + #13#10;
-  
-  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() then
-  begin
-    StatusText := StatusText + 'All required dependencies are installed.' + #13#10;
-    StatusText := StatusText + 'You can proceed with the installation.';
-    DependencyCheckLabel.Font.Color := clGreen;
-  end
-  else
-  begin
-    StatusText := StatusText + 'Some required dependencies are missing.' + #13#10;
-    StatusText := StatusText + 'Please install the missing components before continuing.' + #13#10 + #13#10;
-    StatusText := StatusText + 'Download links:' + #13#10;
-    StatusText := StatusText + 'PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
-    StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10 + #13#10;
-    StatusText := StatusText + 'After installing the missing components, please restart this installer.';
-    DependencyCheckLabel.Font.Color := clRed;
-  end;
-  
+    StatusText := StatusText + '  ✗ OpenSSL not found' + #13#10;
+
+  StatusText := StatusText + #13#10;
+  StatusText := StatusText + 'NOTE: All checks above are informational only.' + #13#10;
+  StatusText := StatusText + 'You can choose any database setup method regardless of these results.' + #13#10;
+  StatusText := StatusText + 'The installer will offer multiple options on the next screens.' + #13#10;
+
+  DependencyCheckLabel.Font.Color := clBlue;
   DependencyCheckLabel.Caption := StatusText;
   
   // Create GitHub Token page - appears AFTER directory selection
@@ -380,31 +433,85 @@ begin
     'The model is LARGE (~30 GB). Select the directory where the model should be downloaded:' + #13#10 +
     '(Default: Documents\RFQ_Models)', False, '');
   ModelPathPage.Add('');
-  
-  // Create database password pages
-  SettingsPasswordPage := CreateInputQueryPage(ModelPathPage.ID,
-    'Database Configuration', 'Settings Password',
+
+  // Create database setup type selection page
+  DatabaseTypePage := CreateInputOptionPage(ModelPathPage.ID,
+    'Database Setup', 'Choose Database Configuration',
+    'The application requires a PostgreSQL database. How would you like to set up the database?' + #13#10 + #13#10 +
+    'Select the option that matches your environment:',
+    True, False);
+  DatabaseTypePage.Add('Local PostgreSQL (installed on this computer)');
+  DatabaseTypePage.Add('Docker Container (new or existing container)');
+  DatabaseTypePage.Add('Remote PostgreSQL Server (external server)');
+  DatabaseTypePage.Add('Skip database setup (I will configure manually)');
+  DatabaseTypePage.SelectedValueIndex := 0;
+
+  // Create Local PostgreSQL password page
+  LocalDBPasswordPage := CreateInputQueryPage(DatabaseTypePage.ID,
+    'Local Database Setup', 'PostgreSQL Admin Password',
+    'Enter the PostgreSQL superuser (postgres) password for localhost.' + #13#10 + #13#10 +
+    'This is the password you set when installing PostgreSQL.' + #13#10 +
+    'It will be used to create the RFQ database and user.' + #13#10 + #13#10 +
+    'Password Requirements:' + #13#10 +
+    '  - Minimum 8 characters' + #13#10 +
+    '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
+  LocalDBPasswordPage.Add('PostgreSQL Admin Password (localhost):', True);
+
+  // Create Docker details page
+  DockerDetailsPage := CreateInputQueryPage(DatabaseTypePage.ID,
+    'Docker Database Setup', 'Docker Container Configuration',
+    'Configure PostgreSQL Docker container settings:' + #13#10 + #13#10 +
+    'Container Name: Leave empty to create a new container named "rfq-postgres"' + #13#10 +
+    'Or enter an existing container name to use that container.');
+  DockerDetailsPage.Add('Container Name (or leave empty for new):', False);
+  DockerDetailsPage.Add('PostgreSQL Port:', False);
+  DockerDetailsPage.Add('PostgreSQL Admin Password:', True);
+  DockerDetailsPage.Values[1] := '5432';
+
+  // Create Remote Server details page
+  RemoteServerPage := CreateInputQueryPage(DatabaseTypePage.ID,
+    'Remote Database Setup', 'Remote PostgreSQL Server Configuration',
+    'Enter the connection details for your remote PostgreSQL server:' + #13#10 + #13#10 +
+    'The installer will connect to this server to create the RFQ database.');
+  RemoteServerPage.Add('PostgreSQL Host (IP or hostname):', False);
+  RemoteServerPage.Add('PostgreSQL Port:', False);
+  RemoteServerPage.Add('Admin Username:', False);
+  RemoteServerPage.Values[1] := '5432';
+  RemoteServerPage.Values[2] := 'postgres';
+
+  // Create Remote Server password page
+  RemotePasswordPage := CreateInputQueryPage(RemoteServerPage.ID,
+    'Remote Database Setup', 'Remote PostgreSQL Password',
+    'Enter the admin password for the remote PostgreSQL server.' + #13#10 + #13#10 +
+    'Password Requirements:' + #13#10 +
+    '  - Minimum 8 characters' + #13#10 +
+    '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
+  RemotePasswordPage.Add('PostgreSQL Admin Password:', True);
+
+  // Create application database password pages
+  SettingsPasswordPage := CreateInputQueryPage(LocalDBPasswordPage.ID,
+    'Application Configuration', 'Settings Password',
     'Enter a password for the application settings database access.' + #13#10 + #13#10 +
     'Password Requirements:' + #13#10 +
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
-  SettingsPasswordPage.Add('Settings Password:', True);  // True = password field (masked)
-  
+  SettingsPasswordPage.Add('Settings Password:', True);
+
   SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
-    'Database Configuration', 'PostgreSQL Super User Password',
-    'Enter the PostgreSQL super user password (for database setup).' + #13#10 + #13#10 +
+    'Application Configuration', 'SQL Super User Password',
+    'Enter a password for the SQL super user (used by the application).' + #13#10 + #13#10 +
     'Password Requirements:' + #13#10 +
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
-  SuperUserPasswordPage.Add('PostgreSQL Super User Password:', True);  // True = password field (masked)
-  
+  SuperUserPasswordPage.Add('SQL Super User Password:', True);
+
   RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
-    'Database Configuration', 'RFQ User Password',
-    'Enter the password for the RFQ database user.' + #13#10 + #13#10 +
+    'Application Configuration', 'RFQ Database User Password',
+    'Enter the password for the RFQ database user (created during setup).' + #13#10 + #13#10 +
     'Password Requirements:' + #13#10 +
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
-  RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
+  RFQUserPasswordPage.Add('RFQ User Password:', True);
   
   // Create Server URL page
   ServerURLPage := CreateInputQueryPage(RFQUserPasswordPage.ID,
@@ -443,20 +550,9 @@ var
   Params: String;
 begin
   Result := True;
-  
-  // Prevent proceeding from dependency check page if dependencies are missing
-  if CurPageID = DependencyCheckPage.ID then
-  begin
-    if not CheckPostgreSQLInstalled() or not CheckOpenSSLInstalled() then
-    begin
-      MsgBox('Please install the missing dependencies before continuing.' + #13#10 + #13#10 +
-             'You can cancel this installer, install the missing components, and restart.',
-             mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-  end;
-  
+
+  // NO BLOCKING on dependency check page - it's informational only
+
   // Validate GitHub token is mandatory
   if CurPageID = GitHubTokenPage.ID then
   begin
@@ -548,6 +644,76 @@ begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
   end;
   
+  // Store and validate database type selection
+  if CurPageID = DatabaseTypePage.ID then
+  begin
+    // Store database type (0=Local, 1=Docker, 2=Remote, 3=Skip)
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseSetupMode', IntToStr(DatabaseTypePage.SelectedValueIndex));
+  end;
+
+  // Validate Local PostgreSQL password
+  if CurPageID = LocalDBPasswordPage.ID then
+  begin
+    if not ValidatePassword(LocalDBPasswordPage.Values[0], 'PostgreSQL Admin Password') then
+    begin
+      Result := False;
+      Exit;
+    end;
+    // Store local database credentials
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseHost', 'localhost');
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabasePort', '5432');
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminUser', 'postgres');
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminPassword', LocalDBPasswordPage.Values[0]);
+  end;
+
+  // Validate Docker configuration
+  if CurPageID = DockerDetailsPage.ID then
+  begin
+    if Trim(DockerDetailsPage.Values[2]) = '' then
+    begin
+      MsgBox('PostgreSQL admin password is required for Docker setup.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if not ValidatePassword(DockerDetailsPage.Values[2], 'PostgreSQL Admin Password') then
+    begin
+      Result := False;
+      Exit;
+    end;
+    // Store Docker configuration
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DockerContainerName', DockerDetailsPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseHost', 'localhost');
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabasePort', DockerDetailsPage.Values[1]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminUser', 'postgres');
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminPassword', DockerDetailsPage.Values[2]);
+  end;
+
+  // Validate Remote Server configuration
+  if CurPageID = RemoteServerPage.ID then
+  begin
+    if (Trim(RemoteServerPage.Values[0]) = '') or (Trim(RemoteServerPage.Values[2]) = '') then
+    begin
+      MsgBox('Host and Admin Username are required for remote server setup.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    // Store Remote Server configuration (password on next page)
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseHost', RemoteServerPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabasePort', RemoteServerPage.Values[1]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminUser', RemoteServerPage.Values[2]);
+  end;
+
+  // Validate Remote Server password
+  if CurPageID = RemotePasswordPage.ID then
+  begin
+    if not ValidatePassword(RemotePasswordPage.Values[0], 'PostgreSQL Admin Password') then
+    begin
+      Result := False;
+      Exit;
+    end;
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminPassword', RemotePasswordPage.Values[0]);
+  end;
+
   // Validate Settings Password
   if CurPageID = SettingsPasswordPage.ID then
   begin
@@ -557,17 +723,17 @@ begin
       Exit;
     end;
   end;
-  
+
   // Validate PostgreSQL Super User Password
   if CurPageID = SuperUserPasswordPage.ID then
   begin
-    if not ValidatePassword(SuperUserPasswordPage.Values[0], 'PostgreSQL Super User Password') then
+    if not ValidatePassword(SuperUserPasswordPage.Values[0], 'SQL Super User Password') then
     begin
       Result := False;
       Exit;
     end;
   end;
-  
+
   // Validate RFQ User Password
   if CurPageID = RFQUserPasswordPage.ID then
   begin
@@ -576,7 +742,7 @@ begin
       Result := False;
       Exit;
     end;
-    // Store database passwords when on the last password page
+    // Store application database passwords
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPasswordPage.Values[0]);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
@@ -613,13 +779,46 @@ begin
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
+var
+  DatabaseType: Integer;
 begin
   Result := False;
-  
+
   // Skip model path page if not downloading model
   if PageID = ModelPathPage.ID then
     Result := ModelDownloadPage.SelectedValueIndex <> 0;
-  
+
+  // Database page logic
+  DatabaseType := DatabaseTypePage.SelectedValueIndex;
+
+  // Skip LocalDBPasswordPage unless Local is selected
+  if PageID = LocalDBPasswordPage.ID then
+    Result := (DatabaseType <> 0);  // 0 = Local PostgreSQL
+
+  // Skip DockerDetailsPage unless Docker is selected
+  if PageID = DockerDetailsPage.ID then
+    Result := (DatabaseType <> 1);  // 1 = Docker Container
+
+  // Skip RemoteServerPage unless Remote is selected
+  if PageID = RemoteServerPage.ID then
+    Result := (DatabaseType <> 2);  // 2 = Remote Server
+
+  // Skip RemotePasswordPage unless Remote is selected
+  if PageID = RemotePasswordPage.ID then
+    Result := (DatabaseType <> 2);
+
+  // Skip SettingsPasswordPage if database setup is skipped
+  if PageID = SettingsPasswordPage.ID then
+    Result := (DatabaseType = 3);  // 3 = Skip setup
+
+  // Skip SuperUserPasswordPage if database setup is skipped
+  if PageID = SuperUserPasswordPage.ID then
+    Result := (DatabaseType = 3);
+
+  // Skip RFQUserPasswordPage if database setup is skipped
+  if PageID = RFQUserPasswordPage.ID then
+    Result := (DatabaseType = 3);
+
   // Skip Azure key input page if auto-generate is selected
   if PageID = AzureKeyInputPage.ID then
     Result := AzureKeyPage.SelectedValueIndex = 0;
@@ -634,6 +833,12 @@ var
   AWSRegion: String;
   ModelDownload: Boolean;
   ModelPath: String;
+  DatabaseSetupMode: String;
+  DatabaseHost: String;
+  DatabasePort: String;
+  DatabaseAdminUser: String;
+  DatabaseAdminPassword: String;
+  DockerContainerName: String;
   SettingsPassword: String;
   SuperUserPassword: String;
   RFQUserPassword: String;
@@ -654,6 +859,12 @@ begin
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseSetupMode', DatabaseSetupMode);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseHost', DatabaseHost);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabasePort', DatabasePort);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminUser', DatabaseAdminUser);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DatabaseAdminPassword', DatabaseAdminPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'DockerContainerName', DockerContainerName);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
@@ -707,7 +918,21 @@ begin
     Params := Params + ' -AzureKeyGenerate'
   else if AzureKeyCustom <> '' then
     Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
-  
+
+  // Add database setup parameters
+  if DatabaseSetupMode <> '' then
+    Params := Params + ' -DatabaseSetupMode "' + DatabaseSetupMode + '"';
+  if DatabaseHost <> '' then
+    Params := Params + ' -DatabaseHost "' + DatabaseHost + '"';
+  if DatabasePort <> '' then
+    Params := Params + ' -DatabasePort "' + DatabasePort + '"';
+  if DatabaseAdminUser <> '' then
+    Params := Params + ' -DatabaseAdminUser "' + DatabaseAdminUser + '"';
+  if DatabaseAdminPassword <> '' then
+    Params := Params + ' -DatabaseAdminPassword "' + DatabaseAdminPassword + '"';
+  if DockerContainerName <> '' then
+    Params := Params + ' -DockerContainerName "' + DockerContainerName + '"';
+
   // Add model download options
   if ModelDownload then
   begin
@@ -723,7 +948,7 @@ begin
     // User chose to skip download - tell script not to prompt
     Params := Params + ' -SkipModelDownload';
   end;
-  
+
   Result := Params;
 end;
 

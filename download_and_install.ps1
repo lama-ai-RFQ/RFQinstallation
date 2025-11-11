@@ -12,6 +12,12 @@ param(
     [string]$AWSKey = "",
     [string]$AWSSecret = "",
     [string]$AWSRegion = "us-east-1",
+    [string]$DatabaseSetupMode = "",
+    [string]$DatabaseHost = "localhost",
+    [string]$DatabasePort = "5432",
+    [string]$DatabaseAdminUser = "postgres",
+    [string]$DatabaseAdminPassword = "",
+    [string]$DockerContainerName = "",
     [string]$SettingsPassword = "",
     [string]$SuperUserPassword = "",
     [string]$RFQUserPassword = "",
@@ -423,34 +429,73 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 continue
             }
             
-            # Download file
+            # Download file with retry and resume
             $FilePath = Join-Path $TempDownloadDir $Filename
-            try {
-                $DownloadHeaders = $Headers.Clone()
-                $DownloadHeaders["Accept"] = "application/octet-stream"
-                
-                # Show file size and progress
-                $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
-                if ($SourceTag -ne $Version) {
-                    Write-Info "    Downloading: $Filename ($FileSizeMB MB) from release $SourceTag..."
-                } else {
-                    Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+            $maxRetries = 3
+            $retryCount = 0
+            $downloadSuccess = $false
+
+            while ($retryCount -lt $maxRetries -and -not $downloadSuccess) {
+                try {
+                    $DownloadHeaders = $Headers.Clone()
+                    $DownloadHeaders["Accept"] = "application/octet-stream"
+
+                    # Check for partial download
+                    if (Test-Path $FilePath) {
+                        $existingSize = (Get-Item $FilePath).Length
+                        if ($existingSize -eq $Asset.size) {
+                            Write-Success "    [SKIP] Already downloaded: $Filename"
+                            $downloadSuccess = $true
+                            $filesDownloaded++
+                            break
+                        } elseif ($existingSize -gt 0 -and $existingSize -lt $Asset.size) {
+                            Write-Info "    Resuming from $([math]::Round($existingSize / 1MB, 2)) MB..."
+                            $DownloadHeaders["Range"] = "bytes=$existingSize-"
+                        }
+                    }
+
+                    $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
+                    if ($retryCount -gt 0) {
+                        Write-Info "    Retry $retryCount/$maxRetries: $Filename ($FileSizeMB MB)..."
+                    } else {
+                        if ($SourceTag -ne $Version) {
+                            Write-Info "    Downloading: $Filename ($FileSizeMB MB) from $SourceTag..."
+                        } else {
+                            Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                        }
+                    }
+
+                    $ProgressPreference = 'Continue'
+
+                    if ($DownloadHeaders["Range"]) {
+                        $response = Invoke-WebRequest -Uri $Asset.url -Headers $DownloadHeaders -UseBasicParsing
+                        [System.IO.File]::AppendAllBytes($FilePath, $response.Content)
+                    } else {
+                        Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+                    }
+
+                    if ((Test-Path $FilePath) -and ((Get-Item $FilePath).Length -eq $Asset.size)) {
+                        if ($SourceTag -ne $Version) {
+                            Write-Success "    [OK] Downloaded: $Filename from $SourceTag"
+                        } else {
+                            Write-Success "    [OK] Downloaded: $Filename"
+                        }
+                        $filesDownloaded++
+                        $downloadSuccess = $true
+                    } else {
+                        throw "Size mismatch"
+                    }
                 }
-                
-                # Show progress bar during download
-                $ProgressPreference = 'Continue'
-                Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
-                
-                if ($SourceTag -ne $Version) {
-                    Write-Success "    [OK] Downloaded: $Filename from release $SourceTag"
-                } else {
-                    Write-Success "    [OK] Downloaded: $Filename"
+                catch {
+                    $retryCount++
+                    if ($retryCount -lt $maxRetries) {
+                        Write-Warning "    Failed (attempt $retryCount/$maxRetries): $_"
+                        Start-Sleep -Seconds 5
+                    } else {
+                        Write-Warning "  [!] Failed after $maxRetries attempts: $Filename"
+                        if (Test-Path $FilePath) { Remove-Item $FilePath -Force -ErrorAction SilentlyContinue }
+                    }
                 }
-                $filesDownloaded++
-            }
-            catch {
-                Write-Warning "  [!] Failed to download $Filename : $_ (skipping)"
-                continue
             }
         }
         
@@ -577,17 +622,27 @@ if ($ENABLE_STEP_7_EXTRACT) {
             }
             
 
-            # Extract component
-            try {
-                # Extract to a temp location first to check for unwanted nested paths
-                $TempExtractDir = Join-Path $env:TEMP "rfq_extract_$ComponentName"
-                if (Test-Path $TempExtractDir) {
-                    Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-                }
-                New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
-                
-                # Try multiple extraction methods
-                $extractionSuccess = $false
+            # Extract component with retry
+            $maxExtractRetries = 3
+            $extractRetryCount = 0
+            $extractionSuccess = $false
+
+            while ($extractRetryCount -lt $maxExtractRetries -and -not $extractionSuccess) {
+                try {
+                    if ($extractRetryCount -gt 0) {
+                        Write-Info "    Extraction retry $extractRetryCount/$maxExtractRetries..."
+                    }
+
+                    # Extract to a temp location first to check for unwanted nested paths
+                    $TempExtractDir = Join-Path $env:TEMP "rfq_extract_$ComponentName"
+                    if (Test-Path $TempExtractDir) {
+                        Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                    New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
+
+                    # Try multiple extraction methods
+                    $extractionSuccess = $false
+                    $extractionError = ""
                 
                 # Method 1: Try 7-Zip (best for split archives)
                 $sevenZipPath = $null
@@ -624,12 +679,16 @@ if ($ENABLE_STEP_7_EXTRACT) {
                             $extractionSuccess = $true
                             Write-Success "    [OK] Extracted using 7-Zip"
                         } else {
+                            $extractionError += "7-Zip returned exit code: $($process.ExitCode). "
                             Write-Warning "    7-Zip returned exit code: $($process.ExitCode)"
                         }
                     }
                     catch {
+                        $extractionError += "7-Zip extraction failed: $_. "
                         Write-Warning "    7-Zip extraction failed: $_"
                     }
+                } else {
+                    $extractionError += "7-Zip not found. "
                 }
                 
                 # Method 2: Try Python zipfile (if 7-Zip failed or not available)
@@ -662,37 +721,134 @@ except Exception as e:
                                 $extractionSuccess = $true
                                 Write-Success "    [OK] Extracted using Python"
                             } else {
+                                $extractionError += "Python extraction failed: $output. "
                                 Write-Warning "    Python extraction failed: $output"
                             }
                             Remove-Item $extractScript -Force -ErrorAction SilentlyContinue
                         }
                         catch {
+                            $extractionError += "Python extraction error: $_. "
                             Write-Warning "    Python extraction error: $_"
                         }
+                    } else {
+                        $extractionError += "Python not found. "
                     }
                 }
                 
-                # Method 3: Try PowerShell Expand-Archive (last resort)
+                # Method 3: Try Windows tar.exe (built-in on Windows 10/11 1803+)
+                if (-not $extractionSuccess) {
+                    $tarFound = Get-Command tar -ErrorAction SilentlyContinue
+                    if ($tarFound) {
+                        Write-Info "    Using Windows tar.exe to extract..."
+                        try {
+                            # tar.exe can extract zip files on Windows 10/11
+                            # Use -C to change directory, xf to extract
+                            $tarArgs = @("xf", $ComponentZip, "-C", $TempExtractDir)
+                            $process = Start-Process -FilePath "tar" -ArgumentList $tarArgs -Wait -PassThru -NoNewWindow -RedirectStandardError "$env:TEMP\tar_error_$ComponentName.txt"
+                            if ($process.ExitCode -eq 0) {
+                                # Verify extraction actually worked
+                                $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
+                                if ($extractedFiles -and $extractedFiles.Count -gt 0) {
+                                    $extractionSuccess = $true
+                                    Write-Success "    [OK] Extracted using Windows tar.exe"
+                                } else {
+                                    throw "Extraction completed but no files were found in destination"
+                                }
+                            } else {
+                                $tarError = Get-Content "$env:TEMP\tar_error_$ComponentName.txt" -ErrorAction SilentlyContinue
+                                if ($tarError) {
+                                    throw "tar.exe returned exit code: $($process.ExitCode). Error: $tarError"
+                                } else {
+                                    throw "tar.exe returned exit code: $($process.ExitCode)"
+                                }
+                            }
+                            Remove-Item "$env:TEMP\tar_error_$ComponentName.txt" -Force -ErrorAction SilentlyContinue
+                        }
+                        catch {
+                            $extractionError += "Windows tar.exe failed: $_. "
+                            Write-Warning "    Windows tar.exe extraction failed: $_"
+                            Remove-Item "$env:TEMP\tar_error_$ComponentName.txt" -Force -ErrorAction SilentlyContinue
+                        }
+                    } else {
+                        $extractionError += "Windows tar.exe not found. "
+                    }
+                }
+                
+                # Method 4: Try .NET System.IO.Compression (always available in PowerShell)
+                if (-not $extractionSuccess) {
+                    Write-Info "    Using .NET System.IO.Compression to extract..."
+                    try {
+                        Add-Type -AssemblyName System.IO.Compression.FileSystem
+                        # .NET ExtractToDirectory requires the destination to not exist, so ensure it's clean
+                        if (Test-Path $TempExtractDir) {
+                            Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                        New-Item -ItemType Directory -Path $TempExtractDir -Force | Out-Null
+                        [System.IO.Compression.ZipFile]::ExtractToDirectory($ComponentZip, $TempExtractDir)
+                        # Verify extraction actually worked
+                        $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
+                        if ($extractedFiles -and $extractedFiles.Count -gt 0) {
+                            $extractionSuccess = $true
+                            Write-Success "    [OK] Extracted using .NET Compression"
+                        } else {
+                            throw "Extraction completed but no files were found in destination"
+                        }
+                    }
+                    catch {
+                        $extractionError += ".NET Compression failed: $_. "
+                        Write-Warning "    .NET Compression extraction failed: $_"
+                    }
+                }
+                
+                # Method 5: Try PowerShell Expand-Archive (last resort)
                 if (-not $extractionSuccess) {
                     Write-Info "    Using PowerShell Expand-Archive to extract..."
                     try {
                         Expand-Archive -Path $ComponentZip -DestinationPath $TempExtractDir -Force -ErrorAction Stop
-                        $extractionSuccess = $true
-                        Write-Success "    [OK] Extracted using PowerShell"
+                        # Verify extraction actually worked by checking if files were extracted
+                        $extractedFiles = Get-ChildItem -Path $TempExtractDir -Recurse -ErrorAction SilentlyContinue
+                        if ($extractedFiles -and $extractedFiles.Count -gt 0) {
+                            $extractionSuccess = $true
+                            Write-Success "    [OK] Extracted using PowerShell Expand-Archive"
+                        } else {
+                            throw "Extraction completed but no files were found in destination"
+                        }
                     }
                     catch {
-                        Write-Error-Custom "ERROR: All extraction methods failed"
-                        Write-Error-Custom "  7-Zip: Not available or failed"
-                        Write-Error-Custom "  Python: Not available or failed"
-                        Write-Error-Custom "  PowerShell: $_"
-                        Write-Error-Custom ""
-                        Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
-                        Exit-WithError
+                        $extractionError += "PowerShell Expand-Archive failed: $_. "
+                        # Don't exit here - we'll show comprehensive error at the end
+                        Write-Warning "    PowerShell Expand-Archive failed: $_"
                     }
                 }
                 
                 if (-not $extractionSuccess) {
                     Write-Error-Custom "ERROR: Failed to extract archive using any method"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Extraction tool status:"
+                    if ($sevenZipPath) {
+                        Write-Error-Custom "  7-Zip: Found at $sevenZipPath, but extraction failed"
+                    } else {
+                        Write-Error-Custom "  7-Zip: Not found (not installed or not in PATH)"
+                    }
+                    $pythonFound = Get-Command python -ErrorAction SilentlyContinue
+                    if ($pythonFound) {
+                        Write-Error-Custom "  Python: Found at $($pythonFound.Path), but extraction failed"
+                    } else {
+                        Write-Error-Custom "  Python: Not found (not installed or not in PATH)"
+                    }
+                    $tarFound = Get-Command tar -ErrorAction SilentlyContinue
+                    if ($tarFound) {
+                        Write-Error-Custom "  Windows tar.exe: Found at $($tarFound.Path), but extraction failed"
+                    } else {
+                        Write-Error-Custom "  Windows tar.exe: Not found (Windows 10/11 1803+ required)"
+                    }
+                    Write-Error-Custom "  .NET Compression: Available but extraction failed"
+                    Write-Error-Custom "  PowerShell Expand-Archive: Available but extraction failed"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Error details: $extractionError"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
+                    Write-Error-Custom "Or install Python and ensure it's in your PATH"
                     Exit-WithError
                 }
                 
@@ -731,14 +887,32 @@ except Exception as e:
                     }
                 }
                 
-                # Copy all files from temp to install path
-                Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
-                
-                # Cleanup temp directory
-                Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+                    # Copy all files from temp to install path
+                    Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
+
+                    # Cleanup temp directory
+                    Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+
+                    # Success - break retry loop
+                    break
+                }
+                catch {
+                    $extractRetryCount++
+                    if ($extractRetryCount -lt $maxExtractRetries) {
+                        Write-Warning "    Extraction failed (attempt $extractRetryCount/$maxExtractRetries): $_"
+                        Start-Sleep -Seconds 3
+                        if (Test-Path $TempExtractDir) {
+                            Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    } else {
+                        Write-Error-Custom "ERROR: Failed to extract $ComponentName after $maxExtractRetries attempts: $_"
+                        Exit-WithError
+                    }
+                }
             }
-            catch {
-                Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
+
+            if (-not $extractionSuccess) {
+                Write-Error-Custom "ERROR: Extraction failed after all retries"
                 Exit-WithError
             }
         }
@@ -1431,69 +1605,261 @@ except Exception as e:
 
 # Setup database (optional)
 Write-Info "`nDatabase setup..."
-$SetupDbScript = Join-Path $InstallPath "setup_database_auto.bat"
 
-if (Test-Path $SetupDbScript) {
-    # Check if PostgreSQL is installed
+# Determine database setup mode
+# Mode 0 = Local PostgreSQL / psql method
+# Mode 1 = Docker Container / Python method
+# Mode 2 = Remote Server / Manual
+# Mode 3 = Skip database setup
+if ($DatabaseSetupMode -eq "0") {
+    Write-Info "Database setup mode: Local PostgreSQL (psql)"
+
+    # Check if psql is available
     $psqlFound = Get-Command psql -ErrorAction SilentlyContinue
-    
-    if ($psqlFound) {
-        Write-Info "PostgreSQL detected. Would you like to set up the database now?"
-        Write-Info "  Note: This requires .env file to be configured with SQL_SUPER_USER and RFQ_USER_PASSWORD"
+
+    if (!$psqlFound) {
+        Write-Warning "[!] PostgreSQL (psql) not found in PATH"
+        Write-Info "  Please install PostgreSQL and ensure psql is in your PATH"
+        Write-Info "  You can run database setup manually later using setup_database_auto.bat"
+    }
+    else {
+        Write-Info "  Database Host: $DatabaseHost"
+        Write-Info "  Database Port: $DatabasePort"
+        Write-Info "  Admin User: $DatabaseAdminUser"
         Write-Info ""
-        
-        $setupDb = Read-Host "Set up database now? (y/N)"
-        
-        if ($setupDb -eq 'y') {
-            # Check if .env has database passwords configured
-            if (!(Test-Path $EnvPath)) {
-                Write-Warning "[!] .env file not found"
-                Write-Info "  Please create and configure .env file with database passwords"
+        Write-Info "Running database setup with psql..."
+
+        # Create a temporary SQL script for database setup
+        $sqlScript = Join-Path $env:TEMP "setup_rfq_database.sql"
+        $sqlContent = @"
+-- Create database
+CREATE DATABASE rfq_db;
+
+-- Connect to the new database and create user
+\c rfq_db
+
+-- Create user and grant permissions
+CREATE USER rfq_user WITH PASSWORD '$RFQUserPassword';
+GRANT ALL PRIVILEGES ON DATABASE rfq_db TO rfq_user;
+GRANT ALL PRIVILEGES ON SCHEMA public TO rfq_user;
+ALTER USER rfq_user WITH SUPERUSER;
+"@
+
+        Set-Content -Path $sqlScript -Value $sqlContent -Encoding UTF8
+
+        try {
+            # Set PGPASSWORD environment variable for authentication
+            $env:PGPASSWORD = $DatabaseAdminPassword
+
+            # Run the SQL script
+            & psql -h $DatabaseHost -p $DatabasePort -U $DatabaseAdminUser -d postgres -f $sqlScript
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "[OK] Database setup completed successfully with psql"
             }
             else {
-                $EnvContent = Get-Content $EnvPath -Raw -ErrorAction SilentlyContinue
-                $hasSqlSuperUser = $EnvContent -match "SQL_SUPER_USER\s*=\s*[^\r\n]+" -and $EnvContent -notmatch "SQL_SUPER_USER\s*=\s*$" -and $EnvContent -notmatch "SQL_SUPER_USER\s*=\s*your_"
-                $hasRfqPassword = $EnvContent -match "RFQ_USER_PASSWORD\s*=\s*[^\r\n]+" -and $EnvContent -notmatch "RFQ_USER_PASSWORD\s*=\s*$" -and $EnvContent -notmatch "RFQ_USER_PASSWORD\s*=\s*your_"
-            
-                if (!$hasSqlSuperUser -or !$hasRfqPassword) {
-                    Write-Warning "[!] Database passwords not configured in .env file"
-                    Write-Info "  Please edit $EnvPath and add:"
-                    Write-Info "    SQL_SUPER_USER=your_postgres_password"
-                    Write-Info "    RFQ_USER_PASSWORD=your_database_password"
-                    Write-Info ""
-                    Write-Info "  After editing .env, you can run: $SetupDbScript"
-                } else {
-                    # Run database setup
-                    Write-Info "Running database setup..."
-                    try {
-                        Push-Location $InstallPath
-                        & cmd.exe /c $SetupDbScript
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Success "[OK] Database setup completed"
-                        } else {
-                            Write-Warning "[!] Database setup may have encountered issues. Check the output above."
-                        }
-                    }
-                    catch {
-                        Write-Warning "[!] Failed to run database setup: $_"
-                        Write-Info "  You can run it manually later: $SetupDbScript"
-                    }
-                    finally {
-                        Pop-Location
-                    }
-                }
+                Write-Warning "[!] Database setup encountered issues. Exit code: $LASTEXITCODE"
+                Write-Info "  You can run database setup manually later"
             }
-        } else {
-            Write-Info "  Skipping database setup. You can run it manually later:"
-            Write-Info "  $SetupDbScript"
         }
-    } else {
-        Write-Warning "[!] PostgreSQL (psql) not found in PATH"
-        Write-Info "  Database setup script is available at: $SetupDbScript"
-        Write-Info "  Please install PostgreSQL first, then run the setup script manually"
+        catch {
+            Write-Warning "[!] Failed to run database setup with psql: $_"
+            Write-Info "  You can run database setup manually later"
+        }
+        finally {
+            # Clear password from environment
+            Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+            # Clean up temp script
+            Remove-Item $sqlScript -Force -ErrorAction SilentlyContinue
+        }
     }
-} else {
-    Write-Warning "[!] Database setup script not found in installation"
+}
+elseif ($DatabaseSetupMode -eq "1") {
+    Write-Info "Database setup mode: Docker Container (Python)"
+
+    # Check if Python is available
+    $pythonFound = Get-Command python -ErrorAction SilentlyContinue
+
+    if (!$pythonFound) {
+        Write-Warning "[!] Python not found in PATH"
+        Write-Info "  Python is required for this database setup method"
+        Write-Info "  Please install Python or use a different setup method"
+    }
+    else {
+        Write-Info "  Database Host: $DatabaseHost"
+        Write-Info "  Database Port: $DatabasePort"
+        Write-Info "  Admin User: $DatabaseAdminUser"
+        Write-Info ""
+        Write-Info "Running database setup with Python..."
+
+        # Create Python script for database setup
+        $pythonScript = Join-Path $env:TEMP "setup_rfq_database.py"
+        $pythonContent = @"
+import sys
+import psycopg2
+from psycopg2 import sql
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+try:
+    # Database connection parameters
+    host = r"$DatabaseHost"
+    port = "$DatabasePort"
+    user = r"$DatabaseAdminUser"
+    password = r"$DatabaseAdminPassword"
+    rfq_password = r"$RFQUserPassword"
+
+    print("Connecting to PostgreSQL server...")
+    print(f"  Host: {host}")
+    print(f"  Port: {port}")
+    print(f"  User: {user}")
+    print("")
+
+    # Connect to PostgreSQL server (default database)
+    conn = psycopg2.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database="postgres"
+    )
+    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    cursor = conn.cursor()
+
+    print("Connected successfully!")
+    print("")
+
+    # Check if database exists
+    cursor.execute("SELECT 1 FROM pg_database WHERE datname = 'rfq_db'")
+    db_exists = cursor.fetchone() is not None
+
+    if db_exists:
+        print("WARNING: Database 'rfq_db' already exists")
+        print("  Skipping database creation...")
+    else:
+        print("Creating database 'rfq_db'...")
+        cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier("rfq_db")))
+        print("  Database created successfully!")
+
+    print("")
+
+    # Close connection to postgres database
+    cursor.close()
+    conn.close()
+
+    # Connect to rfq_db database
+    print("Connecting to rfq_db database...")
+    conn = psycopg2.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database="rfq_db"
+    )
+    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    cursor = conn.cursor()
+
+    # Check if user exists
+    cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = 'rfq_user'")
+    user_exists = cursor.fetchone() is not None
+
+    if user_exists:
+        print("User 'rfq_user' already exists")
+        print("  Updating user password and permissions...")
+        cursor.execute(sql.SQL("ALTER USER {} WITH PASSWORD %s").format(sql.Identifier("rfq_user")), [rfq_password])
+    else:
+        print("Creating user 'rfq_user'...")
+        cursor.execute(sql.SQL("CREATE USER {} WITH PASSWORD %s").format(sql.Identifier("rfq_user")), [rfq_password])
+        print("  User created successfully!")
+
+    print("")
+    print("Granting permissions...")
+    cursor.execute(sql.SQL("GRANT ALL PRIVILEGES ON DATABASE {} TO {}").format(sql.Identifier("rfq_db"), sql.Identifier("rfq_user")))
+    cursor.execute(sql.SQL("GRANT ALL PRIVILEGES ON SCHEMA public TO {}").format(sql.Identifier("rfq_user")))
+    cursor.execute(sql.SQL("ALTER USER {} WITH SUPERUSER").format(sql.Identifier("rfq_user")))
+    print("  Permissions granted successfully!")
+
+    print("")
+    print("SUCCESS: Database setup completed!")
+
+    cursor.close()
+    conn.close()
+
+    sys.exit(0)
+
+except psycopg2.Error as e:
+    print("")
+    print(f"ERROR: Database error: {e}")
+    sys.exit(1)
+except Exception as e:
+    print("")
+    print(f"ERROR: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+"@
+
+        Set-Content -Path $pythonScript -Value $pythonContent -Encoding UTF8
+
+        # Check if psycopg2 is installed
+        $psycopg2Check = python -c "import psycopg2; print('OK')" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Info "Installing psycopg2 package..."
+            python -m pip install psycopg2-binary --quiet
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "[!] Failed to install psycopg2"
+                Write-Info "  Please install it manually: pip install psycopg2-binary"
+                Write-Info "  Then run: python $pythonScript"
+            }
+        }
+
+        # Run the Python script
+        python $pythonScript
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "[OK] Database setup completed successfully with Python"
+        }
+        else {
+            Write-Warning "[!] Database setup failed with Python"
+            Write-Info "  You can try running the script manually: python $pythonScript"
+        }
+
+        # Cleanup
+        Remove-Item $pythonScript -Force -ErrorAction SilentlyContinue
+    }
+}
+elseif ($DatabaseSetupMode -eq "2") {
+    Write-Info "Database setup mode: Remote Server (Manual)"
+    Write-Info "  You chose to set up the database manually"
+    Write-Info ""
+    Write-Info "To set up the database manually, you need to:"
+    Write-Info "  1. Create a PostgreSQL database named 'rfq_db'"
+    Write-Info "  2. Create a user named 'rfq_user' with password from .env (RFQ_USER_PASSWORD)"
+    Write-Info "  3. Grant all privileges on database 'rfq_db' to user 'rfq_user'"
+    Write-Info "  4. Grant all privileges on schema 'public' to user 'rfq_user'"
+    Write-Info ""
+    Write-Info "You can also use the setup_database_auto.bat script in the installation directory"
+}
+elseif ($DatabaseSetupMode -eq "3") {
+    Write-Info "Database setup mode: Skip"
+    Write-Info "  You chose to skip database setup"
+    Write-Info ""
+    Write-Info "You can set up the database later using:"
+    Write-Info "  - setup_database_auto.bat script in the installation directory"
+    Write-Info "  - Or manually by creating database 'rfq_db' and user 'rfq_user'"
+}
+else {
+    # No database setup mode specified (manual installation or old version)
+    Write-Info "Database setup: Not specified"
+    $SetupDbScript = Join-Path $InstallPath "setup_database_auto.bat"
+
+    if (Test-Path $SetupDbScript) {
+        Write-Info "Database setup script available at: $SetupDbScript"
+        Write-Info "  You can run this script manually to set up the database"
+    }
+    else {
+        Write-Info "No database setup performed"
+        Write-Info "  Please set up the PostgreSQL database manually"
+    }
 }
 
 # Create desktop shortcut (optional)
