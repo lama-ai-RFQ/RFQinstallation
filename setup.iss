@@ -61,14 +61,22 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 ; Parameters will be built dynamically in CurStepChanged
 Filename: "powershell.exe"; \
     Parameters: "{code:GetPowerShellParams}"; \
-    StatusMsg: "Installing RFQ Application..."; \
+    StatusMsg: "Installing RFQ Application and creating Windows service..."; \
     Flags: waituntilterminated; \
-    Description: "Installing application files... (This may take several minutes - a PowerShell window will show progress)"
+    Description: "Installing application files and creating Windows service 'RFQapplication'..." + #13#10 + #13#10 + \
+                 "This will:" + #13#10 + \
+                 "  • Download and extract application files" + #13#10 + \
+                 "  • Create Windows service 'RFQapplication' (starts automatically)" + #13#10 + \
+                 "  • Configure application settings" + #13#10 + \
+                 "  • Set up database (if selected)" + #13#10 + #13#10 + \
+                 "This may take several minutes - a PowerShell window will show progress"
 
 [Code]
 var
   DependencyCheckPage: TWizardPage;
   DependencyCheckLabel: TLabel;
+  ServiceInfoPage: TWizardPage;
+  ServiceInfoLabel: TLabel;
   CleanReinstallPage: TInputOptionWizardPage;
   GitHubTokenPage: TInputQueryWizardPage;
   AWSKeyPage: TInputQueryWizardPage;
@@ -536,6 +544,37 @@ begin
   
   DependencyCheckLabel.Caption := StatusText;
   
+  // Create Windows Service Information page - appears AFTER dependency check
+  ServiceInfoPage := CreateCustomPage(DependencyCheckPage.ID,
+    'Windows Service Information', 'The installer will create a Windows service');
+  
+  ServiceInfoLabel := TLabel.Create(ServiceInfoPage);
+  ServiceInfoLabel.Parent := ServiceInfoPage.Surface;
+  ServiceInfoLabel.Left := 0;
+  ServiceInfoLabel.Top := 0;
+  ServiceInfoLabel.Width := ServiceInfoPage.SurfaceWidth;
+  ServiceInfoLabel.Height := ServiceInfoPage.SurfaceHeight;
+  ServiceInfoLabel.AutoSize := False;
+  ServiceInfoLabel.WordWrap := True;
+  ServiceInfoLabel.Font.Size := 9;
+  
+  StatusText := 'Windows Service Creation' + #13#10 + #13#10;
+  StatusText := StatusText + 'The installer will automatically create a Windows service named:' + #13#10;
+  StatusText := StatusText + '  Service Name: RFQapplication' + #13#10;
+  StatusText := StatusText + '  Display Name: RFQ Application Service' + #13#10 + #13#10;
+  StatusText := StatusText + 'Service Configuration:' + #13#10;
+  StatusText := StatusText + '  • The service will be set to start automatically on system boot' + #13#10;
+  StatusText := StatusText + '  • The service can be started/stopped manually if needed' + #13#10;
+  StatusText := StatusText + '  • Administrator privileges are required to create the service' + #13#10 + #13#10;
+  StatusText := StatusText + 'Managing the Service:' + #13#10;
+  StatusText := StatusText + '  • Command Line: sc start/stop RFQapplication' + #13#10;
+  StatusText := StatusText + '  • GUI: Open Services.msc and look for "RFQ Application Service"' + #13#10 + #13#10;
+  StatusText := StatusText + 'Note: If the service fails to start automatically, you may need to' + #13#10;
+  StatusText := StatusText + 'install NSSM (Non-Sucking Service Manager) for better compatibility.' + #13#10;
+  
+  ServiceInfoLabel.Font.Color := clNavy;
+  ServiceInfoLabel.Caption := StatusText;
+  
   // Create Clean Reinstall page - appears AFTER directory selection
   CleanReinstallPage := CreateInputOptionPage(wpSelectDir,
     'Installation Options', 'Clean Reinstall',
@@ -547,7 +586,7 @@ begin
   CleanReinstallPage.Add('Reuse existing downloads (faster if files are already downloaded)');
   CleanReinstallPage.SelectedValueIndex := 0;  // Default to clean reinstall (true)
   
-  // Create GitHub Token page - appears AFTER clean reinstall page
+  // Create GitHub Token page - appears AFTER service info page
   GitHubTokenPage := CreateInputQueryPage(CleanReinstallPage.ID,
     'GitHub Authentication', 'GitHub Personal Access Token Required',
     'The installation package is in a private repository and requires authentication.' + #13#10 +

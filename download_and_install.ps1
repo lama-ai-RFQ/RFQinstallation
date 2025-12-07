@@ -288,6 +288,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
 
     # Create temp directory for downloads
     $TempDownloadDir = Join-Path $env:TEMP "rfq_install_temp"
+    
     if ($CleanReinstall) {
         # Clean reinstall: delete existing downloads
         if (Test-Path $TempDownloadDir) {
@@ -297,6 +298,18 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
     } else {
         # Reuse existing downloads if available
+        # Check if temp directory exists and has files
+        $hasExistingDownloads = $false
+        if (Test-Path $TempDownloadDir) {
+            $existingFiles = Get-ChildItem -Path $TempDownloadDir -File -ErrorAction SilentlyContinue
+            if ($existingFiles -and $existingFiles.Count -gt 0) {
+                $hasExistingDownloads = $true
+                Write-Info "  Found existing downloads in temp directory"
+                Write-Info "  Existing files will be reused if they match expected sizes"
+            }
+        }
+        
+        # Only create directory if it doesn't exist (preserve existing downloads)
         if (!(Test-Path $TempDownloadDir)) {
             New-Item -ItemType Directory -Path $TempDownloadDir -Force | Out-Null
         } else {
@@ -454,19 +467,8 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
             $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
             $ExpectedSize = $Asset.size
             
-            # Check if file already exists and has correct size (only if not doing clean reinstall)
-            if (!$CleanReinstall -and (Test-Path $FilePath)) {
-                $ExistingFile = Get-Item $FilePath
-                if ($ExistingFile.Length -eq $ExpectedSize) {
-                    Write-Info "    Skipping: $Filename ($FileSizeMB MB) - already downloaded"
-                    $filesDownloaded++
-                    continue
-                } else {
-                    Write-Info "    File exists but size mismatch ($($ExistingFile.Length) vs $ExpectedSize bytes), re-downloading..."
-                    Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
-                }
-            } elseif ($CleanReinstall -and (Test-Path $FilePath)) {
-                # Clean reinstall: delete existing file even if size matches
+            # Clean reinstall: delete existing file even if size matches
+            if ($CleanReinstall -and (Test-Path $FilePath)) {
                 Write-Info "    Clean reinstall: removing existing file $Filename..."
                 Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
             }
@@ -474,6 +476,24 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
             try {
                 $DownloadHeaders = $Headers.Clone()
                 $DownloadHeaders["Accept"] = "application/octet-stream"
+                
+                # Check for existing download - skip if file exists and size matches (only if not clean reinstall)
+                if (!$CleanReinstall -and (Test-Path $FilePath)) {
+                    $existingSize = (Get-Item $FilePath).Length
+                    if ($existingSize -eq $ExpectedSize) {
+                        Write-Success "    [SKIP] Already downloaded: $Filename (size matches, skipping download)"
+                        $filesDownloaded++
+                        continue
+                    } elseif ($existingSize -gt 0 -and $existingSize -lt $ExpectedSize) {
+                        Write-Info "    Resuming partial download from $([math]::Round($existingSize / 1MB, 2)) MB..."
+                        $DownloadHeaders["Range"] = "bytes=$existingSize-"
+                    } elseif ($existingSize -gt $ExpectedSize) {
+                        # File is larger than expected - might be corrupted or wrong file
+                        Write-Warning "    Existing file is larger than expected ($([math]::Round($existingSize / 1MB, 2)) MB vs $([math]::Round($ExpectedSize / 1MB, 2)) MB)"
+                        Write-Info "    Removing existing file and downloading fresh copy..."
+                        Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+                    }
+                }
                 
                 # Show file size and progress
                 if ($SourceTag -ne $Version) {
@@ -484,7 +504,15 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 
                 # Show progress bar during download
                 $ProgressPreference = 'Continue'
-                Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+                
+                if ($DownloadHeaders["Range"]) {
+                    # Resume partial download
+                    $response = Invoke-WebRequest -Uri $Asset.url -Headers $DownloadHeaders -UseBasicParsing
+                    [System.IO.File]::AppendAllBytes($FilePath, $response.Content)
+                } else {
+                    # Full download
+                    Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+                }
                 
                 # Verify downloaded file size matches expected size
                 $DownloadedFile = Get-Item $FilePath
@@ -1001,6 +1029,7 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
     $EnvContent = $EnvContent -replace "WINDOWS=.*", "WINDOWS=true"
     $EnvContent = $EnvContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
+    $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=customer"
     # Only update AWS credentials if they are non-empty
     if (![string]::IsNullOrWhiteSpace($AWSKey)) {
         $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
@@ -1045,6 +1074,9 @@ if (Test-Path $EnvTemplatePath) {
     }
     if ($EnvContent -notmatch "AZURE_CONFIG_ENCRYPTION_KEY") {
         $EnvContent += "`nAZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
+    }
+    if ($EnvContent -notmatch "RFQ_UPDATE_CHANNEL") {
+        $EnvContent += "`nRFQ_UPDATE_CHANNEL=customer"
     }
     # Only add AWS credentials if they are non-empty
     if ($EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
@@ -1104,6 +1136,10 @@ SETTINGS_PASSWORD=$SettingsPassword
 
 # Azure Configuration
 AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
+
+
+# Update Channel
+RFQ_UPDATE_CHANNEL=customer
 "@
     
     # Add AWS Configuration section only if credentials are provided
@@ -1672,11 +1708,103 @@ if (Test-Path $SetupDbScript) {
     $script:SkippedSteps += "Database setup (setup script not found)"
 }
 
-# Create desktop shortcut (optional)
-Write-Info "`nCreating shortcuts..."
-$ExePath = Get-ChildItem -Path $InstallPath -Filter "*.exe" -Recurse | Select-Object -First 1
+# Find main executable
+Write-Info "`nLocating application executable..."
+$ExePath = Get-ChildItem -Path $InstallPath -Filter "RFQ_Application.exe" -Recurse | Select-Object -First 1
+
+if (!$ExePath) {
+    # Fallback: find any exe
+    $ExePath = Get-ChildItem -Path $InstallPath -Filter "*.exe" -Recurse | Select-Object -First 1
+}
 
 if ($ExePath) {
+    Write-Success "[OK] Found executable: $($ExePath.FullName)"
+    
+    # Create Windows service
+    Write-Info "`nCreating Windows service 'RFQapplication'..."
+    $ServiceName = "RFQapplication"
+    $ServiceDisplayName = "RFQ Application Service"
+    $ServiceDescription = "RFQ Automation Application Service"
+    $ExePathQuoted = "`"$($ExePath.FullName)`""
+    
+    # Check if service already exists
+    $serviceExists = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    
+    if ($serviceExists) {
+        Write-Warning "[!] Service '$ServiceName' already exists"
+        Write-Info "  Stopping existing service..."
+        try {
+            Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+            Write-Success "  [OK] Stopped existing service"
+        }
+        catch {
+            Write-Warning "  [!] Could not stop existing service: $_"
+        }
+        
+        Write-Info "  Removing existing service..."
+        try {
+            sc.exe delete $ServiceName | Out-Null
+            Start-Sleep -Seconds 2
+            Write-Success "  [OK] Removed existing service"
+        }
+        catch {
+            Write-Warning "  [!] Could not remove existing service: $_"
+        }
+    }
+    
+    # Create the service
+    Write-Info "  Creating service 'RFQapplication' with executable: $($ExePath.FullName)"
+    Write-Info "  Note: The service will be created but may require the application to be service-aware"
+    Write-Info "  If the service fails to start, you may need to use NSSM (Non-Sucking Service Manager)"
+    
+    try {
+        $createOutput = sc.exe create $ServiceName binPath= $ExePathQuoted start= auto DisplayName= $ServiceDisplayName 2>&1
+        $createOutputString = $createOutput | Out-String
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "[OK] Service '$ServiceName' created successfully"
+            
+            # Set service description
+            try {
+                sc.exe description $ServiceName $ServiceDescription | Out-Null
+            }
+            catch {
+                Write-Warning "  [!] Could not set service description: $_"
+            }
+            
+            Write-Info "  Service will start automatically on system boot"
+            Write-Info "  You can manage it using:"
+            Write-Info "    - Command: sc start/stop $ServiceName"
+            Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
+            
+            # Note about service-aware requirement
+            Write-Info ""
+            Write-Info "  IMPORTANT: If the service fails to start, the application may not be service-aware."
+            Write-Info "  In that case, install NSSM and recreate the service:"
+            Write-Info "    1. Download NSSM from https://nssm.cc/download"
+            Write-Info "    2. Run: nssm install $ServiceName `"$($ExePath.FullName)`""
+        }
+        else {
+            Write-Warning "[!] Failed to create service (exit code: $LASTEXITCODE)"
+            if ($createOutputString) {
+                Write-Warning "  Error output: $createOutputString"
+            }
+            Write-Warning "  Service creation may require administrator privileges"
+            Write-Warning "  You can create the service manually later using:"
+            Write-Warning "    sc create $ServiceName binPath= $ExePathQuoted start= auto DisplayName= $ServiceDisplayName"
+            Write-Warning ""
+            Write-Warning "  Or use NSSM (Non-Sucking Service Manager) for better compatibility:"
+            Write-Warning "    nssm install $ServiceName `"$($ExePath.FullName)`""
+        }
+    }
+    catch {
+        Write-Warning "[!] Could not create service: $_"
+        Write-Warning "  Service creation may require administrator privileges"
+        Write-Warning "  You can create the service manually later"
+    }
+    
+    # Create desktop shortcut (optional)
+    Write-Info "`nCreating shortcuts..."
     try {
         $WshShell = New-Object -ComObject WScript.Shell
         $DesktopPath = [System.Environment]::GetFolderPath('Desktop')
@@ -1693,6 +1821,9 @@ if ($ExePath) {
     catch {
         Write-Warning "[!] Could not create desktop shortcut: $_"
     }
+}
+else {
+    Write-Warning "[!] Could not find application executable"
 }
 
 # Check for missing parameters in .env file
@@ -1733,9 +1864,11 @@ if ($script:SkippedSteps.Count -gt 0) {
 
 $SuccessMessage += @"
 NEXT STEPS:
-  1. Run the application from: $($ExePath.FullName)
-  2. Or use the desktop shortcut: RFQ Application
-  3. For updates, use the built-in updater (Settings -> System Updates)
+  1. The Windows service 'RFQapplication' has been created
+  2. Start the service: sc start RFQapplication (or use Services.msc)
+  3. Or run the application directly: $($ExePath.FullName)
+  4. Or use the desktop shortcut: RFQ Application
+  5. For updates, use the built-in updater (Settings -> System Updates)
 
 CONFIGURATION:
   - Config file: $InstallPath\.env
