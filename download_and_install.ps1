@@ -1785,30 +1785,30 @@ if ($ExePath) {
         }
     }
     
-    # Create the service using NSSM (preferred) or sc.exe (fallback)
+    # Create the service using WinSW (preferred) or sc.exe (fallback)
     Write-Info "  Creating service 'RFQapplication' with executable: $($ExePath.FullName)"
     
-    # Check for NSSM in common locations
-    $nssmPath = $null
-    $nssmLocations = @(
-        "C:\Program Files\nssm\nssm.exe",
-        "C:\Program Files (x86)\nssm\nssm.exe",
-        "$env:ProgramFiles\nssm\nssm.exe",
-        "$env:ProgramFiles(x86)\nssm\nssm.exe",
-        "$InstallPath\nssm\nssm.exe"
+    # Check for WinSW in common locations
+    $winswPath = $null
+    $winswLocations = @(
+        "C:\Program Files\WinSW\WinSW.exe",
+        "C:\Program Files (x86)\WinSW\WinSW.exe",
+        "$env:ProgramFiles\WinSW\WinSW.exe",
+        "$env:ProgramFiles(x86)\WinSW\WinSW.exe",
+        "$InstallPath\WinSW.exe"
     )
     
-    # Check if nssm is in PATH
-    $nssmInPath = Get-Command nssm -ErrorAction SilentlyContinue
-    if ($nssmInPath) {
-        $nssmPath = $nssmInPath.Path
-        Write-Info "  Found NSSM in PATH: $nssmPath"
+    # Check if WinSW is in PATH
+    $winswInPath = Get-Command WinSW -ErrorAction SilentlyContinue
+    if ($winswInPath) {
+        $winswPath = $winswInPath.Path
+        Write-Info "  Found WinSW in PATH: $winswPath"
     } else {
         # Check common locations
-        foreach ($location in $nssmLocations) {
+        foreach ($location in $winswLocations) {
             if (Test-Path $location) {
-                $nssmPath = $location
-                Write-Info "  Found NSSM at: $nssmPath"
+                $winswPath = $location
+                Write-Info "  Found WinSW at: $winswPath"
                 break
             }
         }
@@ -1816,11 +1816,11 @@ if ($ExePath) {
     
     $script:serviceCreated = $false
     
-    # Try to use NSSM first (recommended for non-service-aware applications)
-    if ($nssmPath) {
-        Write-Info "  Using NSSM to create service (recommended for GUI applications)..."
+    # Try to use WinSW first (recommended for non-service-aware applications)
+    if ($winswPath) {
+        Write-Info "  Using WinSW to create service (recommended for GUI applications)..."
         try {
-            # Remove service if it exists (NSSM requires this)
+            # Remove service if it exists
             $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
             if ($existingService) {
                 Write-Info "    Removing existing service first..."
@@ -1828,54 +1828,62 @@ if ($ExePath) {
                 Start-Sleep -Seconds 2
             }
             
-            # Create service with NSSM
-            $nssmArgs = @(
-                "install",
-                $ServiceName,
-                $ExePath.FullName
-            )
-            $nssmOutput = & $nssmPath $nssmArgs 2>&1
+            # Copy WinSW to installation directory with service name
+            $serviceWinswPath = Join-Path $InstallPath "$ServiceName.exe"
+            Copy-Item $winswPath $serviceWinswPath -Force
+            
+            # Create WinSW XML configuration file
+            $xmlConfigPath = Join-Path $InstallPath "$ServiceName.xml"
+            $logDir = Join-Path $InstallPath "logs"
+            if (!(Test-Path $logDir)) {
+                New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            }
+            
+            $xmlContent = @"
+<service>
+  <id>$ServiceName</id>
+  <name>$ServiceDisplayName</name>
+  <description>$ServiceDescription</description>
+  <executable>$($ExePath.FullName)</executable>
+  <workingdirectory>$InstallPath</workingdirectory>
+  <startmode>Automatic</startmode>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <logpath>$logDir</logpath>
+</service>
+"@
+            Set-Content -Path $xmlConfigPath -Value $xmlContent -Force
+            
+            # Install service using WinSW
+            $winswOutput = & $serviceWinswPath install 2>&1
             
             if ($LASTEXITCODE -eq 0) {
-                # Configure NSSM service settings
-                Write-Info "    Configuring service settings..."
-                & $nssmPath set $ServiceName DisplayName $ServiceDisplayName | Out-Null
-                & $nssmPath set $ServiceName Description $ServiceDescription | Out-Null
-                & $nssmPath set $ServiceName Start SERVICE_AUTO_START | Out-Null
-                & $nssmPath set $ServiceName AppDirectory $InstallPath | Out-Null
-                
-                # Set stdout and stderr logging
-                $logDir = Join-Path $InstallPath "logs"
-                if (!(Test-Path $logDir)) {
-                    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-                }
-                & $nssmPath set $ServiceName AppStdout (Join-Path $logDir "service_stdout.log") | Out-Null
-                & $nssmPath set $ServiceName AppStderr (Join-Path $logDir "service_stderr.log") | Out-Null
-                
-                Write-Success "[OK] Service '$ServiceName' created successfully using NSSM"
+                Write-Success "[OK] Service '$ServiceName' created successfully using WinSW"
                 $script:serviceCreated = $true
                 Write-Info "  Service will start automatically on system boot"
                 Write-Info "  You can manage it using:"
                 Write-Info "    - Command: sc start/stop $ServiceName"
                 Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
-                Write-Info "    - NSSM GUI: nssm edit $ServiceName"
+                Write-Info "    - WinSW: $serviceWinswPath status/start/stop"
             } else {
-                Write-Warning "  [!] NSSM service creation failed (exit code: $LASTEXITCODE)"
-                if ($nssmOutput) {
-                    Write-Warning "    Error: $nssmOutput"
+                Write-Warning "  [!] WinSW service creation failed (exit code: $LASTEXITCODE)"
+                if ($winswOutput) {
+                    Write-Warning "    Error: $winswOutput"
                 }
             }
         }
         catch {
-            Write-Warning "  [!] Failed to create service with NSSM: $_"
+            Write-Warning "  [!] Failed to create service with WinSW: $_"
         }
     }
     
-    # Fallback to sc.exe if NSSM failed or is not available
+    # Fallback to sc.exe if WinSW failed or is not available
     if (-not $script:serviceCreated) {
-        if (-not $nssmPath) {
-            Write-Warning "  NSSM not found, using sc.exe (service may fail if application is not service-aware)..."
-            Write-Warning "  NOTE: The installer should have included NSSM. Check C:\Program Files\nssm\nssm.exe"
+        if (-not $winswPath) {
+            Write-Warning "  WinSW not found, using sc.exe (service may fail if application is not service-aware)..."
+            Write-Warning "  NOTE: The installer should have included WinSW. Check C:\Program Files\WinSW\WinSW.exe"
         } else {
             Write-Info "  Falling back to sc.exe method..."
         }
@@ -1903,7 +1911,7 @@ if ($ExePath) {
                 # Important warning about service-aware requirement
                 Write-Warning ""
                 Write-Warning "  IMPORTANT: Service created with sc.exe may not start properly."
-                Write-Warning "  If the service fails to start, install NSSM and recreate the service."
+                Write-Warning "  If the service fails to start, install WinSW and recreate the service."
                 $script:serviceCreated = $true
             }
             else {
