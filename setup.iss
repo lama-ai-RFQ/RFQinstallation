@@ -735,11 +735,17 @@ begin
   end;
   
   // Build footer text with only missing dependencies
+  // Note: WinSW is bundled with the installer, so it's not required to be pre-installed
   StatusText := '';
-  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() and CheckWinSWInstalled() then
+  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() then
   begin
     StatusText := StatusText + #13#10 + 'All required dependencies are installed.' + #13#10;
     StatusText := StatusText + 'You can proceed with the installation.';
+    if not CheckWinSWInstalled() then
+    begin
+      StatusText := StatusText + #13#10 + #13#10;
+      StatusText := StatusText + 'Note: WinSW is bundled with this installer and will be installed automatically.';
+    end;
   end
   else
   begin
@@ -752,6 +758,8 @@ begin
       StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
     if not CheckPythonInstalled() then
       StatusText := StatusText + 'Python: https://www.python.org/downloads/' + #13#10;
+    StatusText := StatusText + #13#10;
+    StatusText := StatusText + 'Note: WinSW is bundled with this installer and will be installed automatically.' + #13#10;
     StatusText := StatusText + #13#10;
     StatusText := StatusText + 'After installing the missing components, please restart this installer.';
   end;
