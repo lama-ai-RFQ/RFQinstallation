@@ -63,13 +63,7 @@ Filename: "powershell.exe"; \
     Parameters: "{code:GetPowerShellParams}"; \
     StatusMsg: "Installing RFQ Application and creating Windows service..."; \
     Flags: waituntilterminated; \
-    Description: "Installing application files and creating Windows service ''RFQapplication''..." + #13#10 + #13#10 + \
-                 "This will:" + #13#10 + \
-                 "  • Download and extract application files" + #13#10 + \
-                 "  • Create Windows service ''RFQapplication'' (starts automatically)" + #13#10 + \
-                 "  • Configure application settings" + #13#10 + \
-                 "  • Set up database (if selected)" + #13#10 + #13#10 + \
-                 "This may take several minutes - a PowerShell window will show progress"
+    Description: "{code:GetInstallDescription}"
 
 [Code]
 var
@@ -880,6 +874,17 @@ begin
   // Skip Azure key input page if auto-generate is selected
   if PageID = AzureKeyInputPage.ID then
     Result := AzureKeyPage.SelectedValueIndex = 0;
+end;
+
+function GetInstallDescription(Param: String): String;
+begin
+  Result := 'Installing application files and creating Windows service ''RFQapplication''...' + #13#10 + #13#10 + \
+            'This will:' + #13#10 + \
+            '  • Download and extract application files' + #13#10 + \
+            '  • Create Windows service ''RFQapplication'' (starts automatically)' + #13#10 + \
+            '  • Configure application settings' + #13#10 + \
+            '  • Set up database (if selected)' + #13#10 + #13#10 + \
+            'This may take several minutes - a PowerShell window will show progress';
 end;
 
 function GetPowerShellParams(Param: String): String;
