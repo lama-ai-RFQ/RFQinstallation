@@ -474,10 +474,16 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
             }
             
             try {
-                $DownloadHeaders = $Headers.Clone()
-                $DownloadHeaders["Accept"] = "application/octet-stream"
+                # Create fresh headers hashtable for download
+                $DownloadHeaders = @{
+                    "Accept" = "application/octet-stream"
+                    "Authorization" = $Headers["Authorization"]
+                }
                 
                 # Check for existing download - skip if file exists and size matches (only if not clean reinstall)
+                $resumeDownload = $false
+                $resumeFromByte = 0
+                
                 if (!$CleanReinstall -and (Test-Path $FilePath)) {
                     $existingSize = (Get-Item $FilePath).Length
                     if ($existingSize -eq $ExpectedSize) {
@@ -486,6 +492,8 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                         continue
                     } elseif ($existingSize -gt 0 -and $existingSize -lt $ExpectedSize) {
                         Write-Info "    Resuming partial download from $([math]::Round($existingSize / 1MB, 2)) MB..."
+                        $resumeDownload = $true
+                        $resumeFromByte = $existingSize
                         $DownloadHeaders["Range"] = "bytes=$existingSize-"
                     } elseif ($existingSize -gt $ExpectedSize) {
                         # File is larger than expected - might be corrupted or wrong file
@@ -505,12 +513,34 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 # Show progress bar during download
                 $ProgressPreference = 'Continue'
                 
-                if ($DownloadHeaders["Range"]) {
-                    # Resume partial download
-                    $response = Invoke-WebRequest -Uri $Asset.url -Headers $DownloadHeaders -UseBasicParsing
-                    [System.IO.File]::AppendAllBytes($FilePath, $response.Content)
-                } else {
-                    # Full download
+                if ($resumeDownload) {
+                    # Try to resume partial download
+                    try {
+                        $response = Invoke-WebRequest -Uri $Asset.url -Headers $DownloadHeaders -UseBasicParsing
+                        [System.IO.File]::AppendAllBytes($FilePath, $response.Content)
+                        
+                        # Verify resumed file size
+                        $DownloadedFile = Get-Item $FilePath
+                        if ($DownloadedFile.Length -ne $ExpectedSize) {
+                            throw "Resumed file size mismatch: $($DownloadedFile.Length) vs expected $ExpectedSize bytes"
+                        }
+                    }
+                    catch {
+                        # Resume failed - remove partial file and do full download
+                        Write-Warning "    [!] Resume failed: $_"
+                        Write-Info "    Removing partial file and downloading from beginning..."
+                        if (Test-Path $FilePath) {
+                            Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+                        }
+                        # Remove Range header for full download
+                        $DownloadHeaders.Remove("Range")
+                        $resumeDownload = $false
+                        # Fall through to full download
+                    }
+                }
+                
+                if (!$resumeDownload) {
+                    # Full download (either initial or after resume failure)
                     Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
                 }
                 
