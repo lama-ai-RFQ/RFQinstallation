@@ -1335,15 +1335,21 @@ begin
   else if AzureKeyCustom <> '' then
     Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
   
+  // Always pass AWS credentials to save to .env (even if not downloading model now)
+  // Note: Credentials are passed via registry to avoid command-line escaping issues
+  // The PowerShell script will read them from registry if command-line params fail
+  if AWSKey <> '' then
+    Params := Params + ' -AWSKey "' + AWSKey + '"';
+  if AWSSecret <> '' then
+    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
+  if AWSRegion <> '' then
+    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
+  
   // Add model download options
   if ModelDownload then
   begin
-    // User chose to download - pass model path and AWS credentials
+    // User chose to download - pass model path
     Params := Params + ' -ModelPath "' + ModelPath + '"';
-    // Always pass AWS credentials if model download is selected (even if empty, so script knows they were provided by installer)
-    Params := Params + ' -AWSKey "' + AWSKey + '"';
-    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
-    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
   end
   else
   begin
