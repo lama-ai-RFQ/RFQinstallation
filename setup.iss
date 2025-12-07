@@ -51,6 +51,7 @@ Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
 ; Include WinSW for service creation
 Source: "WinSW.exe"; DestDir: "{pf}\WinSW"; Flags: ignoreversion
+Source: "WinSW.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
