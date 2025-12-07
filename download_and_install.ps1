@@ -1847,6 +1847,9 @@ if ($ExePath) {
   <executable>$($ExePath.FullName)</executable>
   <workingdirectory>$InstallPath</workingdirectory>
   <startmode>Automatic</startmode>
+  <stopparentprocessfirst>false</stopparentprocessfirst>
+  <stopexecutable></stopexecutable>
+  <stoptimeout>15 sec</stoptimeout>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>
     <keepFiles>8</keepFiles>
