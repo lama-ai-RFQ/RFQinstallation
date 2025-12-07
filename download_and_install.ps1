@@ -474,12 +474,6 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
             }
             
             try {
-                # Create fresh headers hashtable for download
-                $DownloadHeaders = @{
-                    "Accept" = "application/octet-stream"
-                    "Authorization" = $Headers["Authorization"]
-                }
-                
                 # Check for existing download - skip if file exists and size matches (only if not clean reinstall)
                 $resumeDownload = $false
                 $resumeFromByte = 0
@@ -494,12 +488,25 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                         Write-Info "    Resuming partial download from $([math]::Round($existingSize / 1MB, 2)) MB..."
                         $resumeDownload = $true
                         $resumeFromByte = $existingSize
-                        $DownloadHeaders["Range"] = "bytes=$existingSize-"
                     } elseif ($existingSize -gt $ExpectedSize) {
                         # File is larger than expected - might be corrupted or wrong file
                         Write-Warning "    Existing file is larger than expected ($([math]::Round($existingSize / 1MB, 2)) MB vs $([math]::Round($ExpectedSize / 1MB, 2)) MB)"
                         Write-Info "    Removing existing file and downloading fresh copy..."
                         Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                
+                # Create fresh headers hashtable for download (with Range header if resuming)
+                if ($resumeDownload) {
+                    $DownloadHeaders = @{
+                        "Accept" = "application/octet-stream"
+                        "Authorization" = $Headers["Authorization"]
+                        "Range" = "bytes=$resumeFromByte-"
+                    }
+                } else {
+                    $DownloadHeaders = @{
+                        "Accept" = "application/octet-stream"
+                        "Authorization" = $Headers["Authorization"]
                     }
                 }
                 
@@ -532,8 +539,11 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                         if (Test-Path $FilePath) {
                             Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
                         }
-                        # Remove Range header for full download
-                        $DownloadHeaders.Remove("Range")
+                        # Recreate headers without Range header for full download
+                        $DownloadHeaders = @{
+                            "Accept" = "application/octet-stream"
+                            "Authorization" = $Headers["Authorization"]
+                        }
                         $resumeDownload = $false
                         # Fall through to full download
                     }
