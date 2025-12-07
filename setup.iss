@@ -79,6 +79,7 @@ var
   ServiceInfoPage: TWizardPage;
   ServiceInfoLabel: TLabel;
   CleanReinstallPage: TInputOptionWizardPage;
+  CleanupCheckbox: TCheckBox;
   GitHubTokenPage: TInputQueryWizardPage;
   AWSKeyPage: TInputQueryWizardPage;
   AWSSecretPage: TInputQueryWizardPage;
@@ -91,6 +92,44 @@ var
   ServerURLPage: TInputQueryWizardPage;
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
+
+function ReadEnvValue(FilePath: String; Key: String): String;
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  Line: String;
+  EqualPos: Integer;
+  LineKey: String;
+begin
+  Result := '';
+  
+  if not FileExists(FilePath) then
+    Exit;
+  
+  if LoadStringsFromFile(FilePath, Lines) then
+  begin
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Line := Trim(Lines[I]);
+      
+      // Skip empty lines and comments
+      if (Length(Line) = 0) or (Copy(Line, 1, 1) = '#') then
+        Continue;
+      
+      // Find the '=' separator
+      EqualPos := Pos('=', Line);
+      if EqualPos > 0 then
+      begin
+        LineKey := Trim(Copy(Line, 1, EqualPos - 1));
+        if CompareText(LineKey, Key) = 0 then
+        begin
+          Result := Trim(Copy(Line, EqualPos + 1, Length(Line)));
+          Exit;
+        end;
+      end;
+    end;
+  end;
+end;
 
 function ValidatePassword(Password: String; PasswordName: String): Boolean;
 var
@@ -807,6 +846,16 @@ begin
   CleanReinstallPage.Add('Reuse existing downloads (faster if files are already downloaded)');
   CleanReinstallPage.SelectedValueIndex := 0;  // Default to clean reinstall (true)
   
+  // Add a separate checkbox for cleanup after installation
+  CleanupCheckbox := TCheckBox.Create(CleanReinstallPage);
+  CleanupCheckbox.Parent := CleanReinstallPage.Surface;
+  CleanupCheckbox.Left := 0;
+  CleanupCheckbox.Top := ScaleY(200);
+  CleanupCheckbox.Width := CleanReinstallPage.SurfaceWidth;
+  CleanupCheckbox.Height := ScaleY(17);
+  CleanupCheckbox.Caption := 'Cleanup download directory after extraction (recommended - saves disk space)';
+  CleanupCheckbox.Checked := True;  // Default to cleanup enabled
+  
   // Create GitHub Token page - appears AFTER service info page
   GitHubTokenPage := CreateInputQueryPage(CleanReinstallPage.ID,
     'GitHub Authentication', 'GitHub Personal Access Token Required',
@@ -899,6 +948,103 @@ begin
   AzureKeyInputPage.Add('Azure Config Encryption Key:', False);
 end;
 
+procedure LoadExistingEnvValues();
+var
+  EnvFilePath: String;
+  ExistingGitHubToken: String;
+  ExistingAWSKey: String;
+  ExistingAWSSecret: String;
+  ExistingAWSRegion: String;
+  ExistingModelPath: String;
+  ExistingServerURL: String;
+  ExistingSettingsPassword: String;
+  ExistingSuperUserPassword: String;
+  ExistingRFQUserPassword: String;
+  ExistingAzureKey: String;
+begin
+  // Get the installation path
+  EnvFilePath := ExpandConstant('{app}\.env');
+  
+  // If .env file doesn't exist, skip loading
+  if not FileExists(EnvFilePath) then
+    Exit;
+  
+  Log('Found existing .env file at: ' + EnvFilePath);
+  
+  // Read values from existing .env file
+  ExistingGitHubToken := ReadEnvValue(EnvFilePath, 'GITHUB_PAT');
+  ExistingAWSKey := ReadEnvValue(EnvFilePath, 'AWS_KEY');
+  ExistingAWSSecret := ReadEnvValue(EnvFilePath, 'AWS_SECRET');
+  ExistingAWSRegion := ReadEnvValue(EnvFilePath, 'AWS_REGION');
+  ExistingModelPath := ReadEnvValue(EnvFilePath, 'MODEL_PATH');
+  ExistingServerURL := ReadEnvValue(EnvFilePath, 'SERVER_URL');
+  ExistingSettingsPassword := ReadEnvValue(EnvFilePath, 'SETTINGS_PASSWORD');
+  ExistingSuperUserPassword := ReadEnvValue(EnvFilePath, 'SQL_SUPER_USER');
+  ExistingRFQUserPassword := ReadEnvValue(EnvFilePath, 'RFQ_USER_PASSWORD');
+  ExistingAzureKey := ReadEnvValue(EnvFilePath, 'AZURE_CONFIG_ENCRYPTION_KEY');
+  
+  // Pre-populate input pages with existing values
+  if ExistingGitHubToken <> '' then
+  begin
+    GitHubTokenPage.Values[0] := ExistingGitHubToken;
+    Log('Loaded GitHub token from .env');
+  end;
+  
+  if ExistingAWSKey <> '' then
+  begin
+    AWSKeyPage.Values[0] := ExistingAWSKey;
+    Log('Loaded AWS Key from .env');
+  end;
+  
+  if ExistingAWSSecret <> '' then
+  begin
+    AWSSecretPage.Values[0] := ExistingAWSSecret;
+    Log('Loaded AWS Secret from .env');
+  end;
+  
+  if ExistingAWSRegion <> '' then
+  begin
+    AWSRegionPage.Values[0] := ExistingAWSRegion;
+    Log('Loaded AWS Region from .env');
+  end;
+  
+  if ExistingModelPath <> '' then
+  begin
+    ModelPathPage.Values[0] := ExistingModelPath;
+    Log('Loaded Model Path from .env');
+  end;
+  
+  if ExistingServerURL <> '' then
+  begin
+    ServerURLPage.Values[0] := ExistingServerURL;
+    Log('Loaded Server URL from .env');
+  end;
+  
+  if ExistingSettingsPassword <> '' then
+  begin
+    SettingsPasswordPage.Values[0] := ExistingSettingsPassword;
+    Log('Loaded Settings Password from .env');
+  end;
+  
+  if ExistingSuperUserPassword <> '' then
+  begin
+    SuperUserPasswordPage.Values[0] := ExistingSuperUserPassword;
+    Log('Loaded Super User Password from .env');
+  end;
+  
+  if ExistingRFQUserPassword <> '' then
+  begin
+    RFQUserPasswordPage.Values[0] := ExistingRFQUserPassword;
+    Log('Loaded RFQ User Password from .env');
+  end;
+  
+  if ExistingAzureKey <> '' then
+  begin
+    AzureKeyInputPage.Values[0] := ExistingAzureKey;
+    Log('Loaded Azure Config Encryption Key from .env');
+  end;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   InstallPath: String;
@@ -912,6 +1058,12 @@ var
   Params: String;
 begin
   Result := True;
+  
+  // Load existing .env values when leaving the directory selection page
+  if CurPageID = wpSelectDir then
+  begin
+    LoadExistingEnvValues();
+  end;
   
   // Prevent proceeding from dependency check page if dependencies are missing
   if CurPageID = DependencyCheckPage.ID then
@@ -936,6 +1088,12 @@ begin
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', 'True')
     else
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', 'False');
+    
+    // Store cleanup checkbox state
+    if CleanupCheckbox.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', 'False');
   end;
   
   // Validate GitHub token is mandatory
@@ -1133,9 +1291,11 @@ var
   AzureKeyGenerate: Boolean;
   AzureKeyCustom: String;
   CleanReinstall: Boolean;
+  CleanupAfterInstall: Boolean;
   ModelDownloadStr: String;
   AzureKeyGenerateStr: String;
   CleanReinstallStr: String;
+  CleanupAfterInstallStr: String;
   Params: String;
 begin
   // Get installation path
@@ -1172,6 +1332,12 @@ begin
   else
     CleanReinstall := True;  // Default to clean reinstall
   
+  // Read CleanupAfterInstall from registry (default to True if not set)
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', CleanupAfterInstallStr) then
+    CleanupAfterInstall := (CleanupAfterInstallStr = 'True')
+  else
+    CleanupAfterInstall := True;  // Default to cleanup after install
+  
   // If ModelPath is empty, use default
   if ModelPath = '' then
     ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
@@ -1193,6 +1359,10 @@ begin
   // Add Clean Reinstall flag
   if CleanReinstall then
     Params := Params + ' -CleanReinstall';
+  
+  // Add Cleanup After Install flag
+  if CleanupAfterInstall then
+    Params := Params + ' -CleanupAfterInstall';
   
   // Add database passwords
   if SettingsPassword <> '' then

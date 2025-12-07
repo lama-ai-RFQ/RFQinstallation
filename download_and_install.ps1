@@ -18,8 +18,34 @@ param(
     [string]$ServerURL = "https://localhost",
     [switch]$AzureKeyGenerate,
     [string]$AzureKeyCustom = "",
-    [switch]$CleanReinstall
+    [switch]$CleanReinstall,
+    [switch]$CleanupAfterInstall
 )
+
+# Set error action preference to continue so we can handle errors gracefully
+$ErrorActionPreference = "Continue"
+
+# Show immediate output to confirm script is running
+Write-Host "Script started..." -ForegroundColor Green
+Write-Host "Working directory: $PWD" -ForegroundColor Cyan
+Write-Host "Script path: $PSCommandPath" -ForegroundColor Cyan
+
+# Trap all terminating errors to ensure we always show "Press any key"
+trap {
+    Write-Host ""
+    Write-Host "================================================================================" -ForegroundColor Red
+    Write-Host "CRITICAL ERROR" -ForegroundColor Red
+    Write-Host "================================================================================" -ForegroundColor Red
+    Write-Host "An unexpected error occurred:" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Error details:" -ForegroundColor Yellow
+    Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
 
 # TEMPORARILY DISABLE STEPS - Set to $true to enable
 $ENABLE_STEP_6_DOWNLOAD = $true  # Step 6: Downloading installation components
@@ -82,6 +108,9 @@ NOTES:
     - First-time installation only (use built-in updater for updates)
 
 "@
+    Write-Host ""
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 0
 }
 
@@ -944,8 +973,14 @@ except Exception as e:
             Write-Warning "  [!] Manifest not available, skipping local manifest save"
         }
 
-        # Cleanup temp directory
-        Remove-Item $TempDownloadDir -Recurse -Force -ErrorAction SilentlyContinue
+        # Cleanup temp directory (if requested)
+        if ($CleanupAfterInstall) {
+            Write-Info "  Cleaning up download directory..."
+            Remove-Item $TempDownloadDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Success "  [OK] Download directory cleaned up"
+        } else {
+            Write-Info "  Keeping download directory for future use: $TempDownloadDir"
+        }
     }
 }
 else {
@@ -1990,43 +2025,10 @@ if ($MissingParams.Count -gt 0) {
     Write-Host ""
 }
 
-# Ask to start service
 Write-Host ""
-Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "Service Status" -ForegroundColor Cyan
-Write-Host "================================================================================" -ForegroundColor Cyan
-
-if ($script:serviceCreated) {
-    Write-Success "✓ Service 'RFQapplication' created successfully"
-    Write-Info ""
-    $startService = Read-Host "Start RFQ Application service now? (Y/n)"
-    if ($startService -ne 'n') {
-        Write-Info "Starting service..."
-        try {
-            Start-Service -Name $ServiceName -ErrorAction Stop
-            Start-Sleep -Seconds 2
-            $service = Get-Service -Name $ServiceName
-            if ($service.Status -eq 'Running') {
-                Write-Success "✓ Service started successfully!"
-                Write-Info "  The RFQ Application is now running as a Windows service"
-            } else {
-                Write-Warning "⚠ Service status: $($service.Status)"
-                Write-Info "  You can try starting it manually: sc start RFQapplication"
-            }
-        }
-        catch {
-            Write-Warning "⚠ Could not start service: $_"
-            Write-Info "  You can try starting it manually: sc start RFQapplication"
-            Write-Info "  Or check Services.msc for more details"
-        }
-    } else {
-        Write-Info "Service not started. You can start it later using:"
-        Write-Info "  - Command: sc start RFQapplication"
-        Write-Info "  - GUI: Services.msc"
-    }
-} else {
-    Write-Warning "✗ Service creation failed"
-    Write-Info "You can launch the application manually:"
-    Write-Info "  $($ExePath.FullName)"
-}
-
+Write-Host "================================================================================" -ForegroundColor Green
+Write-Host "Installation complete!" -ForegroundColor Green
+Write-Host "================================================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "Press any key to exit..."
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
