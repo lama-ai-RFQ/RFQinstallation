@@ -48,6 +48,7 @@ Source: "download_and_install.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 ; Include any other necessary files
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
