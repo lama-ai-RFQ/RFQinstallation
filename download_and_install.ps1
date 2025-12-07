@@ -1750,55 +1750,139 @@ if ($ExePath) {
         }
     }
     
-    # Create the service
+    # Create the service using NSSM (preferred) or sc.exe (fallback)
     Write-Info "  Creating service 'RFQapplication' with executable: $($ExePath.FullName)"
-    Write-Info "  Note: The service will be created but may require the application to be service-aware"
-    Write-Info "  If the service fails to start, you may need to use NSSM (Non-Sucking Service Manager)"
     
-    try {
-        $createOutput = sc.exe create $ServiceName binPath= $ExePathQuoted start= auto DisplayName= $ServiceDisplayName 2>&1
-        $createOutputString = $createOutput | Out-String
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "[OK] Service '$ServiceName' created successfully"
-            
-            # Set service description
-            try {
-                sc.exe description $ServiceName $ServiceDescription | Out-Null
+    # Check for NSSM in common locations
+    $nssmPath = $null
+    $nssmLocations = @(
+        "C:\Program Files\nssm\nssm.exe",
+        "C:\Program Files (x86)\nssm\nssm.exe",
+        "$env:ProgramFiles\nssm\nssm.exe",
+        "$env:ProgramFiles(x86)\nssm\nssm.exe",
+        "$InstallPath\nssm\nssm.exe"
+    )
+    
+    # Check if nssm is in PATH
+    $nssmInPath = Get-Command nssm -ErrorAction SilentlyContinue
+    if ($nssmInPath) {
+        $nssmPath = $nssmInPath.Path
+        Write-Info "  Found NSSM in PATH: $nssmPath"
+    } else {
+        # Check common locations
+        foreach ($location in $nssmLocations) {
+            if (Test-Path $location) {
+                $nssmPath = $location
+                Write-Info "  Found NSSM at: $nssmPath"
+                break
             }
-            catch {
-                Write-Warning "  [!] Could not set service description: $_"
-            }
-            
-            Write-Info "  Service will start automatically on system boot"
-            Write-Info "  You can manage it using:"
-            Write-Info "    - Command: sc start/stop $ServiceName"
-            Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
-            
-            # Note about service-aware requirement
-            Write-Info ""
-            Write-Info "  IMPORTANT: If the service fails to start, the application may not be service-aware."
-            Write-Info "  In that case, install NSSM and recreate the service:"
-            Write-Info "    1. Download NSSM from https://nssm.cc/download"
-            Write-Info "    2. Run: nssm install $ServiceName `"$($ExePath.FullName)`""
-        }
-        else {
-            Write-Warning "[!] Failed to create service (exit code: $LASTEXITCODE)"
-            if ($createOutputString) {
-                Write-Warning "  Error output: $createOutputString"
-            }
-            Write-Warning "  Service creation may require administrator privileges"
-            Write-Warning "  You can create the service manually later using:"
-            Write-Warning "    sc create $ServiceName binPath= $ExePathQuoted start= auto DisplayName= $ServiceDisplayName"
-            Write-Warning ""
-            Write-Warning "  Or use NSSM (Non-Sucking Service Manager) for better compatibility:"
-            Write-Warning "    nssm install $ServiceName `"$($ExePath.FullName)`""
         }
     }
-    catch {
-        Write-Warning "[!] Could not create service: $_"
-        Write-Warning "  Service creation may require administrator privileges"
-        Write-Warning "  You can create the service manually later"
+    
+    $script:serviceCreated = $false
+    
+    # Try to use NSSM first (recommended for non-service-aware applications)
+    if ($nssmPath) {
+        Write-Info "  Using NSSM to create service (recommended for GUI applications)..."
+        try {
+            # Remove service if it exists (NSSM requires this)
+            $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if ($existingService) {
+                Write-Info "    Removing existing service first..."
+                sc.exe delete $ServiceName | Out-Null
+                Start-Sleep -Seconds 2
+            }
+            
+            # Create service with NSSM
+            $nssmArgs = @(
+                "install",
+                $ServiceName,
+                $ExePath.FullName
+            )
+            $nssmOutput = & $nssmPath $nssmArgs 2>&1
+            
+            if ($LASTEXITCODE -eq 0) {
+                # Configure NSSM service settings
+                Write-Info "    Configuring service settings..."
+                & $nssmPath set $ServiceName DisplayName $ServiceDisplayName | Out-Null
+                & $nssmPath set $ServiceName Description $ServiceDescription | Out-Null
+                & $nssmPath set $ServiceName Start SERVICE_AUTO_START | Out-Null
+                & $nssmPath set $ServiceName AppDirectory $InstallPath | Out-Null
+                
+                # Set stdout and stderr logging
+                $logDir = Join-Path $InstallPath "logs"
+                if (!(Test-Path $logDir)) {
+                    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+                }
+                & $nssmPath set $ServiceName AppStdout (Join-Path $logDir "service_stdout.log") | Out-Null
+                & $nssmPath set $ServiceName AppStderr (Join-Path $logDir "service_stderr.log") | Out-Null
+                
+                Write-Success "[OK] Service '$ServiceName' created successfully using NSSM"
+                $script:serviceCreated = $true
+                Write-Info "  Service will start automatically on system boot"
+                Write-Info "  You can manage it using:"
+                Write-Info "    - Command: sc start/stop $ServiceName"
+                Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
+                Write-Info "    - NSSM GUI: nssm edit $ServiceName"
+            } else {
+                Write-Warning "  [!] NSSM service creation failed (exit code: $LASTEXITCODE)"
+                if ($nssmOutput) {
+                    Write-Warning "    Error: $nssmOutput"
+                }
+            }
+        }
+        catch {
+            Write-Warning "  [!] Failed to create service with NSSM: $_"
+        }
+    }
+    
+    # Fallback to sc.exe if NSSM failed or is not available
+    if (-not $script:serviceCreated) {
+        if (-not $nssmPath) {
+            Write-Warning "  NSSM not found, using sc.exe (service may fail if application is not service-aware)..."
+            Write-Warning "  NOTE: The installer should have included NSSM. Check C:\Program Files\nssm\nssm.exe"
+        } else {
+            Write-Info "  Falling back to sc.exe method..."
+        }
+        
+        try {
+            $createOutput = sc.exe create $ServiceName binPath= $ExePathQuoted start= auto DisplayName= $ServiceDisplayName 2>&1
+            $createOutputString = $createOutput | Out-String
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "[OK] Service '$ServiceName' created successfully"
+                
+                # Set service description
+                try {
+                    sc.exe description $ServiceName $ServiceDescription | Out-Null
+                }
+                catch {
+                    Write-Warning "  [!] Could not set service description: $_"
+                }
+                
+                Write-Info "  Service will start automatically on system boot"
+                Write-Info "  You can manage it using:"
+                Write-Info "    - Command: sc start/stop $ServiceName"
+                Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
+                
+                # Important warning about service-aware requirement
+                Write-Warning ""
+                Write-Warning "  IMPORTANT: Service created with sc.exe may not start properly."
+                Write-Warning "  If the service fails to start, install NSSM and recreate the service."
+                $script:serviceCreated = $true
+            }
+            else {
+                Write-Warning "[!] Failed to create service (exit code: $LASTEXITCODE)"
+                if ($createOutputString) {
+                    Write-Warning "  Error output: $createOutputString"
+                }
+                Write-Warning "  Service creation may require administrator privileges"
+            }
+        }
+        catch {
+            Write-Warning "[!] Could not create service: $_"
+            Write-Warning "  Service creation may require administrator privileges"
+        }
     }
     
     # Create desktop shortcut (optional)
@@ -1906,12 +1990,43 @@ if ($MissingParams.Count -gt 0) {
     Write-Host ""
 }
 
-# Ask to launch
-$launch = Read-Host "Launch RFQ Application now? (Y/n)"
-if ($launch -ne 'n') {
-    if ($ExePath) {
-        Write-Info "Launching application..."
-        Start-Process -FilePath $ExePath.FullName -WorkingDirectory $InstallPath
+# Ask to start service
+Write-Host ""
+Write-Host "================================================================================" -ForegroundColor Cyan
+Write-Host "Service Status" -ForegroundColor Cyan
+Write-Host "================================================================================" -ForegroundColor Cyan
+
+if ($script:serviceCreated) {
+    Write-Success "✓ Service 'RFQapplication' created successfully"
+    Write-Info ""
+    $startService = Read-Host "Start RFQ Application service now? (Y/n)"
+    if ($startService -ne 'n') {
+        Write-Info "Starting service..."
+        try {
+            Start-Service -Name $ServiceName -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $service = Get-Service -Name $ServiceName
+            if ($service.Status -eq 'Running') {
+                Write-Success "✓ Service started successfully!"
+                Write-Info "  The RFQ Application is now running as a Windows service"
+            } else {
+                Write-Warning "⚠ Service status: $($service.Status)"
+                Write-Info "  You can try starting it manually: sc start RFQapplication"
+            }
+        }
+        catch {
+            Write-Warning "⚠ Could not start service: $_"
+            Write-Info "  You can try starting it manually: sc start RFQapplication"
+            Write-Info "  Or check Services.msc for more details"
+        }
+    } else {
+        Write-Info "Service not started. You can start it later using:"
+        Write-Info "  - Command: sc start RFQapplication"
+        Write-Info "  - GUI: Services.msc"
     }
+} else {
+    Write-Warning "✗ Service creation failed"
+    Write-Info "You can launch the application manually:"
+    Write-Info "  $($ExePath.FullName)"
 }
 

@@ -49,6 +49,8 @@ Source: "download_and_install.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
+; Include NSSM for service creation
+Source: "nssm.exe"; DestDir: "{pf}\nssm"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -70,6 +72,10 @@ Filename: "powershell.exe"; \
 var
   DependencyCheckPage: TWizardPage;
   DependencyCheckLabel: TLabel;
+  PostgreSQLLabel: TLabel;
+  OpenSSLLabel: TLabel;
+  PythonLabel: TLabel;
+  NSSMLabel: TLabel;
   ServiceInfoPage: TWizardPage;
   ServiceInfoLabel: TLabel;
   CleanReinstallPage: TInputOptionWizardPage;
@@ -280,6 +286,39 @@ begin
   end;
 end;
 
+function CheckNSSMInstalled(): Boolean;
+var
+  ResultCode: Integer;
+  NSSMPath: String;
+begin
+  Result := False;
+  
+  // Check if nssm.exe is in PATH using 'where' command
+  if Exec('cmd.exe', '/c where nssm >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if ResultCode = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  
+  // Check common NSSM installation locations
+  NSSMPath := ExpandConstant('{pf}\nssm\nssm.exe');
+  if FileExists(NSSMPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  
+  NSSMPath := ExpandConstant('{pf32}\nssm\nssm.exe');
+  if FileExists(NSSMPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+end;
+
 function CheckPythonInstalled(): Boolean;
 var
   ResultCode: Integer;
@@ -469,6 +508,132 @@ begin
   end;
 end;
 
+function DownloadNSSM(): Boolean;
+var
+  NSSMUrl: String;
+  NSSMZip: String;
+  NSSMExtractDir: String;
+  NSSMTargetDir: String;
+  NSSMExe: String;
+  ResultCode: Integer;
+  PowerShellScript: String;
+begin
+  Result := False;
+  
+  // NSSM download URL (latest stable release)
+  NSSMUrl := 'https://nssm.cc/release/nssm-2.24.zip';
+  NSSMZip := ExpandConstant('{tmp}\nssm.zip');
+  NSSMExtractDir := ExpandConstant('{tmp}\nssm_extract');
+  NSSMTargetDir := ExpandConstant('{pf}\nssm');
+  
+  try
+    Log('Downloading NSSM from ' + NSSMUrl);
+    
+    // Use PowerShell to download NSSM
+    PowerShellScript := '-NoProfile -ExecutionPolicy Bypass -Command "' +
+      'try { ' +
+      '  Invoke-WebRequest -Uri ''' + NSSMUrl + ''' -OutFile ''' + NSSMZip + ''' -UseBasicParsing; ' +
+      '  if (Test-Path ''' + NSSMZip + ''') { Write-Host ''DOWNLOADED'' } else { Write-Host ''FAILED''; exit 1 } ' +
+      '} catch { Write-Host ''FAILED''; exit 1 }"';
+    
+    if Exec('powershell.exe', PowerShellScript, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      if ResultCode <> 0 then
+      begin
+        Log('Failed to download NSSM: PowerShell returned error code ' + IntToStr(ResultCode));
+        Exit;
+      end;
+    end
+    else
+    begin
+      Log('Failed to download NSSM: Could not execute PowerShell');
+      Exit;
+    end;
+    
+    if not FileExists(NSSMZip) then
+    begin
+      Log('NSSM zip file not found after download');
+      Exit;
+    end;
+    
+    Log('Extracting NSSM...');
+    
+    // Extract using PowerShell Expand-Archive
+    PowerShellScript := '-NoProfile -ExecutionPolicy Bypass -Command "' +
+      'try { ' +
+      '  if (Test-Path ''' + NSSMExtractDir + ''') { Remove-Item ''' + NSSMExtractDir + ''' -Recurse -Force }; ' +
+      '  Expand-Archive -Path ''' + NSSMZip + ''' -DestinationPath ''' + NSSMExtractDir + ''' -Force; ' +
+      '  Write-Host ''EXTRACTED'' ' +
+      '} catch { Write-Host ''FAILED''; exit 1 }"';
+    
+    if Exec('powershell.exe', PowerShellScript, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    begin
+      if ResultCode <> 0 then
+      begin
+        Log('Failed to extract NSSM: PowerShell returned error code ' + IntToStr(ResultCode));
+        Exit;
+      end;
+    end
+    else
+    begin
+      Log('Failed to extract NSSM: Could not execute PowerShell');
+      Exit;
+    end;
+    
+    // Find nssm.exe in the extracted folder (it's usually in nssm-2.24/win64 or nssm-2.24/win32 subfolder)
+    NSSMExe := NSSMExtractDir + '\nssm-2.24\win64\nssm.exe';
+    if not FileExists(NSSMExe) then
+    begin
+      NSSMExe := NSSMExtractDir + '\nssm-2.24\win32\nssm.exe';
+      if not FileExists(NSSMExe) then
+      begin
+        // Try without version folder (in case structure is different)
+        NSSMExe := NSSMExtractDir + '\win64\nssm.exe';
+        if not FileExists(NSSMExe) then
+        begin
+          NSSMExe := NSSMExtractDir + '\win32\nssm.exe';
+          if not FileExists(NSSMExe) then
+          begin
+            Log('Failed to find nssm.exe in extracted archive');
+            Exit;
+          end;
+        end;
+      end;
+    end;
+    
+    Log('Found nssm.exe at: ' + NSSMExe);
+    
+    // Create target directory
+    if not DirExists(NSSMTargetDir) then
+    begin
+      if not CreateDir(NSSMTargetDir) then
+      begin
+        Log('Failed to create NSSM directory: ' + NSSMTargetDir);
+        Exit;
+      end;
+    end;
+    
+    // Copy nssm.exe to Program Files
+    if FileCopy(NSSMExe, NSSMTargetDir + '\nssm.exe', False) then
+    begin
+      Result := True;
+      Log('NSSM downloaded and installed successfully to ' + NSSMTargetDir);
+    end
+    else
+    begin
+      Log('Failed to copy nssm.exe to ' + NSSMTargetDir);
+    end;
+    
+    // Cleanup
+    DelTree(NSSMExtractDir, True, True, True);
+    DeleteFile(NSSMZip);
+    
+  except
+    Log('Exception while downloading NSSM: ' + GetExceptionMessage);
+    Result := False;
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 begin
   // Dependencies will be checked and shown on the dependency check page
@@ -481,63 +646,124 @@ var
   PostgreSQLStatus: String;
   OpenSSLStatus: String;
   PythonStatus: String;
+  NSSMStatus: String;
 begin
   // Create dependency check page - appears FIRST
   DependencyCheckPage := CreateCustomPage(wpWelcome,
     'System Requirements Check', 'Checking for required dependencies...');
   
-  // Create label to show dependency status
+  // Create header label
   DependencyCheckLabel := TLabel.Create(DependencyCheckPage);
   DependencyCheckLabel.Parent := DependencyCheckPage.Surface;
   DependencyCheckLabel.Left := 0;
   DependencyCheckLabel.Top := 0;
   DependencyCheckLabel.Width := DependencyCheckPage.SurfaceWidth;
-  DependencyCheckLabel.Height := DependencyCheckPage.SurfaceHeight;
+  DependencyCheckLabel.Height := 30;
   DependencyCheckLabel.AutoSize := False;
   DependencyCheckLabel.WordWrap := True;
   DependencyCheckLabel.Font.Size := 9;
+  DependencyCheckLabel.Caption := 'Checking system requirements...' + #13#10;
   
-  // Check dependencies and build status text
+  // Create individual labels for each dependency with individual colors
+  PostgreSQLLabel := TLabel.Create(DependencyCheckPage);
+  PostgreSQLLabel.Parent := DependencyCheckPage.Surface;
+  PostgreSQLLabel.Left := 0;
+  PostgreSQLLabel.Top := 30;
+  PostgreSQLLabel.Width := DependencyCheckPage.SurfaceWidth;
+  PostgreSQLLabel.Height := 20;
+  PostgreSQLLabel.AutoSize := False;
+  PostgreSQLLabel.Font.Size := 9;
   if CheckPostgreSQLInstalled() then
-    PostgreSQLStatus := '✓ PostgreSQL: Installed'
-  else
-    PostgreSQLStatus := '✗ PostgreSQL: Not found';
-    
-  if CheckOpenSSLInstalled() then
-    OpenSSLStatus := '✓ OpenSSL: Installed'
-  else
-    OpenSSLStatus := '✗ OpenSSL: Not found';
-    
-  if CheckPythonInstalled() then
-    PythonStatus := '✓ Python: Installed'
-  else
-    PythonStatus := '✗ Python: Not found';
-  
-  // Build status text
-  StatusText := 'Checking system requirements...' + #13#10 + #13#10;
-  StatusText := StatusText + PostgreSQLStatus + #13#10;
-  StatusText := StatusText + OpenSSLStatus + #13#10;
-  StatusText := StatusText + PythonStatus + #13#10 + #13#10;
-  
-  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() then
   begin
-    StatusText := StatusText + 'All required dependencies are installed.' + #13#10;
-    StatusText := StatusText + 'You can proceed with the installation.';
-    DependencyCheckLabel.Font.Color := clGreen;
+    PostgreSQLLabel.Caption := '✓ PostgreSQL: Installed';
+    PostgreSQLLabel.Font.Color := clGreen;
   end
   else
   begin
-    StatusText := StatusText + 'Some required dependencies are missing.' + #13#10;
-    StatusText := StatusText + 'Please install the missing components before continuing.' + #13#10 + #13#10;
-    StatusText := StatusText + 'Download links:' + #13#10;
-    StatusText := StatusText + 'PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
-    StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
-    StatusText := StatusText + 'Python: https://www.python.org/downloads/' + #13#10 + #13#10;
-    StatusText := StatusText + 'After installing the missing components, please restart this installer.';
-    DependencyCheckLabel.Font.Color := clRed;
+    PostgreSQLLabel.Caption := '✗ PostgreSQL: Not found';
+    PostgreSQLLabel.Font.Color := clRed;
   end;
   
-  DependencyCheckLabel.Caption := StatusText;
+  OpenSSLLabel := TLabel.Create(DependencyCheckPage);
+  OpenSSLLabel.Parent := DependencyCheckPage.Surface;
+  OpenSSLLabel.Left := 0;
+  OpenSSLLabel.Top := 50;
+  OpenSSLLabel.Width := DependencyCheckPage.SurfaceWidth;
+  OpenSSLLabel.Height := 20;
+  OpenSSLLabel.AutoSize := False;
+  OpenSSLLabel.Font.Size := 9;
+  if CheckOpenSSLInstalled() then
+  begin
+    OpenSSLLabel.Caption := '✓ OpenSSL: Installed';
+    OpenSSLLabel.Font.Color := clGreen;
+  end
+  else
+  begin
+    OpenSSLLabel.Caption := '✗ OpenSSL: Not found';
+    OpenSSLLabel.Font.Color := clRed;
+  end;
+  
+  PythonLabel := TLabel.Create(DependencyCheckPage);
+  PythonLabel.Parent := DependencyCheckPage.Surface;
+  PythonLabel.Left := 0;
+  PythonLabel.Top := 70;
+  PythonLabel.Width := DependencyCheckPage.SurfaceWidth;
+  PythonLabel.Height := 20;
+  PythonLabel.AutoSize := False;
+  PythonLabel.Font.Size := 9;
+  if CheckPythonInstalled() then
+  begin
+    PythonLabel.Caption := '✓ Python: Installed';
+    PythonLabel.Font.Color := clGreen;
+  end
+  else
+  begin
+    PythonLabel.Caption := '✗ Python: Not found';
+    PythonLabel.Font.Color := clRed;
+  end;
+  
+  NSSMLabel := TLabel.Create(DependencyCheckPage);
+  NSSMLabel.Parent := DependencyCheckPage.Surface;
+  NSSMLabel.Left := 0;
+  NSSMLabel.Top := 90;
+  NSSMLabel.Width := DependencyCheckPage.SurfaceWidth;
+  NSSMLabel.Height := 20;
+  NSSMLabel.AutoSize := False;
+  NSSMLabel.Font.Size := 9;
+  if CheckNSSMInstalled() then
+  begin
+    NSSMLabel.Caption := '✓ NSSM: Installed';
+    NSSMLabel.Font.Color := clGreen;
+  end
+  else
+  begin
+    NSSMLabel.Caption := '⚠ NSSM: Not found (will be installed automatically)';
+    NSSMLabel.Font.Color := clWindowText;
+  end;
+  
+  // Build footer text with only missing dependencies
+  StatusText := '';
+  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() and CheckNSSMInstalled() then
+  begin
+    StatusText := StatusText + #13#10 + 'All required dependencies are installed.' + #13#10;
+    StatusText := StatusText + 'You can proceed with the installation.';
+  end
+  else
+  begin
+    StatusText := StatusText + #13#10 + 'Some required dependencies are missing.' + #13#10;
+    StatusText := StatusText + 'Please install the missing components before continuing.' + #13#10 + #13#10;
+    StatusText := StatusText + 'Download links:' + #13#10;
+    if not CheckPostgreSQLInstalled() then
+      StatusText := StatusText + 'PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
+    if not CheckOpenSSLInstalled() then
+      StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
+    if not CheckPythonInstalled() then
+      StatusText := StatusText + 'Python: https://www.python.org/downloads/' + #13#10;
+    StatusText := StatusText + #13#10;
+    StatusText := StatusText + 'After installing the missing components, please restart this installer.';
+  end;
+  
+  DependencyCheckLabel.Caption := DependencyCheckLabel.Caption + StatusText;
   
   // Create Windows Service Information page - appears AFTER dependency check
   ServiceInfoPage := CreateCustomPage(DependencyCheckPage.ID,
@@ -698,6 +924,9 @@ begin
       Result := False;
       Exit;
     end;
+    
+    // NSSM is bundled with the installer, so this check is informational only
+    // The Files section will install nssm.exe to {pf}\nssm automatically
   end;
   
   // Store Clean Reinstall setting when leaving the page
