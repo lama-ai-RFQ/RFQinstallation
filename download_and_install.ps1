@@ -26,22 +26,52 @@ param(
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
 
+# Setup log file - use temp directory initially until installation directory is created
+$LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$TempLogFile = Join-Path $env:TEMP "rfq_installer_$LogTimestamp.log"
+$script:LogFile = $TempLogFile
+$script:LogFileInitialized = $false
+
+# Function to write to both console and log file
+function Write-Log {
+    param(
+        [string]$Message,
+        [string]$Color = "White"
+    )
+    
+    # Write to console with color
+    Write-Host $Message -ForegroundColor $Color
+    
+    # Write to log file with timestamp
+    try {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logEntry = "[$timestamp] $Message"
+        Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction SilentlyContinue
+    }
+    catch {
+        # Silently ignore log file errors to not interrupt installation
+    }
+}
+
 # Show immediate output to confirm script is running
-Write-Host "Script started..." -ForegroundColor Green
-Write-Host "Working directory: $PWD" -ForegroundColor Cyan
-Write-Host "Script path: $PSCommandPath" -ForegroundColor Cyan
+Write-Log "Script started..." "Green"
+Write-Log "Working directory: $PWD" "Cyan"
+Write-Log "Script path: $PSCommandPath" "Cyan"
+Write-Log "Log file: $script:LogFile" "Cyan"
 
 # Trap all terminating errors to ensure we always show "Press any key"
 trap {
-    Write-Host ""
-    Write-Host "================================================================================" -ForegroundColor Red
-    Write-Host "CRITICAL ERROR" -ForegroundColor Red
-    Write-Host "================================================================================" -ForegroundColor Red
-    Write-Host "An unexpected error occurred:" -ForegroundColor Red
-    Write-Host $_.Exception.Message -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Error details:" -ForegroundColor Yellow
-    Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Yellow
+    Write-Log "" "Red"
+    Write-Log "================================================================================" "Red"
+    Write-Log "CRITICAL ERROR" "Red"
+    Write-Log "================================================================================" "Red"
+    Write-Log "An unexpected error occurred:" "Red"
+    Write-Log $_.Exception.Message "Red"
+    Write-Log "" "Red"
+    Write-Log "Error details:" "Yellow"
+    Write-Log $_.InvocationInfo.PositionMessage "Yellow"
+    Write-Log "" "Red"
+    Write-Log "Log file saved to: $script:LogFile" "Cyan"
     Write-Host ""
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -55,14 +85,28 @@ $ENABLE_STEP_7_EXTRACT = $true   # Step 7: Extracting installation files
 # Track skipped steps for final summary
 $script:SkippedSteps = @()
 
-# Colors for output
-function Write-Info { Write-Host $args -ForegroundColor Cyan }
-function Write-Success { Write-Host $args -ForegroundColor Green }
-function Write-Warning { Write-Host $args -ForegroundColor Yellow }
-function Write-Error-Custom { Write-Host $args -ForegroundColor Red }
+# Colors for output - now writes to both console and log file
+function Write-Info { 
+    $message = $args -join " "
+    Write-Log $message "Cyan"
+}
+function Write-Success { 
+    $message = $args -join " "
+    Write-Log $message "Green"
+}
+function Write-Warning { 
+    $message = $args -join " "
+    Write-Log $message "Yellow"
+}
+function Write-Error-Custom { 
+    $message = $args -join " "
+    Write-Log $message "Red"
+}
 
 # Exit with error and pause
 function Exit-WithError {
+    Write-Log "" "Red"
+    Write-Log "Installation failed. Log file saved to: $script:LogFile" "Yellow"
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -116,12 +160,13 @@ NOTES:
 }
 
 # Banner
-Write-Host @"
+$BannerText = @"
 ================================================================================
     RFQ Application - Windows Installer
     First-Time Installation Script
 ================================================================================
-"@ -ForegroundColor Cyan
+"@
+Write-Log $BannerText "Cyan"
 
 # Configuration - Determine repository based on update channel
 if ($UpdateChannel -eq "internal") {
@@ -182,31 +227,51 @@ else {
     }
 }
 
+# Move log file to installation directory now that it exists
+if (Test-Path $InstallPath) {
+    try {
+        $NewLogFile = Join-Path $InstallPath "installer_$LogTimestamp.log"
+        # Copy existing log content to new location
+        if (Test-Path $script:LogFile) {
+            Copy-Item -Path $script:LogFile -Destination $NewLogFile -Force -ErrorAction SilentlyContinue
+        }
+        # Update log file path
+        $script:LogFile = $NewLogFile
+        $script:LogFileInitialized = $true
+        Write-Info "  Log file moved to: $NewLogFile"
+    }
+    catch {
+        # If moving fails, continue using temp log file
+        Write-Info "  Continuing to use temp log file: $script:LogFile"
+    }
+}
+
 # Setup GitHub authentication
 Write-Info "`n[4/8] Checking authentication..."
 
 if (!$GitHubToken) {
-    Write-Host ""
-    Write-Host "GitHub Personal Access Token Required" -ForegroundColor Yellow
-    Write-Host "=====================================" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "The installation package is in a private repository and requires authentication."
-    Write-Host ""
-    Write-Host "If you don't have a token yet:" -ForegroundColor Cyan
-    Write-Host "  1. Go to: https://github.com/settings/tokens"
-    Write-Host "  2. Click 'Generate new token (classic)'"
-    Write-Host "  3. Select scope: repo (Full control of private repositories)"
-    Write-Host "  4. Generate and copy the token"
-    Write-Host ""
+    Write-Log "" "Yellow"
+    Write-Log "GitHub Personal Access Token Required" "Yellow"
+    Write-Log "=====================================" "Yellow"
+    Write-Log "" "Yellow"
+    Write-Log "The installation package is in a private repository and requires authentication." "White"
+    Write-Log "" "White"
+    Write-Log "If you don't have a token yet:" "Cyan"
+    Write-Log "  1. Go to: https://github.com/settings/tokens" "White"
+    Write-Log "  2. Click 'Generate new token (classic)'" "White"
+    Write-Log "  3. Select scope: repo (Full control of private repositories)" "White"
+    Write-Log "  4. Generate and copy the token" "White"
+    Write-Log "" "White"
     
     $GitHubToken = Read-Host "Please enter your GitHub Personal Access Token (ghp_...)"
+    Write-Log "GitHub token entered by user" "Cyan"
     
     if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
         Write-Error-Custom "`nERROR: GitHub token is required to continue"
         Exit-WithError
     }
     
-    Write-Host ""
+    Write-Log "" "White"
 }
 
 $Headers = @{
@@ -288,7 +353,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     Write-Info "`n[6/8] Downloading installation components..."
     Write-Info "  This may take several minutes depending on your internet connection."
     Write-Info "  Progress will be shown below for each file..."
-    Write-Host ""
+    Write-Log "" "White"
 
     # Check for manifest.json (component-based release)
     $ManifestAsset = $Release.assets | Where-Object { $_.name -eq "manifest.json" } | Select-Object -First 1
@@ -599,6 +664,97 @@ if ($ENABLE_STEP_7_EXTRACT) {
     }
     else {
         Write-Info "`n[7/8] Extracting installation files..."
+        
+        # Stop Windows service if it exists
+        Write-Info "  Checking for Windows service..."
+        try {
+            $ServiceName = "RFQapplication"
+            $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            
+            if ($service) {
+                if ($service.Status -eq 'Running') {
+                    Write-Info "  Stopping Windows service '$ServiceName'..."
+                    Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+                    Write-Success "  [OK] Stopped Windows service"
+                    Start-Sleep -Seconds 2
+                }
+                else {
+                    Write-Info "  Windows service '$ServiceName' is not running"
+                }
+            }
+            else {
+                Write-Info "  Windows service not found (first-time install or not created yet)"
+            }
+        }
+        catch {
+            Write-Warning "  [!] Could not stop Windows service: $_"
+            Write-Info "  Continuing with extraction anyway..."
+        }
+        
+        # Force close any running processes from the installation directory
+        Write-Info "  Checking for running processes in installation directory..."
+        try {
+            # Get all executable files in the installation directory
+            $executableFiles = Get-ChildItem -Path $InstallPath -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue
+            
+            if ($executableFiles) {
+                $processesToKill = @()
+                
+                foreach ($exeFile in $executableFiles) {
+                    $exeName = $exeFile.Name
+                    $processName = [System.IO.Path]::GetFileNameWithoutExtension($exeName)
+                    
+                    # Find running processes with this name
+                    $runningProcesses = Get-Process -Name $processName -ErrorAction SilentlyContinue
+                    
+                    foreach ($process in $runningProcesses) {
+                        # Check if the process path matches the installation directory
+                        try {
+                            $processPath = $process.Path
+                            if ($processPath -and $processPath.StartsWith($InstallPath, [StringComparison]::OrdinalIgnoreCase)) {
+                                $processesToKill += $process
+                            }
+                        }
+                        catch {
+                            # Some processes may not allow access to their path - skip them
+                            continue
+                        }
+                    }
+                }
+                
+                if ($processesToKill.Count -gt 0) {
+                    Write-Warning "  Found $($processesToKill.Count) running process(es) from installation directory"
+                    Write-Info "  Stopping processes to allow extraction..."
+                    
+                    foreach ($process in $processesToKill) {
+                        try {
+                            Write-Info "    Stopping process: $($process.Name) (PID: $($process.Id))"
+                            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+                            Write-Success "    [OK] Stopped: $($process.Name)"
+                        }
+                        catch {
+                            Write-Warning "    [!] Could not stop process $($process.Name): $_"
+                        }
+                    }
+                    
+                    # Wait a moment for processes to fully terminate
+                    Write-Info "  Waiting for processes to terminate..."
+                    Start-Sleep -Seconds 2
+                    
+                    Write-Success "  [OK] All processes stopped"
+                }
+                else {
+                    Write-Info "  No running processes found in installation directory"
+                }
+            }
+            else {
+                Write-Info "  No executable files found in installation directory (first-time install)"
+            }
+        }
+        catch {
+            Write-Warning "  [!] Error checking for running processes: $_"
+            Write-Info "  Continuing with extraction anyway..."
+        }
 
         foreach ($ComponentProp in $Components) {
             $ComponentName = $ComponentProp.Name
@@ -1652,20 +1808,20 @@ except Exception as e:
         }
     }
 } else {
-    Write-Host ""
-    Write-Host "WARNING: Model download skipped" -ForegroundColor Yellow
-    Write-Host "=================================" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "The application requires the Mistral-7B-Instruct-v0.3 model to function." -ForegroundColor Yellow
-    Write-Host "Without the model, language processing features will not work." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "To download the model later:" -ForegroundColor Cyan
-    Write-Host "  1. Ensure AWS credentials (AWS_KEY, AWS_SECRET, AWS_REGION) are in .env" -ForegroundColor Cyan
-    Write-Host "  2. Run the model download script or use model_downloader.py" -ForegroundColor Cyan
-    Write-Host "  3. Configure MODEL_PATH in .env to point to the model directory" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Model location: AWS S3 bucket 'rfq-models' (prefix: Mistral-7B-Instruct-v0-3/)" -ForegroundColor Cyan
-    Write-Host ""
+    Write-Log "" "Yellow"
+    Write-Log "WARNING: Model download skipped" "Yellow"
+    Write-Log "=================================" "Yellow"
+    Write-Log "" "Yellow"
+    Write-Log "The application requires the Mistral-7B-Instruct-v0.3 model to function." "Yellow"
+    Write-Log "Without the model, language processing features will not work." "Yellow"
+    Write-Log "" "Yellow"
+    Write-Log "To download the model later:" "Cyan"
+    Write-Log "  1. Ensure AWS credentials (AWS_KEY, AWS_SECRET, AWS_REGION) are in .env" "Cyan"
+    Write-Log "  2. Run the model download script or use model_downloader.py" "Cyan"
+    Write-Log "  3. Configure MODEL_PATH in .env to point to the model directory" "Cyan"
+    Write-Log "" "Cyan"
+    Write-Log "Model location: AWS S3 bucket 'rfq-models' (prefix: Mistral-7B-Instruct-v0-3/)" "Cyan"
+    Write-Log "" "Cyan"
     # Only add to skipped steps if not already added (to avoid duplicates)
     if ($script:SkippedSteps -notcontains "Model download (skipped by installer)" -and 
         $script:SkippedSteps -notcontains "Model download (AWS credentials missing)" -and
@@ -2039,31 +2195,33 @@ SUPPORT:
 ================================================================================
 "@
 
-Write-Host $SuccessMessage -ForegroundColor Green
+Write-Log $SuccessMessage "Green"
+Write-Log "" "Green"
+Write-Log "Installation log saved to: $script:LogFile" "Cyan"
 
 # Check and warn about missing parameters
 if ($MissingParams.Count -gt 0) {
-    Write-Host ""
-    Write-Host "IMPORTANT: Configuration Required" -ForegroundColor Yellow
-    Write-Host "===================================" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Before running the application, please edit the .env file and fill in:" -ForegroundColor Yellow
+    Write-Log "" "Yellow"
+    Write-Log "IMPORTANT: Configuration Required" "Yellow"
+    Write-Log "===================================" "Yellow"
+    Write-Log "" "Yellow"
+    Write-Log "Before running the application, please edit the .env file and fill in:" "Yellow"
     foreach ($param in $MissingParams) {
-        Write-Host "  - $param" -ForegroundColor Yellow
+        Write-Log "  - $param" "Yellow"
     }
-    Write-Host ""
-    Write-Host "File location: $EnvPath" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "After editing .env, you can:" -ForegroundColor Cyan
-    Write-Host "  1. Run setup_database_auto.bat to set up the database" -ForegroundColor Cyan
-    Write-Host "  2. Then launch the application" -ForegroundColor Cyan
-    Write-Host ""
+    Write-Log "" "Yellow"
+    Write-Log "File location: $EnvPath" "Cyan"
+    Write-Log "" "Cyan"
+    Write-Log "After editing .env, you can:" "Cyan"
+    Write-Log "  1. Run setup_database_auto.bat to set up the database" "Cyan"
+    Write-Log "  2. Then launch the application" "Cyan"
+    Write-Log "" "Cyan"
 }
 
-Write-Host ""
-Write-Host "================================================================================" -ForegroundColor Green
-Write-Host "Installation complete!" -ForegroundColor Green
-Write-Host "================================================================================" -ForegroundColor Green
-Write-Host ""
+Write-Log "" "Green"
+Write-Log "================================================================================" "Green"
+Write-Log "Installation complete!" "Green"
+Write-Log "================================================================================" "Green"
+Write-Log "" "Green"
 Write-Host "Press any key to exit..."
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
