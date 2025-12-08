@@ -1931,6 +1931,22 @@ if ($ExePath) {
         }
     }
     
+    # Start the service if it was successfully created
+    if ($script:serviceCreated) {
+        Write-Info "`nStarting service '$ServiceName'..."
+        try {
+            Start-Service -Name $ServiceName -ErrorAction Stop
+            Write-Success "[OK] Service '$ServiceName' started successfully"
+            Write-Info "  The application is now running as a Windows service"
+        }
+        catch {
+            Write-Warning "[!] Could not start service: $_"
+            Write-Info "  You can start it manually later:"
+            Write-Info "    - Command: sc start $ServiceName"
+            Write-Info "    - GUI: Services.msc"
+        }
+    }
+    
     # Create desktop shortcut (optional)
     Write-Info "`nCreating shortcuts..."
     try {
@@ -1992,9 +2008,9 @@ if ($script:SkippedSteps.Count -gt 0) {
 
 $SuccessMessage += @"
 NEXT STEPS:
-  1. The Windows service 'RFQapplication' has been created
-  2. Start the service: sc start RFQapplication (or use Services.msc)
-  3. Or run the application directly: $($ExePath.FullName)
+  1. The Windows service 'RFQapplication' has been created and started
+  2. The application should now be running as a Windows service
+  3. You can also run the application directly: $($ExePath.FullName)
   4. Or use the desktop shortcut: RFQ Application
   5. For updates, use the built-in updater (Settings -> System Updates)
 
