@@ -923,6 +923,7 @@ var
   ExistingSuperUserPassword: String;
   ExistingRFQUserPassword: String;
   ExistingAzureKey: String;
+  ExistingUpdateChannel: String;
 begin
   // Get the installation path
   EnvFilePath := ExpandConstant('{app}\.env');
@@ -944,6 +945,14 @@ begin
   ExistingSuperUserPassword := ReadEnvValue(EnvFilePath, 'SQL_SUPER_USER');
   ExistingRFQUserPassword := ReadEnvValue(EnvFilePath, 'RFQ_USER_PASSWORD');
   ExistingAzureKey := ReadEnvValue(EnvFilePath, 'AZURE_CONFIG_ENCRYPTION_KEY');
+  ExistingUpdateChannel := ReadEnvValue(EnvFilePath, 'RFQ_UPDATE_CHANNEL');
+  
+  // Store update channel from existing .env if found
+  if ExistingUpdateChannel <> '' then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UpdateChannel', ExistingUpdateChannel);
+    Log('Loaded Update Channel from .env: ' + ExistingUpdateChannel);
+  end;
   
   // Pre-populate input pages with existing values
   if ExistingGitHubToken <> '' then
@@ -1018,6 +1027,7 @@ var
   ModelPath: String;
   ScriptPath: String;
   Params: String;
+  UpdateChannel: String;
 begin
   Result := True;
   
@@ -1254,6 +1264,7 @@ var
   AzureKeyCustom: String;
   CleanReinstall: Boolean;
   CleanupAfterInstall: Boolean;
+  UpdateChannel: String;
   ModelDownloadStr: String;
   AzureKeyGenerateStr: String;
   CleanReinstallStr: String;
@@ -1275,6 +1286,7 @@ begin
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURL);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyCustom);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UpdateChannel', UpdateChannel);
   
   // Read ModelDownload from registry
   if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', ModelDownloadStr) then
@@ -1312,6 +1324,10 @@ begin
   if ServerURL = '' then
     ServerURL := 'https://localhost';
   
+  // If UpdateChannel is empty, use default
+  if UpdateChannel = '' then
+    UpdateChannel := 'customer';
+  
   // Build PowerShell command parameters
   Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
   Params := Params + ' -InstallPath "' + InstallPath + '"';
@@ -1325,6 +1341,9 @@ begin
   // Add Cleanup After Install flag
   if CleanupAfterInstall then
     Params := Params + ' -CleanupAfterInstall';
+  
+  // Add Update Channel
+  Params := Params + ' -UpdateChannel "' + UpdateChannel + '"';
   
   // Add database passwords
   if SettingsPassword <> '' then

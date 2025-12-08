@@ -19,7 +19,8 @@ param(
     [switch]$AzureKeyGenerate,
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
-    [switch]$CleanupAfterInstall
+    [switch]$CleanupAfterInstall,
+    [string]$UpdateChannel = "customer"
 )
 
 # Set error action preference to continue so we can handle errors gracefully
@@ -122,8 +123,15 @@ Write-Host @"
 ================================================================================
 "@ -ForegroundColor Cyan
 
-# Configuration
-$GITHUB_REPO = "lama-ai-RFQ/RFQwindowspackages"
+# Configuration - Determine repository based on update channel
+if ($UpdateChannel -eq "internal") {
+    $GITHUB_REPO = "lama-ai-RFQ/RFQwindowspackages-internal"
+    Write-Info "Using INTERNAL update channel: $GITHUB_REPO"
+}
+else {
+    $GITHUB_REPO = "lama-ai-RFQ/RFQwindowspackages"
+    Write-Info "Using CUSTOMER update channel: $GITHUB_REPO"
+}
 $GITHUB_API = "https://api.github.com/repos"
 
 # Check PowerShell version
@@ -1062,7 +1070,7 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
     $EnvContent = $EnvContent -replace "WINDOWS=.*", "WINDOWS=true"
     $EnvContent = $EnvContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
-    $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=customer"
+    $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$UpdateChannel"
     # Only update AWS credentials if they are non-empty
     if (![string]::IsNullOrWhiteSpace($AWSKey)) {
         $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
@@ -1109,7 +1117,7 @@ if (Test-Path $EnvTemplatePath) {
         $EnvContent += "`nAZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
     }
     if ($EnvContent -notmatch "RFQ_UPDATE_CHANNEL") {
-        $EnvContent += "`nRFQ_UPDATE_CHANNEL=customer"
+        $EnvContent += "`nRFQ_UPDATE_CHANNEL=$UpdateChannel"
     }
     # Only add AWS credentials if they are non-empty
     if ($EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
@@ -1172,7 +1180,7 @@ AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
 
 
 # Update Channel
-RFQ_UPDATE_CHANNEL=customer
+RFQ_UPDATE_CHANNEL=$UpdateChannel
 "@
     
     # Add AWS Configuration section only if credentials are provided
