@@ -2029,7 +2029,6 @@ if ($ExePath) {
   <workingdirectory>$InstallPath</workingdirectory>
   <startmode>Automatic</startmode>
   <stopparentprocessfirst>false</stopparentprocessfirst>
-  <stopexecutable></stopexecutable>
   <stoptimeout>15 sec</stoptimeout>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>
