@@ -39,7 +39,7 @@ This directory contains the Inno Setup installer script for creating the Windows
 
 ### Installer Features
 
-The Inno Setup installer (`setup.iss`) provides:
+The Setup installer (`setup.iss`) provides:
 - ✅ Directory selection page
 - ✅ GitHub token input (mandatory)
 - ✅ AWS credentials input (for model download)
