@@ -1201,10 +1201,23 @@ else {
     $AzureKey = ""
 }
 
-# Get model path for .env (use ModelPath if provided, otherwise empty)
+# Get model path for .env
 $ModelPathForEnv = ""
 if (![string]::IsNullOrWhiteSpace($ModelPath)) {
+    # Model path provided via parameter (user is downloading now)
     $ModelPathForEnv = $ModelPath
+}
+elseif ($SkipModelDownload -and (Test-Path $EnvPath)) {
+    # User skipped download - preserve existing MODEL_PATH from .env if it exists
+    Write-Info "  Preserving existing MODEL_PATH from .env file (model download skipped)..."
+    $ExistingEnvContent = Get-Content $EnvPath -Raw -ErrorAction SilentlyContinue
+    if ($ExistingEnvContent -and $ExistingEnvContent -match "MODEL_PATH\s*=\s*([^\r\n]+)") {
+        $existingModelPath = $matches[1].Trim()
+        if (![string]::IsNullOrWhiteSpace($existingModelPath)) {
+            $ModelPathForEnv = $existingModelPath
+            Write-Info "  Found existing MODEL_PATH: $ModelPathForEnv"
+        }
+    }
 }
 
 # Check if .env.template exists, if so use it as base
@@ -1220,7 +1233,10 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
     $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
     $EnvContent = $EnvContent -replace "CONTAINER=.*", "CONTAINER=0"
-    $EnvContent = $EnvContent -replace "MODEL_PATH=.*", "MODEL_PATH=$ModelPathForEnv"
+    # Only update MODEL_PATH if we have a value (preserve existing if empty)
+    if (![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
+        $EnvContent = $EnvContent -replace "MODEL_PATH=.*", "MODEL_PATH=$ModelPathForEnv"
+    }
     $EnvContent = $EnvContent -replace "MODEL_NAME=.*", "MODEL_NAME=Mistral-7B-Instruct-v0-3"
     $EnvContent = $EnvContent -replace "SERVER_URL=.*", "SERVER_URL=$ServerURL"
     $EnvContent = $EnvContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
@@ -1254,7 +1270,8 @@ if (Test-Path $EnvTemplatePath) {
     if ($EnvContent -notmatch "CONTAINER") {
         $EnvContent += "`nCONTAINER=0"
     }
-    if ($EnvContent -notmatch "MODEL_PATH") {
+    # Only add MODEL_PATH if we have a value and it doesn't exist
+    if ($EnvContent -notmatch "MODEL_PATH" -and ![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
         $EnvContent += "`nMODEL_PATH=$ModelPathForEnv"
     }
     if ($EnvContent -notmatch "MODEL_NAME") {
