@@ -101,12 +101,42 @@ Write-Log "Working directory: $PWD" "Cyan"
 Write-Log "Script path: $PSCommandPath" "Cyan"
 Write-Log "Log file: $script:LogFile" "Cyan"
 
+# Create error status file for Inno Setup to check
+$ErrorStatusFile = Join-Path $env:TEMP "rfq_install_error_status.txt"
+
+# Function to write error status
+function Write-ErrorStatus {
+    param([string]$ErrorMessage, [int]$ExitCode = 1)
+    try {
+        $status = @{
+            Error = $true
+            Message = $ErrorMessage
+            ExitCode = $ExitCode
+            Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            LogFile = $script:LogFile
+        } | ConvertTo-Json
+        Set-Content -Path $ErrorStatusFile -Value $status -Force
+    }
+    catch {
+        # If we can't write status file, at least try to write a simple error message
+        try {
+            Set-Content -Path $ErrorStatusFile -Value "ERROR: $ErrorMessage" -Force
+        }
+        catch {
+            # Ignore - can't even write status file
+        }
+    }
+}
+
 # Trap all terminating errors to ensure we always show "Press any key"
 trap {
     # Clean up secrets file on error
     if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
         Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
     }
+    
+    $errorMessage = "An unexpected error occurred: $($_.Exception.Message)"
+    Write-ErrorStatus -ErrorMessage $errorMessage -ExitCode 1
     
     Write-Log "" "Red"
     Write-Log "================================================================================" "Red"
@@ -119,6 +149,7 @@ trap {
     Write-Log $_.InvocationInfo.PositionMessage "Yellow"
     Write-Log "" "Red"
     Write-Log "Log file saved to: $script:LogFile" "Cyan"
+    Write-Log "Error status file: $ErrorStatusFile" "Cyan"
     Write-Host ""
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -152,8 +183,14 @@ function Write-Error-Custom {
 
 # Exit with error and pause
 function Exit-WithError {
+    param([string]$ErrorMessage = "Installation failed")
+    
+    # Write error status file
+    Write-ErrorStatus -ErrorMessage $ErrorMessage -ExitCode 1
+    
     Write-Log "" "Red"
     Write-Log "Installation failed. Log file saved to: $script:LogFile" "Yellow"
+    Write-Log "Error: $ErrorMessage" "Red"
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -2285,6 +2322,22 @@ if ($MissingParams.Count -gt 0) {
 if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
     Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
     Write-Info "  Secrets file cleaned up"
+}
+
+# Write success status file for Inno Setup to check
+try {
+    $status = @{
+        Error = $false
+        Message = "Installation completed successfully"
+        ExitCode = 0
+        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        LogFile = $script:LogFile
+    } | ConvertTo-Json
+    Set-Content -Path $ErrorStatusFile -Value $status -Force
+}
+catch {
+    # Non-critical - status file write failed
+    Write-Warning "  Could not write success status file (non-critical)"
 }
 
 Write-Log "" "Green"

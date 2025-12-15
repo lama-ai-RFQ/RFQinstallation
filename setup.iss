@@ -66,7 +66,7 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 Filename: "powershell.exe"; \
     Parameters: "{code:GetPowerShellParams}"; \
     StatusMsg: "Installing RFQ Application and creating Windows service..."; \
-    Flags: waituntilterminated; \
+    Flags: waituntilterminated runascurrentuser; \
     Description: "{code:GetInstallDescription}"
 
 [Code]
@@ -1266,6 +1266,77 @@ begin
   // Skip Azure key input page if auto-generate is selected
   if PageID = AzureKeyInputPage.ID then
     Result := AzureKeyPage.SelectedValueIndex = 0;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ErrorStatusFile: String;
+  StatusContent: String;
+  StatusLines: TArrayOfString;
+  I: Integer;
+  ErrorFound: Boolean;
+  ErrorMessage: String;
+begin
+  // Check for error status file after PowerShell script runs
+  if CurStep = ssPostInstall then
+  begin
+    ErrorStatusFile := ExpandConstant('{tmp}') + '\rfq_install_error_status.txt';
+    
+    if FileExists(ErrorStatusFile) then
+    begin
+      // Read status file
+      if LoadStringsFromFile(ErrorStatusFile, StatusLines) then
+      begin
+        // Parse JSON-like status (simple parsing)
+        ErrorFound := False;
+        ErrorMessage := '';
+        
+        for I := 0 to GetArrayLength(StatusLines) - 1 do
+        begin
+          StatusContent := StatusLines[I];
+          if Pos('"Error"', StatusContent) > 0 then
+          begin
+            if Pos(': true', StatusContent) > 0 then
+              ErrorFound := True;
+          end;
+          if Pos('"Message"', StatusContent) > 0 then
+          begin
+            // Extract message (simple extraction)
+            ErrorMessage := StatusContent;
+            // Remove JSON formatting
+            ErrorMessage := StringChange(ErrorMessage, '"Message":', '');
+            ErrorMessage := StringChange(ErrorMessage, '"', '');
+            ErrorMessage := StringChange(ErrorMessage, ',', '');
+            ErrorMessage := Trim(ErrorMessage);
+          end;
+        end;
+        
+        // If error found, show message and abort
+        if ErrorFound then
+        begin
+          if ErrorMessage = '' then
+            ErrorMessage := 'Installation failed. Please check the log file for details.';
+          
+          MsgBox('Installation Error' + #13#10 + #13#10 + 
+                 ErrorMessage + #13#10 + #13#10 +
+                 'Please check the installation log file for more details.' + #13#10 +
+                 'The installer will now exit.',
+                 mbError, MB_OK);
+          
+          // Clean up error status file
+          DeleteFile(ErrorStatusFile);
+          
+          // Abort installation
+          WizardForm.Close;
+        end
+        else
+        begin
+          // Success - clean up status file
+          DeleteFile(ErrorStatusFile);
+        end;
+      end;
+    end;
+  end;
 end;
 
 function GetInstallDescription(Param: String): String;
