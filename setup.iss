@@ -1277,6 +1277,7 @@ var
   ErrorFound: Boolean;
   ErrorMessage: String;
   TempStr: String;
+  PosIdx: Integer;
 begin
   // Check for error status file after PowerShell script runs
   if CurStep = ssPostInstall then
@@ -1303,12 +1304,25 @@ begin
           if Pos('"Message"', StatusContent) > 0 then
           begin
             // Extract message (simple extraction)
-            TempStr := StatusContent;
-            // Remove JSON formatting
-            TempStr := StringChange(TempStr, '"Message":', '');
-            TempStr := StringChange(TempStr, '"', '');
-            TempStr := StringChange(TempStr, ',', '');
-            ErrorMessage := Trim(TempStr);
+            // Find the colon after "Message"
+            PosIdx := Pos(':', StatusContent);
+            if PosIdx > 0 then
+            begin
+              // Get everything after the colon
+              TempStr := Copy(StatusContent, PosIdx + 1, Length(StatusContent) - PosIdx);
+              // Remove quotes and commas
+              while Pos('"', TempStr) > 0 do
+              begin
+                PosIdx := Pos('"', TempStr);
+                TempStr := Copy(TempStr, 1, PosIdx - 1) + Copy(TempStr, PosIdx + 1, Length(TempStr) - PosIdx);
+              end;
+              while Pos(',', TempStr) > 0 do
+              begin
+                PosIdx := Pos(',', TempStr);
+                TempStr := Copy(TempStr, 1, PosIdx - 1) + Copy(TempStr, PosIdx + 1, Length(TempStr) - PosIdx);
+              end;
+              ErrorMessage := Trim(TempStr);
+            end;
           end;
         end;
         
