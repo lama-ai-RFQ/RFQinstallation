@@ -20,11 +20,53 @@ param(
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
     [switch]$CleanupAfterInstall,
-    [string]$UpdateChannel = "customer"
+    [string]$UpdateChannel = "customer",
+    [string]$SecretsFile = ""
 )
 
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
+
+# Read sensitive data from temporary JSON file if provided (avoids command-line escaping issues)
+if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
+    Write-Info "Reading sensitive data from secrets file..."
+    try {
+        $secrets = Get-Content $SecretsFile -Raw | ConvertFrom-Json
+        
+        # Override parameters with values from secrets file if not already provided
+        if ([string]::IsNullOrWhiteSpace($SettingsPassword) -and $secrets.SettingsPassword) {
+            $SettingsPassword = $secrets.SettingsPassword
+        }
+        if ([string]::IsNullOrWhiteSpace($SuperUserPassword) -and $secrets.SuperUserPassword) {
+            $SuperUserPassword = $secrets.SuperUserPassword
+        }
+        if ([string]::IsNullOrWhiteSpace($RFQUserPassword) -and $secrets.RFQUserPassword) {
+            $RFQUserPassword = $secrets.RFQUserPassword
+        }
+        if ([string]::IsNullOrWhiteSpace($AWSKey) -and $secrets.AWSKey) {
+            $AWSKey = $secrets.AWSKey
+        }
+        if ([string]::IsNullOrWhiteSpace($AWSSecret) -and $secrets.AWSSecret) {
+            $AWSSecret = $secrets.AWSSecret
+        }
+        if ([string]::IsNullOrWhiteSpace($AWSRegion) -and $secrets.AWSRegion) {
+            $AWSRegion = $secrets.AWSRegion
+        }
+        if ([string]::IsNullOrWhiteSpace($AzureKeyCustom) -and $secrets.AzureKeyCustom) {
+            $AzureKeyCustom = $secrets.AzureKeyCustom
+        }
+        
+        Write-Success "[OK] Loaded sensitive data from secrets file"
+        
+        # Delete the secrets file immediately after reading
+        Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
+        Write-Info "  Secrets file deleted for security"
+    }
+    catch {
+        Write-Warning "  [!] Failed to read secrets file: $_"
+        Write-Info "  Continuing with command-line parameters or defaults..."
+    }
+}
 
 # Setup log file - use temp directory initially until installation directory is created
 $LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -61,6 +103,11 @@ Write-Log "Log file: $script:LogFile" "Cyan"
 
 # Trap all terminating errors to ensure we always show "Press any key"
 trap {
+    # Clean up secrets file on error
+    if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
+        Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
+    }
+    
     Write-Log "" "Red"
     Write-Log "================================================================================" "Red"
     Write-Log "CRITICAL ERROR" "Red"
@@ -2232,6 +2279,12 @@ if ($MissingParams.Count -gt 0) {
     Write-Log "  1. Run setup_database_auto.bat to set up the database" "Cyan"
     Write-Log "  2. Then launch the application" "Cyan"
     Write-Log "" "Cyan"
+}
+
+# Final cleanup: ensure secrets file is deleted
+if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
+    Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
+    Write-Info "  Secrets file cleaned up"
 }
 
 Write-Log "" "Green"

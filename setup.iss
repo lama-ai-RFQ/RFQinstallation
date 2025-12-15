@@ -94,6 +94,33 @@ var
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
 
+function EscapeJsonString(Input: String): String;
+var
+  I: Integer;
+  Ch: Char;
+begin
+  Result := '';
+  for I := 1 to Length(Input) do
+  begin
+    Ch := Input[I];
+    case Ch of
+      '\': Result := Result + '\\';
+      '"': Result := Result + '\"';
+      '/': Result := Result + '\/';
+      #8: Result := Result + '\b';
+      #9: Result := Result + '\t';
+      #10: Result := Result + '\n';
+      #12: Result := Result + '\f';
+      #13: Result := Result + '\r';
+      else
+        if (Ord(Ch) < 32) or (Ord(Ch) > 126) then
+          Result := Result + '\u' + Format('%.4x', [Ord(Ch)])
+        else
+          Result := Result + Ch;
+    end;
+  end;
+end;
+
 function ReadEnvValue(FilePath: String; Key: String): String;
 var
   Lines: TArrayOfString;
@@ -1270,9 +1297,16 @@ var
   CleanReinstallStr: String;
   CleanupAfterInstallStr: String;
   Params: String;
+  SecretsFile: String;
+  SecretsJson: String;
+  TempDir: String;
 begin
   // Get installation path
   InstallPath := ExpandConstant('{app}');
+  
+  // Get temp directory
+  TempDir := ExpandConstant('{tmp}');
+  SecretsFile := TempDir + '\rfq_install_secrets.json';
   
   // Always read from registry since that's where values are stored during wizard
   // Pages may not be accessible during the [Run] section
@@ -1328,7 +1362,22 @@ begin
   if UpdateChannel = '' then
     UpdateChannel := 'customer';
   
-  // Build PowerShell command parameters
+  // Write sensitive data to temporary JSON file to avoid command-line escaping issues
+  // Use helper function to properly escape JSON special characters
+  SecretsJson := '{' + #13#10;
+  SecretsJson := SecretsJson + '  "SettingsPassword": "' + EscapeJsonString(SettingsPassword) + '",' + #13#10;
+  SecretsJson := SecretsJson + '  "SuperUserPassword": "' + EscapeJsonString(SuperUserPassword) + '",' + #13#10;
+  SecretsJson := SecretsJson + '  "RFQUserPassword": "' + EscapeJsonString(RFQUserPassword) + '",' + #13#10;
+  SecretsJson := SecretsJson + '  "AWSKey": "' + EscapeJsonString(AWSKey) + '",' + #13#10;
+  SecretsJson := SecretsJson + '  "AWSSecret": "' + EscapeJsonString(AWSSecret) + '",' + #13#10;
+  SecretsJson := SecretsJson + '  "AWSRegion": "' + EscapeJsonString(AWSRegion) + '",' + #13#10;
+  SecretsJson := SecretsJson + '  "AzureKeyCustom": "' + EscapeJsonString(AzureKeyCustom) + '"' + #13#10;
+  SecretsJson := SecretsJson + '}';
+  
+  // Write secrets to temp file
+  SaveStringToFile(SecretsFile, SecretsJson, False);
+  
+  // Build PowerShell command parameters (without sensitive data)
   Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
   Params := Params + ' -InstallPath "' + InstallPath + '"';
   Params := Params + ' -GitHubToken "' + GitHubToken + '"';
@@ -1345,33 +1394,13 @@ begin
   // Add Update Channel
   Params := Params + ' -UpdateChannel "' + UpdateChannel + '"';
   
-  // Add database passwords
-  if SettingsPassword <> '' then
-    Params := Params + ' -SettingsPassword "' + SettingsPassword + '"';
-  if SuperUserPassword <> '' then
-    Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
-  if RFQUserPassword <> '' then
-    Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
-  
-  // Add Server URL
+  // Add Server URL (not sensitive, safe for command line)
   if ServerURL <> '' then
     Params := Params + ' -ServerURL "' + ServerURL + '"';
   
-  // Add Azure key settings
+  // Add Azure key settings (flag only, not the actual key)
   if AzureKeyGenerate then
-    Params := Params + ' -AzureKeyGenerate'
-  else if AzureKeyCustom <> '' then
-    Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
-  
-  // Always pass AWS credentials to save to .env (even if not downloading model now)
-  // Note: Credentials are passed via registry to avoid command-line escaping issues
-  // The PowerShell script will read them from registry if command-line params fail
-  if AWSKey <> '' then
-    Params := Params + ' -AWSKey "' + AWSKey + '"';
-  if AWSSecret <> '' then
-    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
-  if AWSRegion <> '' then
-    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
+    Params := Params + ' -AzureKeyGenerate';
   
   // Add model download options
   if ModelDownload then
@@ -1384,6 +1413,9 @@ begin
     // User chose to skip download - tell script not to prompt
     Params := Params + ' -SkipModelDownload';
   end;
+  
+  // Add path to secrets file
+  Params := Params + ' -SecretsFile "' + SecretsFile + '"';
   
   Result := Params;
 end;
