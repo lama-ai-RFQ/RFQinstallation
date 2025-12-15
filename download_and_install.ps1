@@ -1,6 +1,12 @@
 # RFQ Application - Windows Installation Script
 # Downloads and installs the RFQ application from GitHub releases
 # This script is for first-time installation only
+#
+# CREDENTIAL HANDLING:
+# Sensitive credentials (passwords, tokens, API keys) are passed via Windows Registry
+# (HKEY_CURRENT_USER\Software\RFQApplication\Installer) instead of command-line parameters
+# to avoid escaping issues with special characters. The registry entries are cleaned up
+# after installation completes or if an error occurs.
 
 param(
     [string]$InstallPath = "$env:LOCALAPPDATA\RFQApplication",
@@ -72,6 +78,25 @@ trap {
     Write-Log $_.InvocationInfo.PositionMessage "Yellow"
     Write-Log "" "Red"
     Write-Log "Log file saved to: $script:LogFile" "Cyan"
+    
+    # Clean up sensitive data from registry on critical error
+    $RegPath = "HKCU:\Software\RFQApplication\Installer"
+    if (Test-Path $RegPath) {
+        try {
+            Write-Log "Cleaning up sensitive registry data..." "Yellow"
+            Remove-ItemProperty -Path $RegPath -Name "SuperUserPassword" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "RFQUserPassword" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "SettingsPassword" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "GitHubToken" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "AWSKey" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "AWSSecret" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "AzureKeyCustom" -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Silently ignore cleanup errors on critical failure
+        }
+    }
+    
     Write-Host ""
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -107,6 +132,25 @@ function Write-Error-Custom {
 function Exit-WithError {
     Write-Log "" "Red"
     Write-Log "Installation failed. Log file saved to: $script:LogFile" "Yellow"
+    
+    # Clean up sensitive data from registry on error
+    $RegPath = "HKCU:\Software\RFQApplication\Installer"
+    if (Test-Path $RegPath) {
+        try {
+            Write-Log "Cleaning up sensitive registry data..." "Yellow"
+            Remove-ItemProperty -Path $RegPath -Name "SuperUserPassword" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "RFQUserPassword" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "SettingsPassword" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "GitHubToken" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "AWSKey" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "AWSSecret" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $RegPath -Name "AzureKeyCustom" -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Silently ignore cleanup errors on failure
+        }
+    }
+    
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -1159,7 +1203,100 @@ Write-Info "`n[8/8] Configuring application..."
 $EnvPath = Join-Path $InstallPath ".env"
 $EnvTemplatePath = Join-Path $InstallPath ".env.template"
 
-# Use provided passwords or defaults
+# Try to read passwords from registry first (safer for complex passwords with special chars)
+# Registry values are written by the installer and should be cleaned up after reading
+$RegPath = "HKCU:\Software\RFQApplication\Installer"
+if (Test-Path $RegPath) {
+    Write-Info "  Reading configuration from registry..."
+    
+    # Read passwords from registry if not provided via command line
+    if ([string]::IsNullOrWhiteSpace($SuperUserPassword)) {
+        try {
+            $SuperUserPassword = Get-ItemPropertyValue -Path $RegPath -Name "SuperUserPassword" -ErrorAction SilentlyContinue
+            if ($SuperUserPassword) {
+                Write-Info "  Loaded SuperUserPassword from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($RFQUserPassword)) {
+        try {
+            $RFQUserPassword = Get-ItemPropertyValue -Path $RegPath -Name "RFQUserPassword" -ErrorAction SilentlyContinue
+            if ($RFQUserPassword) {
+                Write-Info "  Loaded RFQUserPassword from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($SettingsPassword)) {
+        try {
+            $SettingsPassword = Get-ItemPropertyValue -Path $RegPath -Name "SettingsPassword" -ErrorAction SilentlyContinue
+            if ($SettingsPassword) {
+                Write-Info "  Loaded SettingsPassword from registry"
+            }
+        } catch {}
+    }
+    
+    # Read ServerURL from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($ServerURL)) {
+        try {
+            $ServerURL = Get-ItemPropertyValue -Path $RegPath -Name "ServerURL" -ErrorAction SilentlyContinue
+            if ($ServerURL) {
+                Write-Info "  Loaded ServerURL from registry"
+            }
+        } catch {}
+    }
+    
+    # Read GitHub token from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($GitHubToken)) {
+        try {
+            $GitHubToken = Get-ItemPropertyValue -Path $RegPath -Name "GitHubToken" -ErrorAction SilentlyContinue
+            if ($GitHubToken) {
+                Write-Info "  Loaded GitHubToken from registry"
+            }
+        } catch {}
+    }
+    
+    # Read AWS credentials from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($AWSKey)) {
+        try {
+            $AWSKey = Get-ItemPropertyValue -Path $RegPath -Name "AWSKey" -ErrorAction SilentlyContinue
+            if ($AWSKey) {
+                Write-Info "  Loaded AWSKey from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($AWSSecret)) {
+        try {
+            $AWSSecret = Get-ItemPropertyValue -Path $RegPath -Name "AWSSecret" -ErrorAction SilentlyContinue
+            if ($AWSSecret) {
+                Write-Info "  Loaded AWSSecret from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($AWSRegion)) {
+        try {
+            $AWSRegion = Get-ItemPropertyValue -Path $RegPath -Name "AWSRegion" -ErrorAction SilentlyContinue
+            if ($AWSRegion) {
+                Write-Info "  Loaded AWSRegion from registry"
+            }
+        } catch {}
+    }
+    
+    # Read Azure key settings from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($AzureKeyCustom)) {
+        try {
+            $AzureKeyCustom = Get-ItemPropertyValue -Path $RegPath -Name "AzureKeyCustom" -ErrorAction SilentlyContinue
+            if ($AzureKeyCustom) {
+                Write-Info "  Loaded AzureKeyCustom from registry"
+            }
+        } catch {}
+    }
+}
+
+# Use provided passwords or defaults (if not loaded from registry)
 if ([string]::IsNullOrWhiteSpace($SuperUserPassword)) {
     $SuperUserPassword = "your_sql_super_user_password_here"
 }
@@ -1382,9 +1519,32 @@ Set-Content -Path $VersionPath -Value $Version -Force
 # Download Mistral model (optional)
 Write-Info "`nModel download..."
 
-# Check if ModelPath was provided via parameter (from installer)
+# Check if ModelPath was provided via parameter or registry (from installer)
 $downloadModel = 'n'
 $modelBasePath = ""
+
+# Try to read model download settings from registry if not provided via command line
+if (Test-Path $RegPath) {
+    if ([string]::IsNullOrWhiteSpace($ModelPath)) {
+        try {
+            $ModelPath = Get-ItemPropertyValue -Path $RegPath -Name "ModelPath" -ErrorAction SilentlyContinue
+            if ($ModelPath) {
+                Write-Info "  Loaded ModelPath from registry: $ModelPath"
+            }
+        } catch {}
+    }
+    
+    # Check if model download was enabled in installer
+    if (-not $SkipModelDownload) {
+        try {
+            $ModelDownloadSetting = Get-ItemPropertyValue -Path $RegPath -Name "ModelDownload" -ErrorAction SilentlyContinue
+            if ($ModelDownloadSetting -eq "False") {
+                $SkipModelDownload = $true
+                Write-Info "  Model download disabled by installer"
+            }
+        } catch {}
+    }
+}
 
 if ($SkipModelDownload) {
     # Installer explicitly requested to skip download - don't prompt
@@ -1393,7 +1553,7 @@ if ($SkipModelDownload) {
     $script:SkippedSteps += "Model download (skipped by installer)"
 }
 elseif ($ModelPath -and $ModelPath.Trim() -ne "") {
-    # Model path provided via parameter - skip prompts
+    # Model path provided via parameter or registry - skip prompts
     Write-Info "Model download path provided by installer: $ModelPath"
     $modelBasePath = $ModelPath
     $downloadModel = 'y'
@@ -2232,6 +2392,37 @@ if ($MissingParams.Count -gt 0) {
     Write-Log "  1. Run setup_database_auto.bat to set up the database" "Cyan"
     Write-Log "  2. Then launch the application" "Cyan"
     Write-Log "" "Cyan"
+}
+
+# Clean up sensitive data from registry
+Write-Info "`nCleaning up temporary registry data..."
+$RegPath = "HKCU:\Software\RFQApplication\Installer"
+if (Test-Path $RegPath) {
+    try {
+        # Remove sensitive entries (passwords, tokens, keys)
+        Remove-ItemProperty -Path $RegPath -Name "SuperUserPassword" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "RFQUserPassword" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "SettingsPassword" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "GitHubToken" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "AWSKey" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "AWSSecret" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "AzureKeyCustom" -ErrorAction SilentlyContinue
+        
+        # Remove other temporary installer settings
+        Remove-ItemProperty -Path $RegPath -Name "ModelPath" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "ModelDownload" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "ServerURL" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "AWSRegion" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "CleanReinstall" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "CleanupAfterInstall" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $RegPath -Name "AzureKeyGenerate" -ErrorAction SilentlyContinue
+        
+        Write-Success "[OK] Cleaned up temporary registry data"
+    }
+    catch {
+        Write-Warning "[!] Could not clean up registry data: $_"
+        Write-Info "  You may want to manually delete: $RegPath"
+    }
 }
 
 Write-Log "" "Green"

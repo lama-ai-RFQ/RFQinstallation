@@ -1,5 +1,12 @@
 ; Inno Setup Script for RFQ Application
 ; This creates a graphical installer that wraps the PowerShell installation script
+;
+; CREDENTIAL HANDLING:
+; Sensitive credentials (passwords, tokens, API keys) are stored temporarily in
+; HKEY_CURRENT_USER\Software\RFQApplication\Installer and passed to the PowerShell
+; script via registry instead of command-line parameters. This avoids escaping issues
+; with special characters (e.g., $, @, !, ^, &, etc.) in passwords.
+; The PowerShell script cleans up these registry entries after use.
 
 #define MyAppName "RFQ Application"
 #define MyAppVersion "1.0.0"
@@ -1329,9 +1336,10 @@ begin
     UpdateChannel := 'customer';
   
   // Build PowerShell command parameters
+  // Note: Sensitive credentials (GitHub token, passwords, AWS keys) are passed via registry
+  // instead of command line to avoid escaping issues with special characters
   Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
   Params := Params + ' -InstallPath "' + InstallPath + '"';
-  Params := Params + ' -GitHubToken "' + GitHubToken + '"';
   Params := Params + ' -OverwriteExisting';
   
   // Add Clean Reinstall flag
@@ -1345,39 +1353,27 @@ begin
   // Add Update Channel
   Params := Params + ' -UpdateChannel "' + UpdateChannel + '"';
   
-  // Add database passwords
-  if SettingsPassword <> '' then
-    Params := Params + ' -SettingsPassword "' + SettingsPassword + '"';
-  if SuperUserPassword <> '' then
-    Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
-  if RFQUserPassword <> '' then
-    Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
+  // Note: Passwords and sensitive credentials are passed via registry to avoid 
+  // command-line escaping issues with special characters. The PowerShell script
+  // will read them from HKEY_CURRENT_USER\Software\RFQApplication\Installer
+  // and clean them up after use.
   
-  // Add Server URL
-  if ServerURL <> '' then
-    Params := Params + ' -ServerURL "' + ServerURL + '"';
+  // Passwords are already stored in registry via NextButtonClick, so we don't need
+  // to pass them via command line (which would cause escaping issues)
   
   // Add Azure key settings
   if AzureKeyGenerate then
-    Params := Params + ' -AzureKeyGenerate'
-  else if AzureKeyCustom <> '' then
-    Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
+    Params := Params + ' -AzureKeyGenerate';
   
-  // Always pass AWS credentials to save to .env (even if not downloading model now)
-  // Note: Credentials are passed via registry to avoid command-line escaping issues
-  // The PowerShell script will read them from registry if command-line params fail
-  if AWSKey <> '' then
-    Params := Params + ' -AWSKey "' + AWSKey + '"';
-  if AWSSecret <> '' then
-    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
-  if AWSRegion <> '' then
-    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
+  // Note: Azure custom key, AWS credentials, GitHub token, passwords, and Server URL
+  // are all read from registry by the PowerShell script to avoid command-line escaping issues
   
   // Add model download options
+  // Note: ModelPath is stored in registry and will be read by PowerShell script
   if ModelDownload then
   begin
-    // User chose to download - pass model path
-    Params := Params + ' -ModelPath "' + ModelPath + '"';
+    // User chose to download - model path already stored in registry
+    // No need to pass via command line
   end
   else
   begin
