@@ -268,7 +268,7 @@ Write-Info "`n[1/8] Checking PowerShell version..."
 if ($PSVersionTable.PSVersion.Major -lt 5) {
     Write-Error-Custom "ERROR: PowerShell 5.1 or later is required"
     Write-Error-Custom "Current version: $($PSVersionTable.PSVersion)"
-    Exit-WithError
+    Exit-WithError "PowerShell version $($PSVersionTable.PSVersion) is too old. PowerShell 5.1 or later is required."
 }
 Write-Success "[OK] PowerShell version: $($PSVersionTable.PSVersion)"
 
@@ -281,7 +281,7 @@ if ($FreeSpace -lt 4) {
     Write-Warning "WARNING: Low disk space - $FreeSpaceFormatted GB free. Need at least 4 GB."
     $continue = Read-Host "Continue anyway? (y/N)"
     if ($continue -ne 'y') {
-        Exit-WithError
+        Exit-WithError "Installation cancelled by user due to insufficient disk space"
     }
 }
 Write-Success "[OK] Available disk space: $FreeSpaceFormatted GB"
@@ -295,7 +295,7 @@ if (!(Test-Path $InstallPath)) {
     }
     catch {
         Write-Error-Custom "ERROR: Failed to create directory: $_"
-        Exit-WithError
+        Exit-WithError "Failed to create installation directory: $_"
     }
 }
 else {
@@ -306,7 +306,7 @@ else {
     else {
         $overwrite = Read-Host "Overwrite existing installation? (y/N)"
         if ($overwrite -ne 'y') {
-            Exit-WithError
+            Exit-WithError "Installation cancelled by user (existing installation not overwritten)"
         }
     }
 }
@@ -352,7 +352,7 @@ if (!$GitHubToken) {
     
     if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
         Write-Error-Custom "`nERROR: GitHub token is required to continue"
-        Exit-WithError
+        Exit-WithError "GitHub Personal Access Token is required but was not provided"
     }
     
     Write-Log "" "White"
@@ -429,7 +429,7 @@ catch {
         Write-Error-Custom "    3. Repository exists: https://github.com/$GITHUB_REPO"
     }
     
-    Exit-WithError
+    Exit-WithError "Failed to fetch release information from GitHub repository"
 }
 
 # Download component-based installation package
@@ -449,7 +449,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         foreach ($asset in $Release.assets) {
             Write-Error-Custom "    - $($asset.name)"
         }
-        Exit-WithError
+        Exit-WithError "No manifest.json found in release. This installer requires a component-based release."
     }
 
     # Download manifest
@@ -469,7 +469,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     }
     catch {
         Write-Error-Custom "ERROR: Failed to download manifest: $_"
-        Exit-WithError
+        Exit-WithError "Failed to download manifest.json from GitHub release: $_"
     }
 
     # Create temp directory for downloads
@@ -923,12 +923,12 @@ if ($ENABLE_STEP_7_EXTRACT) {
                 Start-Sleep -Milliseconds 100  # Give filesystem time to sync
                 if (!(Test-Path $ComponentZip)) {
                     Write-Error-Custom "ERROR: Failed to rejoin parts - output file not found"
-                    Exit-WithError
+                    Exit-WithError "Failed to rejoin multi-part archive - output file not found"
                 }
                 $fileSize = (Get-Item $ComponentZip).Length
                 if ($fileSize -eq 0) {
                     Write-Error-Custom "ERROR: Rejoined file is empty"
-                    Exit-WithError
+                    Exit-WithError "Failed to rejoin multi-part archive - rejoined file is empty"
                 }
                 Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB"
             }
@@ -1152,7 +1152,7 @@ except Exception as e:
                     Write-Error-Custom ""
                     Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
                     Write-Error-Custom "Or install Python and ensure it's in your PATH"
-                    Exit-WithError
+                    Exit-WithError "Failed to extract archive using any available method. Error: $extractionError"
                 }
                 
                 # Check if there's an unwanted nested directory structure
@@ -1198,7 +1198,7 @@ except Exception as e:
             }
             catch {
                 Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
-                Exit-WithError
+                Exit-WithError "Failed to extract component $ComponentName : $_"
             }
         }
 
