@@ -20,53 +20,11 @@ param(
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
     [switch]$CleanupAfterInstall,
-    [string]$UpdateChannel = "customer",
-    [string]$SecretsFile = ""
+    [string]$UpdateChannel = "customer"
 )
 
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
-
-# Read sensitive data from temporary JSON file if provided (avoids command-line escaping issues)
-if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
-    Write-Info "Reading sensitive data from secrets file..."
-    try {
-        $secrets = Get-Content $SecretsFile -Raw | ConvertFrom-Json
-        
-        # Override parameters with values from secrets file if not already provided
-        if ([string]::IsNullOrWhiteSpace($SettingsPassword) -and $secrets.SettingsPassword) {
-            $SettingsPassword = $secrets.SettingsPassword
-        }
-        if ([string]::IsNullOrWhiteSpace($SuperUserPassword) -and $secrets.SuperUserPassword) {
-            $SuperUserPassword = $secrets.SuperUserPassword
-        }
-        if ([string]::IsNullOrWhiteSpace($RFQUserPassword) -and $secrets.RFQUserPassword) {
-            $RFQUserPassword = $secrets.RFQUserPassword
-        }
-        if ([string]::IsNullOrWhiteSpace($AWSKey) -and $secrets.AWSKey) {
-            $AWSKey = $secrets.AWSKey
-        }
-        if ([string]::IsNullOrWhiteSpace($AWSSecret) -and $secrets.AWSSecret) {
-            $AWSSecret = $secrets.AWSSecret
-        }
-        if ([string]::IsNullOrWhiteSpace($AWSRegion) -and $secrets.AWSRegion) {
-            $AWSRegion = $secrets.AWSRegion
-        }
-        if ([string]::IsNullOrWhiteSpace($AzureKeyCustom) -and $secrets.AzureKeyCustom) {
-            $AzureKeyCustom = $secrets.AzureKeyCustom
-        }
-        
-        Write-Success "[OK] Loaded sensitive data from secrets file"
-        
-        # Delete the secrets file immediately after reading
-        Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
-        Write-Info "  Secrets file deleted for security"
-    }
-    catch {
-        Write-Warning "  [!] Failed to read secrets file: $_"
-        Write-Info "  Continuing with command-line parameters or defaults..."
-    }
-}
 
 # Setup log file - use temp directory initially until installation directory is created
 $LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -101,43 +59,8 @@ Write-Log "Working directory: $PWD" "Cyan"
 Write-Log "Script path: $PSCommandPath" "Cyan"
 Write-Log "Log file: $script:LogFile" "Cyan"
 
-# Create error status file for Inno Setup to check
-$ErrorStatusFile = Join-Path $env:TEMP "rfq_install_error_status.txt"
-
-# Function to write error status
-function Write-ErrorStatus {
-    param([string]$ErrorMessage, [int]$ExitCode = 1)
-    try {
-        $status = @{
-            Error = $true
-            Message = $ErrorMessage
-            ExitCode = $ExitCode
-            Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            LogFile = $script:LogFile
-        } | ConvertTo-Json
-        Set-Content -Path $ErrorStatusFile -Value $status -Force
-    }
-    catch {
-        # If we can't write status file, at least try to write a simple error message
-        try {
-            Set-Content -Path $ErrorStatusFile -Value "ERROR: $ErrorMessage" -Force
-        }
-        catch {
-            # Ignore - can't even write status file
-        }
-    }
-}
-
 # Trap all terminating errors to ensure we always show "Press any key"
 trap {
-    # Clean up secrets file on error
-    if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
-        Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
-    }
-    
-    $errorMessage = "An unexpected error occurred: $($_.Exception.Message)"
-    Write-ErrorStatus -ErrorMessage $errorMessage -ExitCode 1
-    
     Write-Log "" "Red"
     Write-Log "================================================================================" "Red"
     Write-Log "CRITICAL ERROR" "Red"
@@ -149,7 +72,6 @@ trap {
     Write-Log $_.InvocationInfo.PositionMessage "Yellow"
     Write-Log "" "Red"
     Write-Log "Log file saved to: $script:LogFile" "Cyan"
-    Write-Log "Error status file: $ErrorStatusFile" "Cyan"
     Write-Host ""
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -183,14 +105,8 @@ function Write-Error-Custom {
 
 # Exit with error and pause
 function Exit-WithError {
-    param([string]$ErrorMessage = "Installation failed")
-    
-    # Write error status file
-    Write-ErrorStatus -ErrorMessage $ErrorMessage -ExitCode 1
-    
     Write-Log "" "Red"
     Write-Log "Installation failed. Log file saved to: $script:LogFile" "Yellow"
-    Write-Log "Error: $ErrorMessage" "Red"
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -268,7 +184,7 @@ Write-Info "`n[1/8] Checking PowerShell version..."
 if ($PSVersionTable.PSVersion.Major -lt 5) {
     Write-Error-Custom "ERROR: PowerShell 5.1 or later is required"
     Write-Error-Custom "Current version: $($PSVersionTable.PSVersion)"
-    Exit-WithError "PowerShell version $($PSVersionTable.PSVersion) is too old. PowerShell 5.1 or later is required."
+    Exit-WithError
 }
 Write-Success "[OK] PowerShell version: $($PSVersionTable.PSVersion)"
 
@@ -281,7 +197,7 @@ if ($FreeSpace -lt 4) {
     Write-Warning "WARNING: Low disk space - $FreeSpaceFormatted GB free. Need at least 4 GB."
     $continue = Read-Host "Continue anyway? (y/N)"
     if ($continue -ne 'y') {
-        Exit-WithError "Installation cancelled by user due to insufficient disk space"
+        Exit-WithError
     }
 }
 Write-Success "[OK] Available disk space: $FreeSpaceFormatted GB"
@@ -295,7 +211,7 @@ if (!(Test-Path $InstallPath)) {
     }
     catch {
         Write-Error-Custom "ERROR: Failed to create directory: $_"
-        Exit-WithError "Failed to create installation directory: $_"
+        Exit-WithError
     }
 }
 else {
@@ -306,7 +222,7 @@ else {
     else {
         $overwrite = Read-Host "Overwrite existing installation? (y/N)"
         if ($overwrite -ne 'y') {
-            Exit-WithError "Installation cancelled by user (existing installation not overwritten)"
+            Exit-WithError
         }
     }
 }
@@ -352,7 +268,7 @@ if (!$GitHubToken) {
     
     if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
         Write-Error-Custom "`nERROR: GitHub token is required to continue"
-        Exit-WithError "GitHub Personal Access Token is required but was not provided"
+        Exit-WithError
     }
     
     Write-Log "" "White"
@@ -429,7 +345,7 @@ catch {
         Write-Error-Custom "    3. Repository exists: https://github.com/$GITHUB_REPO"
     }
     
-    Exit-WithError "Failed to fetch release information from GitHub repository"
+    Exit-WithError
 }
 
 # Download component-based installation package
@@ -449,7 +365,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         foreach ($asset in $Release.assets) {
             Write-Error-Custom "    - $($asset.name)"
         }
-        Exit-WithError "No manifest.json found in release. This installer requires a component-based release."
+        Exit-WithError
     }
 
     # Download manifest
@@ -469,7 +385,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     }
     catch {
         Write-Error-Custom "ERROR: Failed to download manifest: $_"
-        Exit-WithError "Failed to download manifest.json from GitHub release: $_"
+        Exit-WithError
     }
 
     # Create temp directory for downloads
@@ -923,12 +839,12 @@ if ($ENABLE_STEP_7_EXTRACT) {
                 Start-Sleep -Milliseconds 100  # Give filesystem time to sync
                 if (!(Test-Path $ComponentZip)) {
                     Write-Error-Custom "ERROR: Failed to rejoin parts - output file not found"
-                    Exit-WithError "Failed to rejoin multi-part archive - output file not found"
+                    Exit-WithError
                 }
                 $fileSize = (Get-Item $ComponentZip).Length
                 if ($fileSize -eq 0) {
                     Write-Error-Custom "ERROR: Rejoined file is empty"
-                    Exit-WithError "Failed to rejoin multi-part archive - rejoined file is empty"
+                    Exit-WithError
                 }
                 Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB"
             }
@@ -1152,7 +1068,7 @@ except Exception as e:
                     Write-Error-Custom ""
                     Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
                     Write-Error-Custom "Or install Python and ensure it's in your PATH"
-                    Exit-WithError "Failed to extract archive using any available method. Error: $extractionError"
+                    Exit-WithError
                 }
                 
                 # Check if there's an unwanted nested directory structure
@@ -1198,7 +1114,7 @@ except Exception as e:
             }
             catch {
                 Write-Error-Custom "ERROR: Failed to extract $ComponentName : $_"
-                Exit-WithError "Failed to extract component $ComponentName : $_"
+                Exit-WithError
             }
         }
 
@@ -2316,28 +2232,6 @@ if ($MissingParams.Count -gt 0) {
     Write-Log "  1. Run setup_database_auto.bat to set up the database" "Cyan"
     Write-Log "  2. Then launch the application" "Cyan"
     Write-Log "" "Cyan"
-}
-
-# Final cleanup: ensure secrets file is deleted
-if (![string]::IsNullOrWhiteSpace($SecretsFile) -and (Test-Path $SecretsFile)) {
-    Remove-Item $SecretsFile -Force -ErrorAction SilentlyContinue
-    Write-Info "  Secrets file cleaned up"
-}
-
-# Write success status file for Inno Setup to check
-try {
-    $status = @{
-        Error = $false
-        Message = "Installation completed successfully"
-        ExitCode = 0
-        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        LogFile = $script:LogFile
-    } | ConvertTo-Json
-    Set-Content -Path $ErrorStatusFile -Value $status -Force
-}
-catch {
-    # Non-critical - status file write failed
-    Write-Warning "  Could not write success status file (non-critical)"
 }
 
 Write-Log "" "Green"

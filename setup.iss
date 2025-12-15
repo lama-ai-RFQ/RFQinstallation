@@ -66,7 +66,7 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Fil
 Filename: "powershell.exe"; \
     Parameters: "{code:GetPowerShellParams}"; \
     StatusMsg: "Installing RFQ Application and creating Windows service..."; \
-    Flags: waituntilterminated runascurrentuser; \
+    Flags: waituntilterminated; \
     Description: "{code:GetInstallDescription}"
 
 [Code]
@@ -93,38 +93,6 @@ var
   ServerURLPage: TInputQueryWizardPage;
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
-
-function EscapeJsonString(Input: String): String;
-var
-  I: Integer;
-  Ch: Char;
-  ChOrd: Integer;
-begin
-  Result := '';
-  for I := 1 to Length(Input) do
-  begin
-    Ch := Input[I];
-    ChOrd := Ord(Ch);
-    case Ch of
-      '\': Result := Result + '\\';
-      '"': Result := Result + '\"';
-      '/': Result := Result + '\/';
-      else
-        case ChOrd of
-          8: Result := Result + '\b';   // Backspace
-          9: Result := Result + '\t';   // Tab
-          10: Result := Result + '\n';  // Line feed
-          12: Result := Result + '\f';  // Form feed
-          13: Result := Result + '\r';  // Carriage return
-          else
-            if (ChOrd < 32) or (ChOrd > 126) then
-              Result := Result + '\u' + Format('%.4x', [ChOrd])
-            else
-              Result := Result + Ch;
-        end;
-    end;
-  end;
-end;
 
 function ReadEnvValue(FilePath: String; Key: String): String;
 var
@@ -1268,92 +1236,6 @@ begin
     Result := AzureKeyPage.SelectedValueIndex = 0;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ErrorStatusFile: String;
-  StatusContent: String;
-  StatusLines: TArrayOfString;
-  I: Integer;
-  ErrorFound: Boolean;
-  ErrorMessage: String;
-  TempStr: String;
-  PosIdx: Integer;
-begin
-  // Check for error status file after PowerShell script runs
-  if CurStep = ssPostInstall then
-  begin
-    ErrorStatusFile := ExpandConstant('{tmp}') + '\rfq_install_error_status.txt';
-    
-    if FileExists(ErrorStatusFile) then
-    begin
-      // Read status file
-      if LoadStringsFromFile(ErrorStatusFile, StatusLines) then
-      begin
-        // Parse JSON-like status (simple parsing)
-        ErrorFound := False;
-        ErrorMessage := '';
-        
-        for I := 0 to GetArrayLength(StatusLines) - 1 do
-        begin
-          StatusContent := StatusLines[I];
-          if Pos('"Error"', StatusContent) > 0 then
-          begin
-            if Pos(': true', StatusContent) > 0 then
-              ErrorFound := True;
-          end;
-          if Pos('"Message"', StatusContent) > 0 then
-          begin
-            // Extract message (simple extraction)
-            // Find the colon after "Message"
-            PosIdx := Pos(':', StatusContent);
-            if PosIdx > 0 then
-            begin
-              // Get everything after the colon
-              TempStr := Copy(StatusContent, PosIdx + 1, Length(StatusContent) - PosIdx);
-              // Remove quotes and commas
-              while Pos('"', TempStr) > 0 do
-              begin
-                PosIdx := Pos('"', TempStr);
-                TempStr := Copy(TempStr, 1, PosIdx - 1) + Copy(TempStr, PosIdx + 1, Length(TempStr) - PosIdx);
-              end;
-              while Pos(',', TempStr) > 0 do
-              begin
-                PosIdx := Pos(',', TempStr);
-                TempStr := Copy(TempStr, 1, PosIdx - 1) + Copy(TempStr, PosIdx + 1, Length(TempStr) - PosIdx);
-              end;
-              ErrorMessage := Trim(TempStr);
-            end;
-          end;
-        end;
-        
-        // If error found, show message and abort
-        if ErrorFound then
-        begin
-          if ErrorMessage = '' then
-            ErrorMessage := 'Installation failed. Please check the log file for details.';
-          
-          MsgBox('Installation Error' + #13#10 + #13#10 + 
-                 ErrorMessage + #13#10 + #13#10 +
-                 'Please check the installation log file for more details.' + #13#10 +
-                 'The installer will now exit.',
-                 mbError, MB_OK);
-          
-          // Clean up error status file
-          DeleteFile(ErrorStatusFile);
-          
-          // Abort installation
-          WizardForm.Close;
-        end
-        else
-        begin
-          // Success - clean up status file
-          DeleteFile(ErrorStatusFile);
-        end;
-      end;
-    end;
-  end;
-end;
-
 function GetInstallDescription(Param: String): String;
 begin
   Result := 'Installing application files and creating Windows service ''RFQapplication''...' + #13#10 + #13#10 + \
@@ -1388,16 +1270,9 @@ var
   CleanReinstallStr: String;
   CleanupAfterInstallStr: String;
   Params: String;
-  SecretsFile: String;
-  SecretsJson: String;
-  TempDir: String;
 begin
   // Get installation path
   InstallPath := ExpandConstant('{app}');
-  
-  // Get temp directory
-  TempDir := ExpandConstant('{tmp}');
-  SecretsFile := TempDir + '\rfq_install_secrets.json';
   
   // Always read from registry since that's where values are stored during wizard
   // Pages may not be accessible during the [Run] section
@@ -1453,22 +1328,7 @@ begin
   if UpdateChannel = '' then
     UpdateChannel := 'customer';
   
-  // Write sensitive data to temporary JSON file to avoid command-line escaping issues
-  // Use helper function to properly escape JSON special characters
-  SecretsJson := '{' + #13#10;
-  SecretsJson := SecretsJson + '  "SettingsPassword": "' + EscapeJsonString(SettingsPassword) + '",' + #13#10;
-  SecretsJson := SecretsJson + '  "SuperUserPassword": "' + EscapeJsonString(SuperUserPassword) + '",' + #13#10;
-  SecretsJson := SecretsJson + '  "RFQUserPassword": "' + EscapeJsonString(RFQUserPassword) + '",' + #13#10;
-  SecretsJson := SecretsJson + '  "AWSKey": "' + EscapeJsonString(AWSKey) + '",' + #13#10;
-  SecretsJson := SecretsJson + '  "AWSSecret": "' + EscapeJsonString(AWSSecret) + '",' + #13#10;
-  SecretsJson := SecretsJson + '  "AWSRegion": "' + EscapeJsonString(AWSRegion) + '",' + #13#10;
-  SecretsJson := SecretsJson + '  "AzureKeyCustom": "' + EscapeJsonString(AzureKeyCustom) + '"' + #13#10;
-  SecretsJson := SecretsJson + '}';
-  
-  // Write secrets to temp file
-  SaveStringToFile(SecretsFile, SecretsJson, False);
-  
-  // Build PowerShell command parameters (without sensitive data)
+  // Build PowerShell command parameters
   Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
   Params := Params + ' -InstallPath "' + InstallPath + '"';
   Params := Params + ' -GitHubToken "' + GitHubToken + '"';
@@ -1485,13 +1345,33 @@ begin
   // Add Update Channel
   Params := Params + ' -UpdateChannel "' + UpdateChannel + '"';
   
-  // Add Server URL (not sensitive, safe for command line)
+  // Add database passwords
+  if SettingsPassword <> '' then
+    Params := Params + ' -SettingsPassword "' + SettingsPassword + '"';
+  if SuperUserPassword <> '' then
+    Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
+  if RFQUserPassword <> '' then
+    Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
+  
+  // Add Server URL
   if ServerURL <> '' then
     Params := Params + ' -ServerURL "' + ServerURL + '"';
   
-  // Add Azure key settings (flag only, not the actual key)
+  // Add Azure key settings
   if AzureKeyGenerate then
-    Params := Params + ' -AzureKeyGenerate';
+    Params := Params + ' -AzureKeyGenerate'
+  else if AzureKeyCustom <> '' then
+    Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
+  
+  // Always pass AWS credentials to save to .env (even if not downloading model now)
+  // Note: Credentials are passed via registry to avoid command-line escaping issues
+  // The PowerShell script will read them from registry if command-line params fail
+  if AWSKey <> '' then
+    Params := Params + ' -AWSKey "' + AWSKey + '"';
+  if AWSSecret <> '' then
+    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
+  if AWSRegion <> '' then
+    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
   
   // Add model download options
   if ModelDownload then
@@ -1504,9 +1384,6 @@ begin
     // User chose to skip download - tell script not to prompt
     Params := Params + ' -SkipModelDownload';
   end;
-  
-  // Add path to secrets file
-  Params := Params + ' -SecretsFile "' + SecretsFile + '"';
   
   Result := Params;
 end;
