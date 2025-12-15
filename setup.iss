@@ -98,25 +98,30 @@ function EscapeJsonString(Input: String): String;
 var
   I: Integer;
   Ch: Char;
+  ChOrd: Integer;
 begin
   Result := '';
   for I := 1 to Length(Input) do
   begin
     Ch := Input[I];
+    ChOrd := Ord(Ch);
     case Ch of
       '\': Result := Result + '\\';
       '"': Result := Result + '\"';
       '/': Result := Result + '\/';
-      #8: Result := Result + '\b';
-      #9: Result := Result + '\t';
-      #10: Result := Result + '\n';
-      #12: Result := Result + '\f';
-      #13: Result := Result + '\r';
       else
-        if (Ord(Ch) < 32) or (Ord(Ch) > 126) then
-          Result := Result + '\u' + Format('%.4x', [Ord(Ch)])
-        else
-          Result := Result + Ch;
+        case ChOrd of
+          8: Result := Result + '\b';   // Backspace
+          9: Result := Result + '\t';   // Tab
+          10: Result := Result + '\n';  // Line feed
+          12: Result := Result + '\f';  // Form feed
+          13: Result := Result + '\r';  // Carriage return
+          else
+            if (ChOrd < 32) or (ChOrd > 126) then
+              Result := Result + '\u' + Format('%.4x', [ChOrd])
+            else
+              Result := Result + Ch;
+        end;
     end;
   end;
 end;
