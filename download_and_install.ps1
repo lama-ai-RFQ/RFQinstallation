@@ -212,6 +212,140 @@ $BannerText = @"
 "@
 Write-Log $BannerText "Cyan"
 
+# Try to read credentials from registry first (safer for complex passwords with special chars)
+# Registry values are written by the Inno Setup installer to avoid command-line escaping issues
+$RegPath = "HKCU:\Software\RFQApplication\Installer"
+if (Test-Path $RegPath) {
+    Write-Info "`nReading configuration from registry..."
+    
+    # Read GitHub token from registry if not provided via command line
+    if ([string]::IsNullOrWhiteSpace($GitHubToken)) {
+        try {
+            $GitHubToken = Get-ItemPropertyValue -Path $RegPath -Name "GitHubToken" -ErrorAction SilentlyContinue
+            if ($GitHubToken) {
+                Write-Success "  [OK] Loaded GitHub token from registry"
+            }
+        } catch {}
+    }
+    
+    # Read passwords from registry if not provided via command line
+    if ([string]::IsNullOrWhiteSpace($SuperUserPassword)) {
+        try {
+            $SuperUserPassword = Get-ItemPropertyValue -Path $RegPath -Name "SuperUserPassword" -ErrorAction SilentlyContinue
+            if ($SuperUserPassword) {
+                Write-Success "  [OK] Loaded SQL super user password from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($RFQUserPassword)) {
+        try {
+            $RFQUserPassword = Get-ItemPropertyValue -Path $RegPath -Name "RFQUserPassword" -ErrorAction SilentlyContinue
+            if ($RFQUserPassword) {
+                Write-Success "  [OK] Loaded RFQ user password from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($SettingsPassword)) {
+        try {
+            $SettingsPassword = Get-ItemPropertyValue -Path $RegPath -Name "SettingsPassword" -ErrorAction SilentlyContinue
+            if ($SettingsPassword) {
+                Write-Success "  [OK] Loaded settings password from registry"
+            }
+        } catch {}
+    }
+    
+    # Read AWS credentials from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($AWSKey)) {
+        try {
+            $AWSKey = Get-ItemPropertyValue -Path $RegPath -Name "AWSKey" -ErrorAction SilentlyContinue
+            if ($AWSKey) {
+                Write-Success "  [OK] Loaded AWS Key from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($AWSSecret)) {
+        try {
+            $AWSSecret = Get-ItemPropertyValue -Path $RegPath -Name "AWSSecret" -ErrorAction SilentlyContinue
+            if ($AWSSecret) {
+                Write-Success "  [OK] Loaded AWS Secret from registry"
+            }
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($AWSRegion)) {
+        try {
+            $AWSRegion = Get-ItemPropertyValue -Path $RegPath -Name "AWSRegion" -ErrorAction SilentlyContinue
+            if ($AWSRegion) {
+                Write-Success "  [OK] Loaded AWS Region from registry"
+            }
+        } catch {}
+    }
+    
+    # Read ServerURL from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($ServerURL)) {
+        try {
+            $ServerURL = Get-ItemPropertyValue -Path $RegPath -Name "ServerURL" -ErrorAction SilentlyContinue
+            if ($ServerURL) {
+                Write-Success "  [OK] Loaded Server URL from registry"
+            }
+        } catch {}
+    }
+    
+    # Read Azure key settings from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($AzureKeyCustom)) {
+        try {
+            $AzureKeyCustom = Get-ItemPropertyValue -Path $RegPath -Name "AzureKeyCustom" -ErrorAction SilentlyContinue
+            if ($AzureKeyCustom) {
+                Write-Success "  [OK] Loaded Azure custom key from registry"
+            }
+        } catch {}
+    }
+    
+    # Read update channel from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($UpdateChannel) -or $UpdateChannel -eq "customer") {
+        try {
+            $UpdateChannelFromReg = Get-ItemPropertyValue -Path $RegPath -Name "UpdateChannel" -ErrorAction SilentlyContinue
+            if ($UpdateChannelFromReg) {
+                $UpdateChannel = $UpdateChannelFromReg
+                Write-Success "  [OK] Loaded Update Channel from registry: $UpdateChannel"
+            }
+        } catch {}
+    }
+    
+    # Read model download settings from registry if not provided
+    if ([string]::IsNullOrWhiteSpace($ModelPath)) {
+        try {
+            $ModelPath = Get-ItemPropertyValue -Path $RegPath -Name "ModelPath" -ErrorAction SilentlyContinue
+            if ($ModelPath) {
+                Write-Success "  [OK] Loaded Model Path from registry: $ModelPath"
+            }
+        } catch {}
+    }
+    
+    # Check if model download was disabled in installer
+    if (-not $SkipModelDownload) {
+        try {
+            $ModelDownloadSetting = Get-ItemPropertyValue -Path $RegPath -Name "ModelDownload" -ErrorAction SilentlyContinue
+            if ($ModelDownloadSetting -eq "False") {
+                $SkipModelDownload = $true
+                Write-Success "  [OK] Model download disabled by installer"
+            }
+        } catch {}
+    }
+    
+    # Read Azure key generation setting from registry
+    try {
+        $AzureKeyGenerateSetting = Get-ItemPropertyValue -Path $RegPath -Name "AzureKeyGenerate" -ErrorAction SilentlyContinue
+        if ($AzureKeyGenerateSetting -eq "True") {
+            $AzureKeyGenerate = $true
+            Write-Success "  [OK] Azure key auto-generation enabled"
+        }
+    } catch {}
+}
+
 # Configuration - Determine repository based on update channel
 if ($UpdateChannel -eq "internal") {
     $GITHUB_REPO = "lama-ai-RFQ/RFQwindowspackages-internal"
@@ -1203,100 +1337,7 @@ Write-Info "`n[8/8] Configuring application..."
 $EnvPath = Join-Path $InstallPath ".env"
 $EnvTemplatePath = Join-Path $InstallPath ".env.template"
 
-# Try to read passwords from registry first (safer for complex passwords with special chars)
-# Registry values are written by the installer and should be cleaned up after reading
-$RegPath = "HKCU:\Software\RFQApplication\Installer"
-if (Test-Path $RegPath) {
-    Write-Info "  Reading configuration from registry..."
-    
-    # Read passwords from registry if not provided via command line
-    if ([string]::IsNullOrWhiteSpace($SuperUserPassword)) {
-        try {
-            $SuperUserPassword = Get-ItemPropertyValue -Path $RegPath -Name "SuperUserPassword" -ErrorAction SilentlyContinue
-            if ($SuperUserPassword) {
-                Write-Info "  Loaded SuperUserPassword from registry"
-            }
-        } catch {}
-    }
-    
-    if ([string]::IsNullOrWhiteSpace($RFQUserPassword)) {
-        try {
-            $RFQUserPassword = Get-ItemPropertyValue -Path $RegPath -Name "RFQUserPassword" -ErrorAction SilentlyContinue
-            if ($RFQUserPassword) {
-                Write-Info "  Loaded RFQUserPassword from registry"
-            }
-        } catch {}
-    }
-    
-    if ([string]::IsNullOrWhiteSpace($SettingsPassword)) {
-        try {
-            $SettingsPassword = Get-ItemPropertyValue -Path $RegPath -Name "SettingsPassword" -ErrorAction SilentlyContinue
-            if ($SettingsPassword) {
-                Write-Info "  Loaded SettingsPassword from registry"
-            }
-        } catch {}
-    }
-    
-    # Read ServerURL from registry if not provided
-    if ([string]::IsNullOrWhiteSpace($ServerURL)) {
-        try {
-            $ServerURL = Get-ItemPropertyValue -Path $RegPath -Name "ServerURL" -ErrorAction SilentlyContinue
-            if ($ServerURL) {
-                Write-Info "  Loaded ServerURL from registry"
-            }
-        } catch {}
-    }
-    
-    # Read GitHub token from registry if not provided
-    if ([string]::IsNullOrWhiteSpace($GitHubToken)) {
-        try {
-            $GitHubToken = Get-ItemPropertyValue -Path $RegPath -Name "GitHubToken" -ErrorAction SilentlyContinue
-            if ($GitHubToken) {
-                Write-Info "  Loaded GitHubToken from registry"
-            }
-        } catch {}
-    }
-    
-    # Read AWS credentials from registry if not provided
-    if ([string]::IsNullOrWhiteSpace($AWSKey)) {
-        try {
-            $AWSKey = Get-ItemPropertyValue -Path $RegPath -Name "AWSKey" -ErrorAction SilentlyContinue
-            if ($AWSKey) {
-                Write-Info "  Loaded AWSKey from registry"
-            }
-        } catch {}
-    }
-    
-    if ([string]::IsNullOrWhiteSpace($AWSSecret)) {
-        try {
-            $AWSSecret = Get-ItemPropertyValue -Path $RegPath -Name "AWSSecret" -ErrorAction SilentlyContinue
-            if ($AWSSecret) {
-                Write-Info "  Loaded AWSSecret from registry"
-            }
-        } catch {}
-    }
-    
-    if ([string]::IsNullOrWhiteSpace($AWSRegion)) {
-        try {
-            $AWSRegion = Get-ItemPropertyValue -Path $RegPath -Name "AWSRegion" -ErrorAction SilentlyContinue
-            if ($AWSRegion) {
-                Write-Info "  Loaded AWSRegion from registry"
-            }
-        } catch {}
-    }
-    
-    # Read Azure key settings from registry if not provided
-    if ([string]::IsNullOrWhiteSpace($AzureKeyCustom)) {
-        try {
-            $AzureKeyCustom = Get-ItemPropertyValue -Path $RegPath -Name "AzureKeyCustom" -ErrorAction SilentlyContinue
-            if ($AzureKeyCustom) {
-                Write-Info "  Loaded AzureKeyCustom from registry"
-            }
-        } catch {}
-    }
-}
-
-# Use provided passwords or defaults (if not loaded from registry)
+# Use provided passwords or defaults (if not loaded from registry earlier)
 if ([string]::IsNullOrWhiteSpace($SuperUserPassword)) {
     $SuperUserPassword = "your_sql_super_user_password_here"
 }
@@ -1522,29 +1563,6 @@ Write-Info "`nModel download..."
 # Check if ModelPath was provided via parameter or registry (from installer)
 $downloadModel = 'n'
 $modelBasePath = ""
-
-# Try to read model download settings from registry if not provided via command line
-if (Test-Path $RegPath) {
-    if ([string]::IsNullOrWhiteSpace($ModelPath)) {
-        try {
-            $ModelPath = Get-ItemPropertyValue -Path $RegPath -Name "ModelPath" -ErrorAction SilentlyContinue
-            if ($ModelPath) {
-                Write-Info "  Loaded ModelPath from registry: $ModelPath"
-            }
-        } catch {}
-    }
-    
-    # Check if model download was enabled in installer
-    if (-not $SkipModelDownload) {
-        try {
-            $ModelDownloadSetting = Get-ItemPropertyValue -Path $RegPath -Name "ModelDownload" -ErrorAction SilentlyContinue
-            if ($ModelDownloadSetting -eq "False") {
-                $SkipModelDownload = $true
-                Write-Info "  Model download disabled by installer"
-            }
-        } catch {}
-    }
-}
 
 if ($SkipModelDownload) {
     # Installer explicitly requested to skip download - don't prompt
