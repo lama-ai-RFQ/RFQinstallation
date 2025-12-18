@@ -94,6 +94,56 @@ var
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
 
+const
+  Base64Table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+// Base64 encode function - safely encodes passwords with special characters
+function Base64Encode(const Input: String): String;
+var
+  I, Len, Pad: Integer;
+  B1, B2, B3: Byte;
+  InputBytes: String;
+begin
+  Result := '';
+  InputBytes := Input;
+  Len := Length(InputBytes);
+
+  if Len = 0 then
+    Exit;
+
+  // Process 3 bytes at a time
+  I := 1;
+  while I <= Len do
+  begin
+    // Get up to 3 bytes
+    B1 := Ord(InputBytes[I]);
+    if I + 1 <= Len then
+      B2 := Ord(InputBytes[I + 1])
+    else
+      B2 := 0;
+    if I + 2 <= Len then
+      B3 := Ord(InputBytes[I + 2])
+    else
+      B3 := 0;
+
+    // Encode to 4 base64 characters
+    Result := Result + Base64Table[(B1 shr 2) + 1];
+    Result := Result + Base64Table[((B1 and $03) shl 4) or (B2 shr 4) + 1];
+
+    if I + 1 <= Len then
+      Result := Result + Base64Table[((B2 and $0F) shl 2) or (B3 shr 6) + 1]
+    else
+      Result := Result + '=';
+
+    if I + 2 <= Len then
+      Result := Result + Base64Table[(B3 and $3F) + 1]
+    else
+      Result := Result + '=';
+
+    I := I + 3;
+  end;
+end;
+
 function ReadEnvValue(FilePath: String; Key: String): String;
 var
   Lines: TArrayOfString;
@@ -1346,12 +1396,13 @@ begin
   Params := Params + ' -UpdateChannel "' + UpdateChannel + '"';
   
   // Add database passwords
+  // Use Base64 encoding for passwords to handle special characters (^, %, !, ", etc.)
   if SettingsPassword <> '' then
-    Params := Params + ' -SettingsPassword "' + SettingsPassword + '"';
+    Params := Params + ' -SettingsPasswordB64 "' + Base64Encode(SettingsPassword) + '"';
   if SuperUserPassword <> '' then
-    Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
+    Params := Params + ' -SuperUserPasswordB64 "' + Base64Encode(SuperUserPassword) + '"';
   if RFQUserPassword <> '' then
-    Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
+    Params := Params + ' -RFQUserPasswordB64 "' + Base64Encode(RFQUserPassword) + '"';
   
   // Add Server URL
   if ServerURL <> '' then
@@ -1368,8 +1419,9 @@ begin
   // The PowerShell script will read them from registry if command-line params fail
   if AWSKey <> '' then
     Params := Params + ' -AWSKey "' + AWSKey + '"';
+  // Use Base64 encoding for AWS Secret to handle special characters
   if AWSSecret <> '' then
-    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
+    Params := Params + ' -AWSSecretB64 "' + Base64Encode(AWSSecret) + '"';
   if AWSRegion <> '' then
     Params := Params + ' -AWSRegion "' + AWSRegion + '"';
   

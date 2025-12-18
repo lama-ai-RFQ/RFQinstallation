@@ -15,6 +15,11 @@ param(
     [string]$SettingsPassword = "",
     [string]$SuperUserPassword = "",
     [string]$RFQUserPassword = "",
+    # Base64 encoded password parameters (for special character handling)
+    [string]$SettingsPasswordB64 = "",
+    [string]$SuperUserPasswordB64 = "",
+    [string]$RFQUserPasswordB64 = "",
+    [string]$AWSSecretB64 = "",
     [string]$ServerURL = "https://localhost",
     [switch]$AzureKeyGenerate,
     [string]$AzureKeyCustom = "",
@@ -25,6 +30,35 @@ param(
 
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
+
+# Decode Base64 passwords if provided (handles special characters like ^, %, !, ", etc.)
+function Decode-Base64Password {
+    param([string]$Base64String)
+    if ([string]::IsNullOrEmpty($Base64String)) {
+        return ""
+    }
+    try {
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64String))
+    }
+    catch {
+        Write-Warning "Failed to decode Base64 password: $_"
+        return ""
+    }
+}
+
+# Use Base64 passwords if provided, otherwise fall back to plain text parameters
+if (-not [string]::IsNullOrEmpty($SettingsPasswordB64)) {
+    $SettingsPassword = Decode-Base64Password $SettingsPasswordB64
+}
+if (-not [string]::IsNullOrEmpty($SuperUserPasswordB64)) {
+    $SuperUserPassword = Decode-Base64Password $SuperUserPasswordB64
+}
+if (-not [string]::IsNullOrEmpty($RFQUserPasswordB64)) {
+    $RFQUserPassword = Decode-Base64Password $RFQUserPasswordB64
+}
+if (-not [string]::IsNullOrEmpty($AWSSecretB64)) {
+    $AWSSecret = Decode-Base64Password $AWSSecretB64
+}
 
 # Setup log file - use temp directory initially until installation directory is created
 $LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
