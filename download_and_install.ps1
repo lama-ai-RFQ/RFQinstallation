@@ -698,7 +698,36 @@ if ($ENABLE_STEP_7_EXTRACT) {
     }
     else {
         Write-Info "`n[7/8] Extracting installation files..."
-        
+
+        # Backup database setup scripts before extraction (installer provides v3.0 with special char support)
+        # These will be restored after extraction to prevent ZIP from overwriting with old version
+        $DbSetupBackupDir = Join-Path $env:TEMP "rfq_db_setup_backup"
+        $DbSetupBat = Join-Path $InstallPath "setup_database_auto.bat"
+        $DbHelperPs1 = Join-Path $InstallPath "setup_db_helper.ps1"
+        $HasDbSetupBackup = $false
+
+        if ((Test-Path $DbSetupBat) -or (Test-Path $DbHelperPs1)) {
+            Write-Info "  Backing up database setup scripts..."
+            try {
+                if (Test-Path $DbSetupBackupDir) {
+                    Remove-Item $DbSetupBackupDir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                New-Item -ItemType Directory -Path $DbSetupBackupDir -Force | Out-Null
+
+                if (Test-Path $DbSetupBat) {
+                    Copy-Item $DbSetupBat -Destination $DbSetupBackupDir -Force
+                }
+                if (Test-Path $DbHelperPs1) {
+                    Copy-Item $DbHelperPs1 -Destination $DbSetupBackupDir -Force
+                }
+                $HasDbSetupBackup = $true
+                Write-Success "  [OK] Database setup scripts backed up"
+            }
+            catch {
+                Write-Warning "  [!] Could not backup database setup scripts: $_"
+            }
+        }
+
         # Stop Windows service if it exists
         Write-Info "  Checking for Windows service..."
         try {
@@ -1153,7 +1182,31 @@ except Exception as e:
         }
 
         Write-Success "[OK] Extracted all components to: $InstallPath"
-        
+
+        # Restore database setup scripts from backup (v3.0 with special character support)
+        if ($HasDbSetupBackup -and (Test-Path $DbSetupBackupDir)) {
+            Write-Info "  Restoring database setup scripts (v3.0)..."
+            try {
+                $BackedUpBat = Join-Path $DbSetupBackupDir "setup_database_auto.bat"
+                $BackedUpPs1 = Join-Path $DbSetupBackupDir "setup_db_helper.ps1"
+
+                if (Test-Path $BackedUpBat) {
+                    Copy-Item $BackedUpBat -Destination $InstallPath -Force
+                }
+                if (Test-Path $BackedUpPs1) {
+                    Copy-Item $BackedUpPs1 -Destination $InstallPath -Force
+                }
+
+                # Cleanup backup directory
+                Remove-Item $DbSetupBackupDir -Recurse -Force -ErrorAction SilentlyContinue
+
+                Write-Success "  [OK] Database setup scripts restored (handles special characters in passwords)"
+            }
+            catch {
+                Write-Warning "  [!] Could not restore database setup scripts: $_"
+            }
+        }
+
         # Save manifest to installation directory as local_manifest.json
         # This allows the update manager to know what was installed
         if ($Manifest) {

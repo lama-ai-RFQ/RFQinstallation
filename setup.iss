@@ -52,6 +52,9 @@ Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: igno
 ; Include WinSW for service creation
 Source: "WinSW.exe"; DestDir: "{pf}\WinSW"; Flags: ignoreversion
 Source: "WinSW.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Include database setup scripts (v3.0 - handles special characters in passwords)
+Source: "setup_database_auto.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "setup_db_helper.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
