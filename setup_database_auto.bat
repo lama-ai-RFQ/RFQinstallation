@@ -1,18 +1,22 @@
 @echo off
 REM ========================================
 REM   PostgreSQL Database Setup (Automatic)
-REM   Version: 3.0 - Uses PowerShell helper for robust password handling
+REM   Version: 3.1 - Uses PowerShell helper for robust password handling
 REM
 REM   FEATURES:
 REM   - Handles ALL special characters in passwords (including ^)
+REM   - Supports Base64 encoded password parameters
 REM   - Proper error code handling and propagation
 REM   - Clear error messages
 REM   - Uses pgpass.conf for secure authentication
 REM   - Uses dollar quoting for SQL passwords
 REM
+REM   USAGE:
+REM     setup_database_auto.bat [-SuperUserB64 <base64>] [-RfqUserB64 <base64>]
+REM
 REM   EXIT CODES:
 REM     0  - Success
-REM     1  - .env file not found
+REM     1  - .env file not found (when no params provided)
 REM     2  - Required password variable not found
 REM     3  - pgpass directory creation failed
 REM     4  - pgpass.conf write failed
@@ -24,6 +28,30 @@ REM    13  - User creation failed
 REM    14  - Password update failed
 REM    15  - Critical privilege grant failed
 REM ========================================
+
+REM ========================================
+REM Parse command line parameters
+REM ========================================
+set "SUPER_USER_B64="
+set "RFQ_USER_B64="
+
+:parse_args
+if "%~1"=="" goto :args_done
+if /i "%~1"=="-SuperUserB64" (
+    set "SUPER_USER_B64=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="-RfqUserB64" (
+    set "RFQ_USER_B64=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+shift
+goto :parse_args
+:args_done
 
 echo ========================================
 echo   PostgreSQL Database Setup
@@ -55,20 +83,24 @@ if not exist "%SCRIPT_DIR%setup_db_helper.ps1" (
     exit /b 1
 )
 
-REM Check for .env file
-if not exist ".env" (
-    echo [ERROR] .env file not found in current directory
-    echo.
-    echo Please copy env.template to .env and configure:
-    echo   copy env.template .env
-    echo   notepad .env
-    echo.
-    echo Required variables:
-    echo   SQL_SUPER_USER=your_postgres_password
-    echo   RFQ_USER_PASSWORD=your_rfq_user_password
-    echo.
-    pause
-    exit /b 1
+REM Check for .env file (only required if Base64 params not provided)
+if not defined SUPER_USER_B64 (
+    if not defined RFQ_USER_B64 (
+        if not exist ".env" (
+            echo [ERROR] .env file not found in current directory
+            echo.
+            echo Please copy env.template to .env and configure:
+            echo   copy env.template .env
+            echo   notepad .env
+            echo.
+            echo Required variables:
+            echo   SQL_SUPER_USER=your_postgres_password
+            echo   RFQ_USER_PASSWORD=your_rfq_user_password
+            echo.
+            pause
+            exit /b 1
+        )
+    )
 )
 
 REM ========================================
@@ -94,7 +126,11 @@ REM Set up PostgreSQL authentication
 REM ========================================
 echo [STEP 1/6] Setting up PostgreSQL authentication...
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreatePgpass -EnvFile ".env"
+if defined SUPER_USER_B64 (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreatePgpass -SuperUserPasswordB64 "%SUPER_USER_B64%"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreatePgpass -EnvFile ".env"
+)
 set "HELPER_EXIT=!ERRORLEVEL!"
 
 if !HELPER_EXIT! NEQ 0 (
@@ -212,7 +248,11 @@ if !USER_EXISTS! NEQ 0 (
     REM Create new user
     echo [CREATE] Creating user 'rfq_user'...
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreateUserSQL -EnvFile ".env" -OutputFile "!TEMP_SQL_CREATE!"
+    if defined RFQ_USER_B64 (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreateUserSQL -RFQUserPasswordB64 "%RFQ_USER_B64%" -OutputFile "!TEMP_SQL_CREATE!"
+    ) else (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreateUserSQL -EnvFile ".env" -OutputFile "!TEMP_SQL_CREATE!"
+    )
     set "HELPER_EXIT=!ERRORLEVEL!"
 
     if !HELPER_EXIT! NEQ 0 (
@@ -240,7 +280,11 @@ if !USER_EXISTS! NEQ 0 (
     REM Update existing user password
     echo [UPDATE] Updating password for 'rfq_user'...
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreateAlterSQL -EnvFile ".env" -OutputFile "!TEMP_SQL_ALTER!"
+    if defined RFQ_USER_B64 (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreateAlterSQL -RFQUserPasswordB64 "%RFQ_USER_B64%" -OutputFile "!TEMP_SQL_ALTER!"
+    ) else (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup_db_helper.ps1" -Action CreateAlterSQL -EnvFile ".env" -OutputFile "!TEMP_SQL_ALTER!"
+    )
     set "HELPER_EXIT=!ERRORLEVEL!"
 
     if !HELPER_EXIT! NEQ 0 (

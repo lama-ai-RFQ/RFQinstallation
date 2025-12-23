@@ -61,7 +61,14 @@ param(
     [string]$OutputFile,
 
     [Parameter(Mandatory=$false)]
-    [bool]$BackupPgpass = $true
+    [bool]$BackupPgpass = $true,
+
+    # Base64 encoded password parameters (bypass .env reading when provided)
+    [Parameter(Mandatory=$false)]
+    [string]$SuperUserPasswordB64,
+
+    [Parameter(Mandatory=$false)]
+    [string]$RFQUserPasswordB64
 )
 
 #region Exit Codes
@@ -74,6 +81,29 @@ $script:EXIT_SQL_WRITE_FAILED = 5
 #endregion
 
 #region Helper Functions
+
+function Decode-Base64Password {
+    <#
+    .SYNOPSIS
+        Decodes a Base64 encoded password string.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Base64String
+    )
+
+    if ([string]::IsNullOrEmpty($Base64String)) {
+        return $null
+    }
+
+    try {
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64String))
+    }
+    catch {
+        Write-Warning "Failed to decode Base64 password: $_"
+        return $null
+    }
+}
 
 function Get-PasswordFromEnv {
     <#
@@ -180,16 +210,24 @@ function Invoke-CreatePgpass {
     Write-Verbose "Action: CreatePgpass"
     Write-Verbose "EnvFile: $EnvFile"
 
-    # Check .env exists
-    if (-not (Test-Path $EnvFile)) {
-        Write-Host "[ERROR] .env file not found: $EnvFile" -ForegroundColor Red
-        return $script:EXIT_ENV_NOT_FOUND
+    # Get password - prefer Base64 param, fallback to .env
+    $password = $null
+    if (-not [string]::IsNullOrEmpty($SuperUserPasswordB64)) {
+        Write-Verbose "Using Base64 encoded SuperUserPassword parameter"
+        $password = Decode-Base64Password $SuperUserPasswordB64
     }
 
-    # Read password
-    $password = Get-PasswordFromEnv -EnvFilePath $EnvFile -VariableName "SQL_SUPER_USER"
     if ($null -eq $password -or $password -eq "") {
-        Write-Host "[ERROR] SQL_SUPER_USER not found in .env file" -ForegroundColor Red
+        # Fallback to .env file
+        if (-not (Test-Path $EnvFile)) {
+            Write-Host "[ERROR] .env file not found: $EnvFile" -ForegroundColor Red
+            return $script:EXIT_ENV_NOT_FOUND
+        }
+        $password = Get-PasswordFromEnv -EnvFilePath $EnvFile -VariableName "SQL_SUPER_USER"
+    }
+
+    if ($null -eq $password -or $password -eq "") {
+        Write-Host "[ERROR] SQL_SUPER_USER not found (neither in parameter nor .env file)" -ForegroundColor Red
         return $script:EXIT_VAR_NOT_FOUND
     }
 
@@ -246,16 +284,24 @@ function Invoke-CreateUserSql {
         return $script:EXIT_SQL_WRITE_FAILED
     }
 
-    # Check .env exists
-    if (-not (Test-Path $EnvFile)) {
-        Write-Host "[ERROR] .env file not found: $EnvFile" -ForegroundColor Red
-        return $script:EXIT_ENV_NOT_FOUND
+    # Get password - prefer Base64 param, fallback to .env
+    $password = $null
+    if (-not [string]::IsNullOrEmpty($RFQUserPasswordB64)) {
+        Write-Verbose "Using Base64 encoded RFQUserPassword parameter"
+        $password = Decode-Base64Password $RFQUserPasswordB64
     }
 
-    # Read password
-    $password = Get-PasswordFromEnv -EnvFilePath $EnvFile -VariableName "RFQ_USER_PASSWORD"
     if ($null -eq $password -or $password -eq "") {
-        Write-Host "[ERROR] RFQ_USER_PASSWORD not found in .env file" -ForegroundColor Red
+        # Fallback to .env file
+        if (-not (Test-Path $EnvFile)) {
+            Write-Host "[ERROR] .env file not found: $EnvFile" -ForegroundColor Red
+            return $script:EXIT_ENV_NOT_FOUND
+        }
+        $password = Get-PasswordFromEnv -EnvFilePath $EnvFile -VariableName "RFQ_USER_PASSWORD"
+    }
+
+    if ($null -eq $password -or $password -eq "") {
+        Write-Host "[ERROR] RFQ_USER_PASSWORD not found (neither in parameter nor .env file)" -ForegroundColor Red
         return $script:EXIT_VAR_NOT_FOUND
     }
 
@@ -286,16 +332,24 @@ function Invoke-CreateAlterSql {
         return $script:EXIT_SQL_WRITE_FAILED
     }
 
-    # Check .env exists
-    if (-not (Test-Path $EnvFile)) {
-        Write-Host "[ERROR] .env file not found: $EnvFile" -ForegroundColor Red
-        return $script:EXIT_ENV_NOT_FOUND
+    # Get password - prefer Base64 param, fallback to .env
+    $password = $null
+    if (-not [string]::IsNullOrEmpty($RFQUserPasswordB64)) {
+        Write-Verbose "Using Base64 encoded RFQUserPassword parameter"
+        $password = Decode-Base64Password $RFQUserPasswordB64
     }
 
-    # Read password
-    $password = Get-PasswordFromEnv -EnvFilePath $EnvFile -VariableName "RFQ_USER_PASSWORD"
     if ($null -eq $password -or $password -eq "") {
-        Write-Host "[ERROR] RFQ_USER_PASSWORD not found in .env file" -ForegroundColor Red
+        # Fallback to .env file
+        if (-not (Test-Path $EnvFile)) {
+            Write-Host "[ERROR] .env file not found: $EnvFile" -ForegroundColor Red
+            return $script:EXIT_ENV_NOT_FOUND
+        }
+        $password = Get-PasswordFromEnv -EnvFilePath $EnvFile -VariableName "RFQ_USER_PASSWORD"
+    }
+
+    if ($null -eq $password -or $password -eq "") {
+        Write-Host "[ERROR] RFQ_USER_PASSWORD not found (neither in parameter nor .env file)" -ForegroundColor Red
         return $script:EXIT_VAR_NOT_FOUND
     }
 
