@@ -1899,118 +1899,132 @@ if (Test-Path $SetupDbScript) {
         $setupDb = Read-Host "Set up database now? (y/N)"
 
         if ($setupDb -match '^[yY](es)?$') {
-            # Check if .env has database passwords configured
-            if (!(Test-Path $EnvPath)) {
-                Write-Warning "[!] .env file not found"
-                Write-Info "  Please create and configure .env file with database passwords"
-            }
-            else {
-                $EnvContent = Get-Content $EnvPath -Raw -ErrorAction SilentlyContinue
-                $hasSqlSuperUser = $EnvContent -match "SQL_SUPER_USER\s*=\s*[^\r\n]+" -and $EnvContent -notmatch "SQL_SUPER_USER\s*=\s*$" -and $EnvContent -notmatch "SQL_SUPER_USER\s*=\s*your_"
-                $hasRfqPassword = $EnvContent -match "RFQ_USER_PASSWORD\s*=\s*[^\r\n]+" -and $EnvContent -notmatch "RFQ_USER_PASSWORD\s*=\s*$" -and $EnvContent -notmatch "RFQ_USER_PASSWORD\s*=\s*your_"
-            
-                if (!$hasSqlSuperUser -or !$hasRfqPassword) {
-                    Write-Warning "[!] Database passwords not configured in .env file"
-                    Write-Info "  Please edit $EnvPath and add:"
-                    Write-Info "    SQL_SUPER_USER=your_postgres_password"
-                    Write-Info "    RFQ_USER_PASSWORD=your_database_password"
-                    Write-Info ""
-                    Write-Info "  After editing .env, you can run: $SetupDbScript"
-                    $script:SkippedSteps += "Database setup (passwords not configured)"
-                } else {
-                    # Parse actual passwords from .env file
-                    $envSuperUser = ""
-                    $envRfqPassword = ""
+            # Check if we have passwords from setup parameters
+            $dbSuperUser = $SuperUserPassword
+            $dbRfqPassword = $RFQUserPassword
+            $passwordSource = "setup parameters"
+
+            # If not from setup, try to read from .env
+            $hasValidSuperUser = ![string]::IsNullOrWhiteSpace($dbSuperUser) -and !$dbSuperUser.StartsWith("your_")
+            $hasValidRfqPassword = ![string]::IsNullOrWhiteSpace($dbRfqPassword) -and !$dbRfqPassword.StartsWith("your_")
+
+            if (!$hasValidSuperUser -or !$hasValidRfqPassword) {
+                Write-Info "  Passwords not in setup parameters, checking .env file..."
+                if (Test-Path $EnvPath) {
+                    $EnvContent = Get-Content $EnvPath -Raw -ErrorAction SilentlyContinue
                     if ($EnvContent -match "SQL_SUPER_USER\s*=\s*(.+?)(\r?\n|$)") {
                         $envSuperUser = $matches[1].Trim()
+                        if (![string]::IsNullOrWhiteSpace($envSuperUser) -and !$envSuperUser.StartsWith("your_")) {
+                            $dbSuperUser = $envSuperUser
+                            $hasValidSuperUser = $true
+                        }
                     }
                     if ($EnvContent -match "RFQ_USER_PASSWORD\s*=\s*(.+?)(\r?\n|$)") {
                         $envRfqPassword = $matches[1].Trim()
-                    }
-
-                    # Debug: Show what we parsed
-                    Write-Info "  Parsed credentials from .env:"
-                    if ([string]::IsNullOrEmpty($envSuperUser)) {
-                        Write-Warning "    SQL_SUPER_USER: (EMPTY - this will cause errors!)"
-                    } else {
-                        $maskedSuper = $envSuperUser.Substring(0, [Math]::Min(3, $envSuperUser.Length)) + "***"
-                        Write-Info "    SQL_SUPER_USER: $maskedSuper (length: $($envSuperUser.Length))"
-                    }
-                    if ([string]::IsNullOrEmpty($envRfqPassword)) {
-                        Write-Warning "    RFQ_USER_PASSWORD: (EMPTY - this will cause errors!)"
-                    } else {
-                        $maskedRfq = $envRfqPassword.Substring(0, [Math]::Min(3, $envRfqPassword.Length)) + "***"
-                        Write-Info "    RFQ_USER_PASSWORD: $maskedRfq (length: $($envRfqPassword.Length))"
-                    }
-
-                    # Check for problematic characters in passwords
-                    $problematicChars = @('&', '|', '<', '>', '^', '%', '!', '"', "'")
-                    foreach ($char in $problematicChars) {
-                        if ($envSuperUser.Contains($char) -or $envRfqPassword.Contains($char)) {
-                            Write-Info "    Note: Password contains special char '$char' - using Base64 encoding to handle it"
+                        if (![string]::IsNullOrWhiteSpace($envRfqPassword) -and !$envRfqPassword.StartsWith("your_")) {
+                            $dbRfqPassword = $envRfqPassword
+                            $hasValidRfqPassword = $true
                         }
                     }
+                    $passwordSource = ".env file"
+                }
+            }
 
-                    # Run database setup
+            if (!$hasValidSuperUser -or !$hasValidRfqPassword) {
+                Write-Warning "[!] Database passwords not found"
+                Write-Info "  SuperUserPassword valid: $hasValidSuperUser"
+                Write-Info "  RFQUserPassword valid: $hasValidRfqPassword"
+                Write-Info ""
+                Write-Info "  Please configure passwords in .env file:"
+                Write-Info "    SQL_SUPER_USER=your_postgres_password"
+                Write-Info "    RFQ_USER_PASSWORD=your_rfq_password"
+                Write-Info ""
+                Write-Info "  Then run database setup manually:"
+                Write-Info "    $SetupDbScript"
+                $script:SkippedSteps += "Database setup (passwords not found)"
+            } else {
+                # Debug: Show credentials source and values
+                Write-Info "  Using credentials from $passwordSource :"
+                $maskedSuper = $dbSuperUser.Substring(0, [Math]::Min(3, $dbSuperUser.Length)) + "***"
+                Write-Info "    SQL_SUPER_USER: $maskedSuper (length: $($dbSuperUser.Length))"
+                $maskedRfq = $dbRfqPassword.Substring(0, [Math]::Min(3, $dbRfqPassword.Length)) + "***"
+                Write-Info "    RFQ_USER_PASSWORD: $maskedRfq (length: $($dbRfqPassword.Length))"
+
+                # Check for problematic characters in passwords
+                $problematicChars = @('&', '|', '<', '>', '^', '%', '!', '"', "'")
+                foreach ($char in $problematicChars) {
+                    if ($dbSuperUser.Contains($char) -or $dbRfqPassword.Contains($char)) {
+                        Write-Info "    Note: Password contains special char '$char' - using Base64 encoding to handle it"
+                    }
+                }
+
+                # Run database setup
+                Write-Info ""
+                Write-Info "Running database setup..."
+                try {
+                    Push-Location $InstallPath
+
+                    # Encode passwords as Base64 for safe transmission through CMD
+                    $SuperUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($dbSuperUser))
+                    $RfqUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($dbRfqPassword))
+
+                    Write-Info "  Base64 encoded credentials:"
+                    Write-Info "    SuperUser B64 length: $($SuperUserB64.Length) chars"
+                    Write-Info "    RfqUser B64 length: $($RfqUserB64.Length) chars"
                     Write-Info ""
-                    Write-Info "Running database setup..."
-                    try {
-                        Push-Location $InstallPath
+                    Write-Info "  Executing: $SetupDbScript"
+                    Write-Info "  Working directory: $InstallPath"
+                    Write-Info ""
 
-                        # Encode passwords as Base64 for safe transmission through CMD
-                        $SuperUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envSuperUser))
-                        $RfqUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envRfqPassword))
+                    Write-Info "  [DEBUG] Passing credentials to BAT via cmd environment:"
+                    Write-Info "    SUPER_USER_B64 length: $($SuperUserB64.Length) chars"
+                    Write-Info "    RFQ_USER_B64 length: $($RfqUserB64.Length) chars"
+                    Write-Info ""
 
-                        Write-Info "  Base64 encoded credentials:"
-                        Write-Info "    SuperUser B64 length: $($SuperUserB64.Length) chars"
-                        Write-Info "    RfqUser B64 length: $($RfqUserB64.Length) chars"
-                        Write-Info ""
-                        Write-Info "  Executing: $SetupDbScript"
-                        Write-Info "  Working directory: $InstallPath"
-                        Write-Info ""
+                    # Call setup script with environment variables set in cmd session
+                    # This ensures the variables are visible to the BAT file
+                    $cmdCommand = "set `"SUPER_USER_B64=$SuperUserB64`" && set `"RFQ_USER_B64=$RfqUserB64`" && `"$SetupDbScript`""
+                    Write-Info "  [DEBUG] CMD command length: $($cmdCommand.Length) chars"
+                    & cmd.exe /c $cmdCommand
+                    $dbExitCode = $LASTEXITCODE
 
-                        # Call setup script with Base64 encoded passwords
-                        & cmd.exe /c "`"$SetupDbScript`" -SuperUserB64 `"$SuperUserB64`" -RfqUserB64 `"$RfqUserB64`""
-                        $dbExitCode = $LASTEXITCODE
-
+                    Write-Info ""
+                    if ($dbExitCode -eq 0) {
+                        Write-Success "[OK] Database setup completed successfully (exit code: 0)"
+                    } else {
+                        Write-Warning "[!] Database setup failed with exit code: $dbExitCode"
                         Write-Info ""
-                        if ($dbExitCode -eq 0) {
-                            Write-Success "[OK] Database setup completed successfully (exit code: 0)"
-                        } else {
-                            Write-Warning "[!] Database setup failed with exit code: $dbExitCode"
-                            Write-Info ""
-                            Write-Info "  Exit code meanings:"
-                            Write-Info "    1  = .env file not found"
-                            Write-Info "    2  = Required password variable missing"
-                            Write-Info "    3  = pgpass directory creation failed"
-                            Write-Info "    4  = pgpass.conf write failed"
-                            Write-Info "    5  = SQL file write failed"
-                            Write-Info "    10 = psql not found in PATH"
-                            Write-Info "    11 = PostgreSQL connection failed"
-                            Write-Info "    12 = Database creation failed"
-                            Write-Info "    13 = User creation failed"
-                            Write-Info "    14 = Password update failed"
-                            Write-Info "    15 = Privilege grant failed"
-                            Write-Info ""
-                            Write-Info "  To debug, run manually:"
-                            Write-Info "    cd `"$InstallPath`""
-                            Write-Info "    .\setup_database_auto.bat"
-                            $script:SkippedSteps += "Database setup (exit code: $dbExitCode)"
-                        }
-                    }
-                    catch {
-                        Write-Warning "[!] Exception during database setup: $($_.Exception.Message)"
-                        Write-Info "  Exception type: $($_.Exception.GetType().FullName)"
-                        Write-Info "  Stack trace: $($_.ScriptStackTrace)"
+                        Write-Info "  Exit code meanings:"
+                        Write-Info "    1  = .env file not found"
+                        Write-Info "    2  = Required password variable missing"
+                        Write-Info "    3  = pgpass directory creation failed"
+                        Write-Info "    4  = pgpass.conf write failed"
+                        Write-Info "    5  = SQL file write failed"
+                        Write-Info "    10 = psql not found in PATH"
+                        Write-Info "    11 = PostgreSQL connection failed"
+                        Write-Info "    12 = Database creation failed"
+                        Write-Info "    13 = User creation failed"
+                        Write-Info "    14 = Password update failed"
+                        Write-Info "    15 = Privilege grant failed"
                         Write-Info ""
-                        Write-Info "  You can run it manually later:"
+                        Write-Info "  To debug, run manually:"
                         Write-Info "    cd `"$InstallPath`""
                         Write-Info "    .\setup_database_auto.bat"
-                        $script:SkippedSteps += "Database setup (exception: $($_.Exception.Message))"
+                        $script:SkippedSteps += "Database setup (exit code: $dbExitCode)"
                     }
-                    finally {
-                        Pop-Location
-                    }
+                }
+                catch {
+                    Write-Warning "[!] Exception during database setup: $($_.Exception.Message)"
+                    Write-Info "  Exception type: $($_.Exception.GetType().FullName)"
+                    Write-Info "  Stack trace: $($_.ScriptStackTrace)"
+                    Write-Info ""
+                    Write-Info "  You can run it manually later:"
+                    Write-Info "    cd `"$InstallPath`""
+                    Write-Info "    .\setup_database_auto.bat"
+                    $script:SkippedSteps += "Database setup (exception: $($_.Exception.Message))"
+                }
+                finally {
+                    Pop-Location
                 }
             }
         } else {

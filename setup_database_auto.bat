@@ -1,18 +1,20 @@
 @echo off
 REM ========================================
 REM   PostgreSQL Database Setup (Automatic)
-REM   Version: 3.1 - Uses PowerShell helper for robust password handling
+REM   Version: 3.3 - Uses environment variables for password passing
 REM
 REM   FEATURES:
 REM   - Handles ALL special characters in passwords (including ^)
-REM   - Supports Base64 encoded password parameters
+REM   - Reads Base64 encoded passwords from environment variables
+REM   - Falls back to .env file if env vars not set
 REM   - Proper error code handling and propagation
 REM   - Clear error messages
 REM   - Uses pgpass.conf for secure authentication
 REM   - Uses dollar quoting for SQL passwords
 REM
-REM   USAGE:
-REM     setup_database_auto.bat [-SuperUserB64 <base64>] [-RfqUserB64 <base64>]
+REM   ENVIRONMENT VARIABLES (set by PowerShell installer):
+REM     SUPER_USER_B64  - Base64 encoded PostgreSQL superuser password
+REM     RFQ_USER_B64    - Base64 encoded RFQ user password
 REM
 REM   EXIT CODES:
 REM     0  - Success
@@ -30,28 +32,15 @@ REM    15  - Critical privilege grant failed
 REM ========================================
 
 REM ========================================
-REM Parse command line parameters
+REM Get credentials from environment variables
+REM (Set by PowerShell installer before calling this script)
 REM ========================================
-set "SUPER_USER_B64="
-set "RFQ_USER_B64="
+echo [DEBUG] Checking environment variables...
+echo [DEBUG] SUPER_USER_B64 from env: %SUPER_USER_B64:~0,10%...
+echo [DEBUG] RFQ_USER_B64 from env: %RFQ_USER_B64:~0,10%...
 
-:parse_args
-if "%~1"=="" goto :args_done
-if /i "%~1"=="-SuperUserB64" (
-    set "SUPER_USER_B64=%~2"
-    shift
-    shift
-    goto :parse_args
-)
-if /i "%~1"=="-RfqUserB64" (
-    set "RFQ_USER_B64=%~2"
-    shift
-    shift
-    goto :parse_args
-)
-shift
-goto :parse_args
-:args_done
+REM Environment variables SUPER_USER_B64 and RFQ_USER_B64 should already be set
+REM by the PowerShell installer. If not set, we'll fall back to .env file.
 
 echo ========================================
 echo   PostgreSQL Database Setup
