@@ -1918,28 +1918,95 @@ if (Test-Path $SetupDbScript) {
                     Write-Info "  After editing .env, you can run: $SetupDbScript"
                     $script:SkippedSteps += "Database setup (passwords not configured)"
                 } else {
+                    # Parse actual passwords from .env file
+                    $envSuperUser = ""
+                    $envRfqPassword = ""
+                    if ($EnvContent -match "SQL_SUPER_USER\s*=\s*(.+?)(\r?\n|$)") {
+                        $envSuperUser = $matches[1].Trim()
+                    }
+                    if ($EnvContent -match "RFQ_USER_PASSWORD\s*=\s*(.+?)(\r?\n|$)") {
+                        $envRfqPassword = $matches[1].Trim()
+                    }
+
+                    # Debug: Show what we parsed
+                    Write-Info "  Parsed credentials from .env:"
+                    if ([string]::IsNullOrEmpty($envSuperUser)) {
+                        Write-Warning "    SQL_SUPER_USER: (EMPTY - this will cause errors!)"
+                    } else {
+                        $maskedSuper = $envSuperUser.Substring(0, [Math]::Min(3, $envSuperUser.Length)) + "***"
+                        Write-Info "    SQL_SUPER_USER: $maskedSuper (length: $($envSuperUser.Length))"
+                    }
+                    if ([string]::IsNullOrEmpty($envRfqPassword)) {
+                        Write-Warning "    RFQ_USER_PASSWORD: (EMPTY - this will cause errors!)"
+                    } else {
+                        $maskedRfq = $envRfqPassword.Substring(0, [Math]::Min(3, $envRfqPassword.Length)) + "***"
+                        Write-Info "    RFQ_USER_PASSWORD: $maskedRfq (length: $($envRfqPassword.Length))"
+                    }
+
+                    # Check for problematic characters in passwords
+                    $problematicChars = @('&', '|', '<', '>', '^', '%', '!', '"', "'")
+                    foreach ($char in $problematicChars) {
+                        if ($envSuperUser.Contains($char) -or $envRfqPassword.Contains($char)) {
+                            Write-Info "    Note: Password contains special char '$char' - using Base64 encoding to handle it"
+                        }
+                    }
+
                     # Run database setup
+                    Write-Info ""
                     Write-Info "Running database setup..."
                     try {
                         Push-Location $InstallPath
 
                         # Encode passwords as Base64 for safe transmission through CMD
-                        $SuperUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($SuperUserPassword))
-                        $RfqUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($RFQUserPassword))
+                        $SuperUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envSuperUser))
+                        $RfqUserB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envRfqPassword))
+
+                        Write-Info "  Base64 encoded credentials:"
+                        Write-Info "    SuperUser B64 length: $($SuperUserB64.Length) chars"
+                        Write-Info "    RfqUser B64 length: $($RfqUserB64.Length) chars"
+                        Write-Info ""
+                        Write-Info "  Executing: $SetupDbScript"
+                        Write-Info "  Working directory: $InstallPath"
+                        Write-Info ""
 
                         # Call setup script with Base64 encoded passwords
                         & cmd.exe /c "`"$SetupDbScript`" -SuperUserB64 `"$SuperUserB64`" -RfqUserB64 `"$RfqUserB64`""
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Success "[OK] Database setup completed"
+                        $dbExitCode = $LASTEXITCODE
+
+                        Write-Info ""
+                        if ($dbExitCode -eq 0) {
+                            Write-Success "[OK] Database setup completed successfully (exit code: 0)"
                         } else {
-                            Write-Warning "[!] Database setup may have encountered issues. Check the output above."
-                            $script:SkippedSteps += "Database setup (setup encountered issues)"
+                            Write-Warning "[!] Database setup failed with exit code: $dbExitCode"
+                            Write-Info ""
+                            Write-Info "  Exit code meanings:"
+                            Write-Info "    1  = .env file not found"
+                            Write-Info "    2  = Required password variable missing"
+                            Write-Info "    3  = pgpass directory creation failed"
+                            Write-Info "    4  = pgpass.conf write failed"
+                            Write-Info "    5  = SQL file write failed"
+                            Write-Info "    10 = psql not found in PATH"
+                            Write-Info "    11 = PostgreSQL connection failed"
+                            Write-Info "    12 = Database creation failed"
+                            Write-Info "    13 = User creation failed"
+                            Write-Info "    14 = Password update failed"
+                            Write-Info "    15 = Privilege grant failed"
+                            Write-Info ""
+                            Write-Info "  To debug, run manually:"
+                            Write-Info "    cd `"$InstallPath`""
+                            Write-Info "    .\setup_database_auto.bat"
+                            $script:SkippedSteps += "Database setup (exit code: $dbExitCode)"
                         }
                     }
                     catch {
-                        Write-Warning "[!] Failed to run database setup: $_"
-                        Write-Info "  You can run it manually later: $SetupDbScript"
-                        $script:SkippedSteps += "Database setup (setup failed)"
+                        Write-Warning "[!] Exception during database setup: $($_.Exception.Message)"
+                        Write-Info "  Exception type: $($_.Exception.GetType().FullName)"
+                        Write-Info "  Stack trace: $($_.ScriptStackTrace)"
+                        Write-Info ""
+                        Write-Info "  You can run it manually later:"
+                        Write-Info "    cd `"$InstallPath`""
+                        Write-Info "    .\setup_database_auto.bat"
+                        $script:SkippedSteps += "Database setup (exception: $($_.Exception.Message))"
                     }
                     finally {
                         Pop-Location
