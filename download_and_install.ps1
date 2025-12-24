@@ -230,7 +230,7 @@ $FreeSpaceFormatted = "{0:F2}" -f $FreeSpace
 if ($FreeSpace -lt 4) {
     Write-Warning "WARNING: Low disk space - $FreeSpaceFormatted GB free. Need at least 4 GB."
     $continue = Read-Host "Continue anyway? (y/N)"
-    if ($continue -ne 'y') {
+    if ($continue -notmatch '^[yY](es)?$') {
         Exit-WithError
     }
 }
@@ -255,7 +255,7 @@ else {
     }
     else {
         $overwrite = Read-Host "Overwrite existing installation? (y/N)"
-        if ($overwrite -ne 'y') {
+        if ($overwrite -notmatch '^[yY](es)?$') {
             Exit-WithError
         }
     }
@@ -1897,8 +1897,8 @@ if (Test-Path $SetupDbScript) {
         Write-Info ""
         
         $setupDb = Read-Host "Set up database now? (y/N)"
-        
-        if ($setupDb -eq 'y') {
+
+        if ($setupDb -match '^[yY](es)?$') {
             # Check if .env has database passwords configured
             if (!(Test-Path $EnvPath)) {
                 Write-Warning "[!] .env file not found"
