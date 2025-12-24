@@ -1990,25 +1990,33 @@ if (Test-Path $SetupDbScript) {
                         Write-Info "  Calling setup script..."
                         Write-Info ""
 
-                        # Call BAT using Start-Process to ensure environment is inherited
-                        $psi = New-Object System.Diagnostics.ProcessStartInfo
-                        $psi.FileName = "cmd.exe"
-                        $psi.Arguments = "/c `"$SetupDbScript`""
-                        $psi.WorkingDirectory = $InstallPath
-                        $psi.UseShellExecute = $false
-                        $psi.RedirectStandardOutput = $false
-                        $psi.RedirectStandardError = $false
+                        # Write Base64 credentials to a temporary batch file that sets env vars and calls the setup script
+                        $tempBatFile = Join-Path $env:TEMP "rfq_db_setup_wrapper_$([guid]::NewGuid().ToString('N').Substring(0,8)).bat"
 
-                        # Explicitly copy environment variables
-                        $psi.EnvironmentVariables["SUPER_USER_B64"] = $SuperUserB64
-                        $psi.EnvironmentVariables["RFQ_USER_B64"] = $RfqUserB64
+                        $wrapperContent = @"
+@echo off
+set "SUPER_USER_B64=$SuperUserB64"
+set "RFQ_USER_B64=$RfqUserB64"
+echo [WRAPPER] Environment variables set:
+echo [WRAPPER] SUPER_USER_B64=%SUPER_USER_B64:~0,10%...
+echo [WRAPPER] RFQ_USER_B64=%RFQ_USER_B64:~0,10%...
+echo.
+call "$SetupDbScript"
+exit /b %ERRORLEVEL%
+"@
+                        $wrapperContent | Out-File -FilePath $tempBatFile -Encoding ASCII
 
-                        $process = [System.Diagnostics.Process]::Start($psi)
-                        $process.WaitForExit()
-                        $dbExitCode = $process.ExitCode
+                        Write-Info "  Using wrapper script to pass environment variables"
+
+                        # Call the wrapper BAT
+                        & cmd.exe /c "`"$tempBatFile`""
+                        $dbExitCode = $LASTEXITCODE
                     }
                     finally {
-                        # Clean up environment variables
+                        # Clean up temp wrapper file
+                        if ($tempBatFile -and (Test-Path $tempBatFile)) {
+                            Remove-Item $tempBatFile -Force -ErrorAction SilentlyContinue
+                        }
                         $env:SUPER_USER_B64 = $null
                         $env:RFQ_USER_B64 = $null
                     }
