@@ -1976,17 +1976,42 @@ if (Test-Path $SetupDbScript) {
                     Write-Info "  Working directory: $InstallPath"
                     Write-Info ""
 
-                    Write-Info "  [DEBUG] Passing credentials to BAT via cmd environment:"
-                    Write-Info "    SUPER_USER_B64 length: $($SuperUserB64.Length) chars"
-                    Write-Info "    RFQ_USER_B64 length: $($RfqUserB64.Length) chars"
+                    Write-Info "  [DEBUG] Passing Base64 credentials to setup script:"
+                    Write-Info "    SUPER_USER_B64: $($SuperUserB64.Length) chars"
+                    Write-Info "    RFQ_USER_B64: $($RfqUserB64.Length) chars"
                     Write-Info ""
 
-                    # Call setup script with environment variables set in cmd session
-                    # This ensures the variables are visible to the BAT file
-                    $cmdCommand = "set `"SUPER_USER_B64=$SuperUserB64`" && set `"RFQ_USER_B64=$RfqUserB64`" && `"$SetupDbScript`""
-                    Write-Info "  [DEBUG] CMD command length: $($cmdCommand.Length) chars"
-                    & cmd.exe /c $cmdCommand
-                    $dbExitCode = $LASTEXITCODE
+                    # Set Base64 credentials as environment variables
+                    # Child process (cmd.exe) will inherit these
+                    $env:SUPER_USER_B64 = $SuperUserB64
+                    $env:RFQ_USER_B64 = $RfqUserB64
+
+                    try {
+                        Write-Info "  Calling setup script..."
+                        Write-Info ""
+
+                        # Call BAT using Start-Process to ensure environment is inherited
+                        $psi = New-Object System.Diagnostics.ProcessStartInfo
+                        $psi.FileName = "cmd.exe"
+                        $psi.Arguments = "/c `"$SetupDbScript`""
+                        $psi.WorkingDirectory = $InstallPath
+                        $psi.UseShellExecute = $false
+                        $psi.RedirectStandardOutput = $false
+                        $psi.RedirectStandardError = $false
+
+                        # Explicitly copy environment variables
+                        $psi.EnvironmentVariables["SUPER_USER_B64"] = $SuperUserB64
+                        $psi.EnvironmentVariables["RFQ_USER_B64"] = $RfqUserB64
+
+                        $process = [System.Diagnostics.Process]::Start($psi)
+                        $process.WaitForExit()
+                        $dbExitCode = $process.ExitCode
+                    }
+                    finally {
+                        # Clean up environment variables
+                        $env:SUPER_USER_B64 = $null
+                        $env:RFQ_USER_B64 = $null
+                    }
 
                     Write-Info ""
                     if ($dbExitCode -eq 0) {

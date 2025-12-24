@@ -32,15 +32,22 @@ REM    15  - Critical privilege grant failed
 REM ========================================
 
 REM ========================================
-REM Get credentials from environment variables
+REM Get Base64 credentials from environment variables
 REM (Set by PowerShell installer before calling this script)
+REM If not set, script will fallback to reading from .env file
 REM ========================================
-echo [DEBUG] Checking environment variables...
-echo [DEBUG] SUPER_USER_B64 from env: %SUPER_USER_B64:~0,10%...
-echo [DEBUG] RFQ_USER_B64 from env: %RFQ_USER_B64:~0,10%...
 
-REM Environment variables SUPER_USER_B64 and RFQ_USER_B64 should already be set
-REM by the PowerShell installer. If not set, we'll fall back to .env file.
+REM Debug: Show if Base64 credentials are available
+if defined SUPER_USER_B64 (
+    echo [DEBUG] SUPER_USER_B64 received from environment
+) else (
+    echo [DEBUG] SUPER_USER_B64 not in environment, will use .env fallback
+)
+if defined RFQ_USER_B64 (
+    echo [DEBUG] RFQ_USER_B64 received from environment
+) else (
+    echo [DEBUG] RFQ_USER_B64 not in environment, will use .env fallback
+)
 
 echo ========================================
 echo   PostgreSQL Database Setup
