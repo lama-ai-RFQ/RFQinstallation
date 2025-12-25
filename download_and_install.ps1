@@ -47,14 +47,27 @@ function Decode-Base64Password {
 }
 
 # Use Base64 passwords if provided, otherwise fall back to plain text parameters
+Write-Host ""
+Write-Host "======== DEBUG: SCRIPT START - INCOMING PARAMETERS ========" -ForegroundColor Magenta
+Write-Host "SuperUserPasswordB64 received: $(-not [string]::IsNullOrEmpty($SuperUserPasswordB64))" -ForegroundColor Magenta
+Write-Host "SuperUserPasswordB64 length: $($SuperUserPasswordB64.Length)" -ForegroundColor Magenta
+Write-Host "RFQUserPasswordB64 received: $(-not [string]::IsNullOrEmpty($RFQUserPasswordB64))" -ForegroundColor Magenta
+Write-Host "RFQUserPasswordB64 length: $($RFQUserPasswordB64.Length)" -ForegroundColor Magenta
+Write-Host "SuperUserPassword (plain) received: $(-not [string]::IsNullOrEmpty($SuperUserPassword))" -ForegroundColor Magenta
+Write-Host "RFQUserPassword (plain) received: $(-not [string]::IsNullOrEmpty($RFQUserPassword))" -ForegroundColor Magenta
+Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host ""
+
 if (-not [string]::IsNullOrEmpty($SettingsPasswordB64)) {
     $SettingsPassword = Decode-Base64Password $SettingsPasswordB64
 }
 if (-not [string]::IsNullOrEmpty($SuperUserPasswordB64)) {
     $SuperUserPassword = Decode-Base64Password $SuperUserPasswordB64
+    Write-Host "[DEBUG] SuperUserPassword decoded, length: $($SuperUserPassword.Length)" -ForegroundColor Magenta
 }
 if (-not [string]::IsNullOrEmpty($RFQUserPasswordB64)) {
     $RFQUserPassword = Decode-Base64Password $RFQUserPasswordB64
+    Write-Host "[DEBUG] RFQUserPassword decoded, length: $($RFQUserPassword.Length)" -ForegroundColor Magenta
 }
 if (-not [string]::IsNullOrEmpty($AWSSecretB64)) {
     $AWSSecret = Decode-Base64Password $AWSSecretB64
@@ -1899,6 +1912,15 @@ if (Test-Path $SetupDbScript) {
         $setupDb = Read-Host "Set up database now? (y/N)"
 
         if ($setupDb -match '^[yY](es)?$') {
+            Write-Host ""
+            Write-Host "======== DEBUG: DATABASE SETUP SECTION ========" -ForegroundColor Yellow
+            Write-Host "SuperUserPassword value: '$($SuperUserPassword.Substring(0, [Math]::Min(5, $SuperUserPassword.Length)))...' (length: $($SuperUserPassword.Length))" -ForegroundColor Yellow
+            Write-Host "RFQUserPassword value: '$($RFQUserPassword.Substring(0, [Math]::Min(5, $RFQUserPassword.Length)))...' (length: $($RFQUserPassword.Length))" -ForegroundColor Yellow
+            Write-Host "SuperUserPassword is placeholder: $($SuperUserPassword.StartsWith('your_'))" -ForegroundColor Yellow
+            Write-Host "RFQUserPassword is placeholder: $($RFQUserPassword.StartsWith('your_'))" -ForegroundColor Yellow
+            Write-Host "================================================" -ForegroundColor Yellow
+            Write-Host ""
+
             # Check if we have passwords from setup parameters
             $dbSuperUser = $SuperUserPassword
             $dbRfqPassword = $RFQUserPassword
@@ -1908,30 +1930,49 @@ if (Test-Path $SetupDbScript) {
             $hasValidSuperUser = ![string]::IsNullOrWhiteSpace($dbSuperUser) -and !$dbSuperUser.StartsWith("your_")
             $hasValidRfqPassword = ![string]::IsNullOrWhiteSpace($dbRfqPassword) -and !$dbRfqPassword.StartsWith("your_")
 
+            Write-Host "[DEBUG] hasValidSuperUser (from params): $hasValidSuperUser" -ForegroundColor Yellow
+            Write-Host "[DEBUG] hasValidRfqPassword (from params): $hasValidRfqPassword" -ForegroundColor Yellow
+
             if (!$hasValidSuperUser -or !$hasValidRfqPassword) {
                 Write-Info "  Passwords not in setup parameters, checking .env file..."
+                Write-Host "[DEBUG] Checking .env at: $EnvPath" -ForegroundColor Yellow
+                Write-Host "[DEBUG] .env exists: $(Test-Path $EnvPath)" -ForegroundColor Yellow
+
                 if (Test-Path $EnvPath) {
                     $EnvContent = Get-Content $EnvPath -Raw -ErrorAction SilentlyContinue
+                    Write-Host "[DEBUG] .env content length: $($EnvContent.Length)" -ForegroundColor Yellow
+
                     if ($EnvContent -match "SQL_SUPER_USER\s*=\s*(.+?)(\r?\n|$)") {
                         $envSuperUser = $matches[1].Trim()
+                        Write-Host "[DEBUG] Found SQL_SUPER_USER in .env: '$($envSuperUser.Substring(0, [Math]::Min(5, $envSuperUser.Length)))...' (length: $($envSuperUser.Length))" -ForegroundColor Yellow
                         if (![string]::IsNullOrWhiteSpace($envSuperUser) -and !$envSuperUser.StartsWith("your_")) {
                             $dbSuperUser = $envSuperUser
                             $hasValidSuperUser = $true
                         }
+                    } else {
+                        Write-Host "[DEBUG] SQL_SUPER_USER NOT FOUND in .env!" -ForegroundColor Red
                     }
+
                     if ($EnvContent -match "RFQ_USER_PASSWORD\s*=\s*(.+?)(\r?\n|$)") {
                         $envRfqPassword = $matches[1].Trim()
+                        Write-Host "[DEBUG] Found RFQ_USER_PASSWORD in .env: '$($envRfqPassword.Substring(0, [Math]::Min(5, $envRfqPassword.Length)))...' (length: $($envRfqPassword.Length))" -ForegroundColor Yellow
                         if (![string]::IsNullOrWhiteSpace($envRfqPassword) -and !$envRfqPassword.StartsWith("your_")) {
                             $dbRfqPassword = $envRfqPassword
                             $hasValidRfqPassword = $true
                         }
+                    } else {
+                        Write-Host "[DEBUG] RFQ_USER_PASSWORD NOT FOUND in .env!" -ForegroundColor Red
                     }
                     $passwordSource = ".env file"
                 }
             }
 
+            Write-Host "[DEBUG] FINAL: hasValidSuperUser=$hasValidSuperUser, hasValidRfqPassword=$hasValidRfqPassword" -ForegroundColor Yellow
+            Write-Host "[DEBUG] FINAL: dbSuperUser length=$($dbSuperUser.Length), dbRfqPassword length=$($dbRfqPassword.Length)" -ForegroundColor Yellow
+
             if (!$hasValidSuperUser -or !$hasValidRfqPassword) {
                 Write-Warning "[!] Database passwords not found"
+                Write-Host "[DEBUG] SKIPPING DATABASE SETUP - NO VALID PASSWORDS!" -ForegroundColor Red
                 Write-Info "  SuperUserPassword valid: $hasValidSuperUser"
                 Write-Info "  RFQUserPassword valid: $hasValidRfqPassword"
                 Write-Info ""
@@ -1943,6 +1984,7 @@ if (Test-Path $SetupDbScript) {
                 Write-Info "    $SetupDbScript"
                 $script:SkippedSteps += "Database setup (passwords not found)"
             } else {
+                Write-Host "[DEBUG] PROCEEDING WITH DATABASE SETUP!" -ForegroundColor Green
                 # Debug: Show credentials source and values
                 Write-Info "  Using credentials from $passwordSource :"
                 $maskedSuper = $dbSuperUser.Substring(0, [Math]::Min(3, $dbSuperUser.Length)) + "***"
@@ -1995,27 +2037,50 @@ if (Test-Path $SetupDbScript) {
 
                         $wrapperContent = @"
 @echo off
+echo [WRAPPER] ====== WRAPPER SCRIPT STARTED ======
+echo [WRAPPER] Setting environment variables...
 set "SUPER_USER_B64=$SuperUserB64"
 set "RFQ_USER_B64=$RfqUserB64"
 set "NO_PAUSE=1"
-echo [WRAPPER] Environment variables set:
-echo [WRAPPER] SUPER_USER_B64=%SUPER_USER_B64:~0,10%...
-echo [WRAPPER] RFQ_USER_B64=%RFQ_USER_B64:~0,10%...
-echo.
+echo [WRAPPER] SUPER_USER_B64 set, first 15 chars: %SUPER_USER_B64:~0,15%
+echo [WRAPPER] RFQ_USER_B64 set, first 15 chars: %RFQ_USER_B64:~0,15%
+echo [WRAPPER] NO_PAUSE=%NO_PAUSE%
+echo [WRAPPER] Now calling: $SetupDbScript
+echo [WRAPPER] =====================================
 call "$SetupDbScript"
-exit /b %ERRORLEVEL%
+set WRAPPER_EXIT=%ERRORLEVEL%
+echo [WRAPPER] Setup script returned: %WRAPPER_EXIT%
+exit /b %WRAPPER_EXIT%
 "@
+                        Write-Host ""
+                        Write-Host "======== DEBUG: WRAPPER CONTENT ========" -ForegroundColor Cyan
+                        Write-Host "Wrapper file: $tempBatFile" -ForegroundColor Cyan
+                        Write-Host "SuperUserB64 length in wrapper: $($SuperUserB64.Length)" -ForegroundColor Cyan
+                        Write-Host "RfqUserB64 length in wrapper: $($RfqUserB64.Length)" -ForegroundColor Cyan
+                        Write-Host "SetupDbScript path: $SetupDbScript" -ForegroundColor Cyan
+                        Write-Host "=========================================" -ForegroundColor Cyan
+                        Write-Host ""
+
                         $wrapperContent | Out-File -FilePath $tempBatFile -Encoding ASCII
 
-                        Write-Info "  Using wrapper script to pass environment variables"
+                        Write-Host "[DEBUG] Wrapper file written. Content preview:" -ForegroundColor Cyan
+                        Write-Host ($wrapperContent.Substring(0, [Math]::Min(500, $wrapperContent.Length))) -ForegroundColor Gray
+                        Write-Host ""
+
+                        Write-Info "  Executing wrapper script..."
 
                         # Call the wrapper BAT
                         & cmd.exe /c "`"$tempBatFile`""
                         $dbExitCode = $LASTEXITCODE
+
+                        Write-Host "[DEBUG] Wrapper returned exit code: $dbExitCode" -ForegroundColor Cyan
                     }
                     finally {
-                        # Clean up temp wrapper file
+                        # DEBUG: Keep wrapper file for inspection
                         if ($tempBatFile -and (Test-Path $tempBatFile)) {
+                            $debugWrapperPath = Join-Path $InstallPath "DEBUG_wrapper_last_run.bat"
+                            Copy-Item $tempBatFile $debugWrapperPath -Force -ErrorAction SilentlyContinue
+                            Write-Info "  [DEBUG] Wrapper saved to: $debugWrapperPath"
                             Remove-Item $tempBatFile -Force -ErrorAction SilentlyContinue
                         }
                         $env:SUPER_USER_B64 = $null
