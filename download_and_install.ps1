@@ -1997,6 +1997,7 @@ if (Test-Path $SetupDbScript) {
 @echo off
 set "SUPER_USER_B64=$SuperUserB64"
 set "RFQ_USER_B64=$RfqUserB64"
+set "NO_PAUSE=1"
 echo [WRAPPER] Environment variables set:
 echo [WRAPPER] SUPER_USER_B64=%SUPER_USER_B64:~0,10%...
 echo [WRAPPER] RFQ_USER_B64=%RFQ_USER_B64:~0,10%...

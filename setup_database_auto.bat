@@ -409,5 +409,6 @@ if "!EXIT_CODE!"=="0" (
 REM Pass EXIT_CODE out of setlocal block
 endlocal & set "EXIT_CODE=%EXIT_CODE%"
 
-pause
+REM Only pause if not called from installer (NO_PAUSE not set)
+if not defined NO_PAUSE pause
 exit /b %EXIT_CODE%
