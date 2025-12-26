@@ -47,17 +47,6 @@ function Decode-Base64Password {
 }
 
 # Use Base64 passwords if provided, otherwise fall back to plain text parameters
-Write-Host ""
-Write-Host "======== DEBUG: SCRIPT START - INCOMING PARAMETERS ========" -ForegroundColor Magenta
-Write-Host "SuperUserPasswordB64 received: $(-not [string]::IsNullOrEmpty($SuperUserPasswordB64))" -ForegroundColor Magenta
-Write-Host "SuperUserPasswordB64 length: $($SuperUserPasswordB64.Length)" -ForegroundColor Magenta
-Write-Host "RFQUserPasswordB64 received: $(-not [string]::IsNullOrEmpty($RFQUserPasswordB64))" -ForegroundColor Magenta
-Write-Host "RFQUserPasswordB64 length: $($RFQUserPasswordB64.Length)" -ForegroundColor Magenta
-Write-Host "SuperUserPassword (plain) received: $(-not [string]::IsNullOrEmpty($SuperUserPassword))" -ForegroundColor Magenta
-Write-Host "RFQUserPassword (plain) received: $(-not [string]::IsNullOrEmpty($RFQUserPassword))" -ForegroundColor Magenta
-Write-Host "============================================================" -ForegroundColor Magenta
-Write-Host ""
-
 if (-not [string]::IsNullOrEmpty($SettingsPasswordB64)) {
     $SettingsPassword = Decode-Base64Password $SettingsPasswordB64
 }
