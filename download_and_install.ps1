@@ -128,6 +128,7 @@ trap {
 # TEMPORARILY DISABLE STEPS - Set to $true to enable
 $ENABLE_STEP_6_DOWNLOAD = $true  # Step 6: Downloading installation components
 $ENABLE_STEP_7_EXTRACT = $true   # Step 7: Extracting installation files
+$SKIP_DB_SCRIPT_OVERWRITE = $false  # Set to $true to skip overwriting DB scripts during testing
 
 # Track skipped steps for final summary
 $script:SkippedSteps = @()
@@ -1154,7 +1155,15 @@ except Exception as e:
                 }
                 
                 # Copy all files from temp to install path
-                Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
+                if ($SKIP_DB_SCRIPT_OVERWRITE) {
+                    # Skip DB scripts for testing
+                    Write-Info "    [TEST MODE] Skipping overwrite of DB scripts..."
+                    Get-ChildItem -Path $TempExtractDir | Where-Object {
+                        $_.Name -notin @('setup_database_auto.bat', 'setup_db_helper.ps1')
+                    } | Copy-Item -Destination $InstallPath -Recurse -Force
+                } else {
+                    Get-ChildItem -Path $TempExtractDir | Copy-Item -Destination $InstallPath -Recurse -Force
+                }
                 
                 # Cleanup temp directory
                 Remove-Item $TempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
