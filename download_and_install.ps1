@@ -529,7 +529,10 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         Write-Info "  [$CurrentComponent/$TotalComponents] Downloading: $ComponentName"
         
         $filesDownloaded = 0
+        $totalFiles = $ComponentInfo.files.Count
+        $currentFile = 0
         foreach ($FileInfo in $ComponentInfo.files) {
+            $currentFile++
             $Filename = $FileInfo.filename
             
             # The manifest tells us which release contains each component via minimum_versions
@@ -639,17 +642,25 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 }
                 
                 # Show file size and progress
+                $fileProgress = if ($totalFiles -gt 1) { " [$currentFile/$totalFiles]" } else { "" }
                 if ($SourceTag -ne $Version) {
-                    Write-Info "    Downloading: $Filename ($FileSizeMB MB) from release $SourceTag..."
+                    Write-Info "    Downloading$fileProgress: $Filename ($FileSizeMB MB) from release $SourceTag..."
                 } else {
-                    Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                    Write-Info "    Downloading$fileProgress: $Filename ($FileSizeMB MB)..."
                 }
                 
                 # Show progress bar during download
                 $ProgressPreference = 'Continue'
                 
                 # Full download
-                Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
+                try {
+                    Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing -ErrorAction Stop
+                }
+                finally {
+                    # Clear any progress display and ensure console is ready
+                    Write-Progress -Activity "Downloading" -Completed
+                    [Console]::Out.Flush()
+                }
                 
                 # Verify downloaded file size matches expected size
                 $DownloadedFile = Get-Item $FilePath
@@ -664,6 +675,9 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                     }
                 }
                 $filesDownloaded++
+                
+                # Small delay to ensure console is ready for next download (prevents apparent "hanging")
+                Start-Sleep -Milliseconds 100
             }
             catch {
                 Write-Warning "  [!] Failed to download $Filename : $_ (skipping)"
