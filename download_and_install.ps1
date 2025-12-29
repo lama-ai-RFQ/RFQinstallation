@@ -25,7 +25,11 @@ param(
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
     [switch]$CleanupAfterInstall,
-    [string]$UpdateChannel = "customer"
+    [string]$UpdateChannel = "customer",
+    # Credential storage: "env" keeps passwords in .env file,
+    # "windows_credential_manager" migrates to secure Windows storage after install
+    [ValidateSet("env", "windows_credential_manager")]
+    [string]$CredentialProvider = "env"
 )
 
 # Set error action preference to continue so we can handle errors gracefully
@@ -148,6 +152,163 @@ function Exit-WithError {
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 1
+}
+
+# Post-install credential migration function
+# Migrates secrets from .env to Windows Credential Manager using Python keyring
+function Invoke-CredentialMigration {
+    param(
+        [string]$InstallPath,
+        [string]$CredentialProvider
+    )
+
+    # Only migrate if Windows Credential Manager is selected
+    if ($CredentialProvider -ne "windows_credential_manager") {
+        Write-Info "  Credential provider: env (passwords remain in .env file)"
+        return $true
+    }
+
+    Write-Info ""
+    Write-Info "Migrating secrets to Windows Credential Manager..."
+    Write-Info "  (This provides secure DPAPI-encrypted storage)"
+    Write-Info ""
+
+    # Check if Python is available
+    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonCmd) {
+        Write-Warning "[!] Python not found - cannot migrate to Windows Credential Manager"
+        Write-Info "  Passwords will remain in .env file"
+        Write-Info "  You can migrate later using: python -m backend.cli.secrets_cli migrate"
+        return $false
+    }
+
+    # Install keyring if not present
+    Write-Info "  Checking keyring package..."
+    $pipResult = & python -m pip install keyring --quiet 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "[!] Could not install keyring package"
+        Write-Info "  Passwords will remain in .env file"
+        return $false
+    }
+
+    # Read secrets from .env file
+    $EnvPath = Join-Path $InstallPath ".env"
+    if (-not (Test-Path $EnvPath)) {
+        Write-Warning "[!] .env file not found at $EnvPath"
+        return $false
+    }
+
+    $envContent = Get-Content $EnvPath -Raw
+
+    # Extract secrets from .env
+    $secrets = @{}
+    $secretKeys = @(
+        'RFQ_USER_PASSWORD',
+        'SETTINGS_PASSWORD',
+        'SQL_SUPER_USER',
+        'GITHUB_PAT',
+        'OPENAI_API_KEY',
+        'AWS_KEY',
+        'AWS_SECRET',
+        'AZURE_CONFIG_ENCRYPTION_KEY'
+    )
+
+    foreach ($key in $secretKeys) {
+        if ($envContent -match "$key\s*=\s*([^\r\n]+)") {
+            $value = $matches[1].Trim()
+            if ($value -and -not $value.StartsWith('#') -and -not $value.StartsWith('your_')) {
+                $secrets[$key] = $value
+            }
+        }
+    }
+
+    if ($secrets.Count -eq 0) {
+        Write-Info "  No secrets found in .env to migrate"
+        return $true
+    }
+
+    Write-Info "  Found $($secrets.Count) secrets to migrate"
+
+    # Build Python script using Base64 encoding for safe password transmission
+    $secretsB64 = @{}
+    foreach ($key in $secrets.Keys) {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($secrets[$key])
+        $secretsB64[$key] = [Convert]::ToBase64String($bytes)
+    }
+
+    # Build secrets dictionary for Python
+    $secretsDict = ($secretsB64.GetEnumerator() | ForEach-Object { "'$($_.Key)': '$($_.Value)'" }) -join ",`n    "
+
+    $pythonScript = @"
+import sys
+import base64
+try:
+    import keyring
+except ImportError:
+    print("ERROR: keyring not available")
+    sys.exit(1)
+
+# Base64 encoded secrets (safe for any special characters)
+secrets_b64 = {
+    $secretsDict
+}
+
+service_name = 'RFQAutomation'
+success = True
+stored = 0
+
+for key, value_b64 in secrets_b64.items():
+    try:
+        # Decode from Base64
+        value = base64.b64decode(value_b64).decode('utf-8')
+        if value and value.strip():
+            keyring.set_password(service_name, key, value)
+            print(f"  [OK] {key}")
+            stored += 1
+    except Exception as e:
+        print(f"  [FAIL] {key}: {e}")
+        success = False
+
+print(f"  Migrated: {stored}/{len(secrets_b64)}")
+sys.exit(0 if success else 1)
+"@
+
+    # Execute the Python script
+    try {
+        $result = $pythonScript | & python - 2>&1
+        $result | ForEach-Object { Write-Info $_ }
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "[OK] Secrets migrated to Windows Credential Manager"
+
+            # Update .env file: remove secrets and set CREDENTIAL_PROVIDER
+            Write-Info "  Updating .env file..."
+
+            foreach ($key in $secrets.Keys) {
+                $envContent = $envContent -replace "$key\s*=\s*[^\r\n]+", "# $key stored in Windows Credential Manager"
+            }
+
+            # Add or update CREDENTIAL_PROVIDER
+            if ($envContent -match "CREDENTIAL_PROVIDER\s*=") {
+                $envContent = $envContent -replace "CREDENTIAL_PROVIDER\s*=\s*[^\r\n]+", "CREDENTIAL_PROVIDER=windows_credential_manager"
+            } else {
+                $envContent = "# Credential Provider`nCREDENTIAL_PROVIDER=windows_credential_manager`n`n" + $envContent
+            }
+
+            Set-Content -Path $EnvPath -Value $envContent -Force
+            Write-Success "[OK] .env file updated (secrets removed)"
+            return $true
+        } else {
+            Write-Warning "[!] Some secrets could not be migrated"
+            Write-Info "  Passwords remain in .env file as fallback"
+            return $false
+        }
+    }
+    catch {
+        Write-Warning "[!] Error during migration: $_"
+        Write-Info "  Passwords remain in .env file"
+        return $false
+    }
 }
 
 # Show help
@@ -2138,6 +2299,13 @@ exit /b %WRAPPER_EXIT%
 } else {
     Write-Warning "[!] Database setup script not found in installation"
     $script:SkippedSteps += "Database setup (setup script not found)"
+}
+
+# Post-install credential migration (if Windows Credential Manager selected)
+Write-Info "`nCredential storage configuration..."
+$migrationResult = Invoke-CredentialMigration -InstallPath $InstallPath -CredentialProvider $CredentialProvider
+if (-not $migrationResult -and $CredentialProvider -eq "windows_credential_manager") {
+    $script:SkippedSteps += "Credential migration (failed - using .env fallback)"
 }
 
 # Find main executable
