@@ -854,6 +854,37 @@ if ($ENABLE_STEP_7_EXTRACT) {
                     continue
                 }
                 
+                # Validate part file sizes before rejoining
+                Write-Info "    Validating part file sizes..."
+                $allPartsValid = $true
+                $totalExpectedSize = 0
+                foreach ($PartFile in $PartFiles) {
+                    $PartPath = Join-Path $TempDownloadDir $PartFile.filename
+                    $actualSize = (Get-Item $PartPath).Length
+                    $expectedSize = $PartFile.size
+                    $totalExpectedSize += $expectedSize
+                    
+                    if ($actualSize -ne $expectedSize) {
+                        Write-Warning "    [!] Part file size mismatch: $($PartFile.filename)"
+                        Write-Warning "        Expected: $expectedSize bytes, Actual: $actualSize bytes"
+                        $allPartsValid = $false
+                    }
+                }
+                
+                if (!$allPartsValid) {
+                    Write-Error-Custom "ERROR: One or more part files have incorrect sizes"
+                    Write-Error-Custom "This indicates incomplete or corrupted downloads"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Suggested solutions:"
+                    Write-Error-Custom "  1. Delete all part files and re-run the installer to re-download"
+                    Write-Error-Custom "  2. Check your internet connection and try again"
+                    Write-Error-Custom "  3. Check disk space availability"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Part files location: $TempDownloadDir"
+                    Exit-WithError
+                }
+                Write-Success "    [OK] All part files validated ($([math]::Round($totalExpectedSize / 1MB, 2)) MB total)"
+                
                 # Output file name (remove .part1 extension)
                 $OutputFilename = $PartFiles[0].filename -replace '\.part\d+$', ''
                 $ComponentZip = Join-Path $TempDownloadDir $OutputFilename
@@ -883,9 +914,78 @@ if ($ENABLE_STEP_7_EXTRACT) {
                     Write-Error-Custom "ERROR: Rejoined file is empty"
                     Exit-WithError
                 }
-                Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB"
+                
+                # Verify rejoined file size matches expected total
+                if ($fileSize -ne $totalExpectedSize) {
+                    Write-Error-Custom "ERROR: Rejoined file size mismatch"
+                    Write-Error-Custom "Expected: $totalExpectedSize bytes ($([math]::Round($totalExpectedSize / 1MB, 2)) MB)"
+                    Write-Error-Custom "Actual: $fileSize bytes ($([math]::Round($fileSize / 1MB, 2)) MB)"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "This indicates an error during the rejoining process"
+                    Write-Error-Custom "Suggested solutions:"
+                    Write-Error-Custom "  1. Delete all part files and re-run the installer to re-download"
+                    Write-Error-Custom "  2. Check disk space and filesystem health"
+                    Write-Error-Custom "  3. Try running the installer as Administrator"
+                    Exit-WithError
+                }
+                Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB (verified)"
+                
+                # Validate ZIP file integrity before attempting extraction
+                Write-Info "    Validating ZIP file integrity..."
+                try {
+                    Add-Type -AssemblyName System.IO.Compression.FileSystem
+                    $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($ComponentZip)
+                    $entryCount = $zipArchive.Entries.Count
+                    $zipArchive.Dispose()
+                    Write-Success "    [OK] ZIP file is valid ($entryCount entries found)"
+                }
+                catch {
+                    Write-Error-Custom "ERROR: Rejoined ZIP file is corrupted or invalid"
+                    Write-Error-Custom "Error: $_"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Possible causes:"
+                    Write-Error-Custom "  1. One or more part files were corrupted during download"
+                    Write-Error-Custom "  2. Part files were not downloaded completely"
+                    Write-Error-Custom "  3. Filesystem error during rejoining process"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Suggested solutions:"
+                    Write-Error-Custom "  1. Delete all part files and re-run the installer to re-download"
+                    Write-Error-Custom "  2. Check disk space and filesystem health"
+                    Write-Error-Custom "  3. Try running the installer as Administrator"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Part files location: $TempDownloadDir"
+                    Exit-WithError
+                }
             }
             
+            # Validate single-file ZIP integrity before attempting extraction
+            if ($Files.Count -eq 1) {
+                Write-Info "    Validating ZIP file integrity..."
+                try {
+                    Add-Type -AssemblyName System.IO.Compression.FileSystem
+                    $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($ComponentZip)
+                    $entryCount = $zipArchive.Entries.Count
+                    $zipArchive.Dispose()
+                    Write-Success "    [OK] ZIP file is valid ($entryCount entries found)"
+                }
+                catch {
+                    Write-Error-Custom "ERROR: ZIP file is corrupted or invalid: $ComponentZip"
+                    Write-Error-Custom "Error: $_"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Possible causes:"
+                    Write-Error-Custom "  1. File was corrupted during download"
+                    Write-Error-Custom "  2. File was not downloaded completely"
+                    Write-Error-Custom "  3. Filesystem error"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Suggested solutions:"
+                    Write-Error-Custom "  1. Delete the file and re-run the installer to re-download"
+                    Write-Error-Custom "  2. Check disk space and filesystem health"
+                    Write-Error-Custom "  3. Try running the installer as Administrator"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "File location: $ComponentZip"
+                    Exit-WithError
+                }
+            }
 
             # Extract component
             try {
@@ -1080,6 +1180,10 @@ except Exception as e:
                 if (-not $extractionSuccess) {
                     Write-Error-Custom "ERROR: Failed to extract archive using any method"
                     Write-Error-Custom ""
+                    Write-Error-Custom "Archive file: $ComponentZip"
+                    $zipFileSize = (Get-Item $ComponentZip).Length
+                    Write-Error-Custom "Archive size: $zipFileSize bytes ($([math]::Round($zipFileSize / 1MB, 2)) MB)"
+                    Write-Error-Custom ""
                     Write-Error-Custom "Extraction tool status:"
                     if ($sevenZipPath) {
                         Write-Error-Custom "  7-Zip: Found at $sevenZipPath, but extraction failed"
@@ -1103,8 +1207,29 @@ except Exception as e:
                     Write-Error-Custom ""
                     Write-Error-Custom "Error details: $extractionError"
                     Write-Error-Custom ""
-                    Write-Error-Custom "Please install 7-Zip from https://www.7-zip.org/ and try again"
-                    Write-Error-Custom "Or install Python and ensure it's in your PATH"
+                    Write-Error-Custom "DIAGNOSIS:"
+                    Write-Error-Custom "  All extraction methods failed, which strongly indicates the ZIP file is corrupted."
+                    Write-Error-Custom "  This typically happens when:"
+                    Write-Error-Custom "    1. Part files were corrupted during download"
+                    Write-Error-Custom "    2. Part files were not downloaded completely"
+                    Write-Error-Custom "    3. Filesystem error occurred during rejoining (for multi-part files)"
+                    Write-Error-Custom "    4. Network interruption during download"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "SOLUTIONS:"
+                    Write-Error-Custom "  1. Delete all downloaded files and re-run the installer:"
+                    if ($Files.Count -gt 1) {
+                        Write-Error-Custom "     - Delete all .part files in: $TempDownloadDir"
+                    } else {
+                        Write-Error-Custom "     - Delete: $ComponentZip"
+                    }
+                    Write-Error-Custom "  2. Check your internet connection and try again"
+                    Write-Error-Custom "  3. Check available disk space (need at least 2x the archive size)"
+                    Write-Error-Custom "  4. Try running the installer as Administrator"
+                    Write-Error-Custom "  5. Check filesystem health (run chkdsk)"
+                    Write-Error-Custom "  6. If problem persists, the source archive may be corrupted - contact support"
+                    Write-Error-Custom ""
+                    Write-Error-Custom "Note: Installing 7-Zip may help with corrupted archives, but if all methods fail,"
+                    Write-Error-Custom "      the archive itself is likely corrupted and needs to be re-downloaded."
                     Exit-WithError
                 }
                 
