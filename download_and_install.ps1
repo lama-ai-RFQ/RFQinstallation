@@ -854,24 +854,40 @@ if ($ENABLE_STEP_7_EXTRACT) {
                     continue
                 }
                 
-                # Validate part file sizes before rejoining
+                # Validate part file sizes before rejoining (if size info is available)
                 Write-Info "    Validating part file sizes..."
                 $allPartsValid = $true
                 $totalExpectedSize = 0
+                $totalActualSize = 0
+                $hasSizeInfo = $false
+                
                 foreach ($PartFile in $PartFiles) {
                     $PartPath = Join-Path $TempDownloadDir $PartFile.filename
                     $actualSize = (Get-Item $PartPath).Length
-                    $expectedSize = $PartFile.size
-                    $totalExpectedSize += $expectedSize
+                    $totalActualSize += $actualSize
                     
-                    if ($actualSize -ne $expectedSize) {
-                        Write-Warning "    [!] Part file size mismatch: $($PartFile.filename)"
-                        Write-Warning "        Expected: $expectedSize bytes, Actual: $actualSize bytes"
-                        $allPartsValid = $false
+                    # Check both 'size' and 'size_bytes' fields (manifest uses 'size_bytes', GitHub API uses 'size')
+                    $expectedSize = $PartFile.size
+                    if (-not $expectedSize -or $expectedSize -eq 0) {
+                        $expectedSize = $PartFile.size_bytes
+                    }
+                    
+                    if ($expectedSize -and $expectedSize -gt 0) {
+                        $hasSizeInfo = $true
+                        $totalExpectedSize += $expectedSize
+                        
+                        if ($actualSize -ne $expectedSize) {
+                            Write-Warning "    [!] Part file size mismatch: $($PartFile.filename)"
+                            Write-Warning "        Expected: $expectedSize bytes, Actual: $actualSize bytes"
+                            $allPartsValid = $false
+                        }
+                    } else {
+                        # No size info available
+                        Write-Info "    Part file: $($PartFile.filename) - $([math]::Round($actualSize / 1MB, 2)) MB (no expected size in manifest)"
                     }
                 }
                 
-                if (!$allPartsValid) {
+                if ($hasSizeInfo -and !$allPartsValid) {
                     Write-Error-Custom "ERROR: One or more part files have incorrect sizes"
                     Write-Error-Custom "This indicates incomplete or corrupted downloads"
                     Write-Error-Custom ""
@@ -883,7 +899,12 @@ if ($ENABLE_STEP_7_EXTRACT) {
                     Write-Error-Custom "Part files location: $TempDownloadDir"
                     Exit-WithError
                 }
-                Write-Success "    [OK] All part files validated ($([math]::Round($totalExpectedSize / 1MB, 2)) MB total)"
+                
+                if ($hasSizeInfo) {
+                    Write-Success "    [OK] All part files validated ($([math]::Round($totalExpectedSize / 1MB, 2)) MB total)"
+                } else {
+                    Write-Info "    Part files found (total: $([math]::Round($totalActualSize / 1MB, 2)) MB) - size validation skipped (no size info in manifest)"
+                }
                 
                 # Output file name (remove .part1 extension)
                 $OutputFilename = $PartFiles[0].filename -replace '\.part\d+$', ''
@@ -915,20 +936,37 @@ if ($ENABLE_STEP_7_EXTRACT) {
                     Exit-WithError
                 }
                 
-                # Verify rejoined file size matches expected total
-                if ($fileSize -ne $totalExpectedSize) {
-                    Write-Error-Custom "ERROR: Rejoined file size mismatch"
-                    Write-Error-Custom "Expected: $totalExpectedSize bytes ($([math]::Round($totalExpectedSize / 1MB, 2)) MB)"
-                    Write-Error-Custom "Actual: $fileSize bytes ($([math]::Round($fileSize / 1MB, 2)) MB)"
-                    Write-Error-Custom ""
-                    Write-Error-Custom "This indicates an error during the rejoining process"
-                    Write-Error-Custom "Suggested solutions:"
-                    Write-Error-Custom "  1. Delete all part files and re-run the installer to re-download"
-                    Write-Error-Custom "  2. Check disk space and filesystem health"
-                    Write-Error-Custom "  3. Try running the installer as Administrator"
-                    Exit-WithError
+                # Verify rejoined file size matches expected total (only if we have size info)
+                if ($hasSizeInfo) {
+                    if ($fileSize -ne $totalExpectedSize) {
+                        Write-Error-Custom "ERROR: Rejoined file size mismatch"
+                        Write-Error-Custom "Expected: $totalExpectedSize bytes ($([math]::Round($totalExpectedSize / 1MB, 2)) MB)"
+                        Write-Error-Custom "Actual: $fileSize bytes ($([math]::Round($fileSize / 1MB, 2)) MB)"
+                        Write-Error-Custom ""
+                        Write-Error-Custom "This indicates an error during the rejoining process"
+                        Write-Error-Custom "Suggested solutions:"
+                        Write-Error-Custom "  1. Delete all part files and re-run the installer to re-download"
+                        Write-Error-Custom "  2. Check disk space and filesystem health"
+                        Write-Error-Custom "  3. Try running the installer as Administrator"
+                        Exit-WithError
+                    }
+                    Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB (verified against expected size)"
+                } else {
+                    # Verify rejoined file size matches sum of actual part sizes
+                    if ($fileSize -ne $totalActualSize) {
+                        Write-Error-Custom "ERROR: Rejoined file size mismatch"
+                        Write-Error-Custom "Expected (sum of parts): $totalActualSize bytes ($([math]::Round($totalActualSize / 1MB, 2)) MB)"
+                        Write-Error-Custom "Actual: $fileSize bytes ($([math]::Round($fileSize / 1MB, 2)) MB)"
+                        Write-Error-Custom ""
+                        Write-Error-Custom "This indicates an error during the rejoining process"
+                        Write-Error-Custom "Suggested solutions:"
+                        Write-Error-Custom "  1. Delete all part files and re-run the installer to re-download"
+                        Write-Error-Custom "  2. Check disk space and filesystem health"
+                        Write-Error-Custom "  3. Try running the installer as Administrator"
+                        Exit-WithError
+                    }
+                    Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB (verified against part file sizes)"
                 }
-                Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB (verified)"
                 
                 # Validate ZIP file integrity before attempting extraction
                 Write-Info "    Validating ZIP file integrity..."
