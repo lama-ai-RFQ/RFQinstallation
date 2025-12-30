@@ -139,27 +139,17 @@ function Save-ToCredentialManager {
         
         $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden -RedirectStandardError "$env:TEMP\cmdkey_error.txt" -RedirectStandardOutput "$env:TEMP\cmdkey_output.txt"
         
-        if ($process.ExitCode -eq 0) {
-            Remove-Item "$env:TEMP\cmdkey_error.txt" -ErrorAction SilentlyContinue
-            Remove-Item "$env:TEMP\cmdkey_output.txt" -ErrorAction SilentlyContinue
+        if ($exitCode -eq 0) {
             return $true
         } else {
-            $errorOutput = ""
-            if (Test-Path "$env:TEMP\cmdkey_error.txt") {
-                $errorOutput = Get-Content "$env:TEMP\cmdkey_error.txt" -Raw -ErrorAction SilentlyContinue
-                Remove-Item "$env:TEMP\cmdkey_error.txt" -ErrorAction SilentlyContinue
-            }
-            if (Test-Path "$env:TEMP\cmdkey_output.txt") {
-                $stdOutput = Get-Content "$env:TEMP\cmdkey_output.txt" -Raw -ErrorAction SilentlyContinue
-                Remove-Item "$env:TEMP\cmdkey_output.txt" -ErrorAction SilentlyContinue
-                if ($stdOutput) {
-                    Write-Host "      Output: $stdOutput" -ForegroundColor Gray
+            # Show any error output
+            if ($process) {
+                $output = $process | Out-String
+                if ($output -and $output.Trim() -ne "") {
+                    Write-Host "      Error output: $output" -ForegroundColor Red
                 }
             }
-            if ($errorOutput) {
-                Write-Host "      Error: $errorOutput" -ForegroundColor Red
-            }
-            Write-Host "      Exit code: $($process.ExitCode)" -ForegroundColor Red
+            Write-Host "      Exit code: $exitCode" -ForegroundColor Red
             return $false
         }
     }
