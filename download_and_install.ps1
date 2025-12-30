@@ -20,7 +20,8 @@ param(
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
     [switch]$CleanupAfterInstall,
-    [string]$UpdateChannel = "customer"
+    [string]$UpdateChannel = "customer",
+    [switch]$UseCredentialManager
 )
 
 # Set error action preference to continue so we can handle errors gracefully
@@ -377,7 +378,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         
         # Show progress for manifest download
         Write-Info "    Downloading from: $($ManifestAsset.url)"
-        $ProgressPreference = 'Continue'
+        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
         
         $Manifest = Get-Content $ManifestPath | ConvertFrom-Json
@@ -608,8 +609,8 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                     Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
                 }
                 
-                # Show progress bar during download
-                $ProgressPreference = 'Continue'
+                # Disable progress bar for faster downloads
+                $ProgressPreference = 'SilentlyContinue'
                 
                 # Full download
                 Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
@@ -1156,6 +1157,19 @@ else {
 
 # Setup .env file with GitHub token
 Write-Info "`n[8/8] Configuring application..."
+
+# Check if Windows Credential Manager should be used
+$UseCredentialManagerForPasswords = $false
+if ($UseCredentialManager) {
+    if (Test-CredentialManagerAvailable) {
+        $UseCredentialManagerForPasswords = $true
+        Write-Success "[OK] Windows Credential Manager detected - will store passwords securely"
+    } else {
+        Write-Warning "[!] Windows Credential Manager not available - falling back to .env file"
+        $UseCredentialManagerForPasswords = $false
+    }
+}
+
 $EnvPath = Join-Path $InstallPath ".env"
 $EnvTemplatePath = Join-Path $InstallPath ".env.template"
 
@@ -1227,11 +1241,62 @@ if (Test-Path $EnvTemplatePath) {
     
     # Update values in the .env file
     $EnvContent = Get-Content $EnvPath -Raw
+    
+    # Store passwords in Windows Credential Manager if enabled
+    if ($UseCredentialManagerForPasswords) {
+        Write-Info "  Storing passwords in Windows Credential Manager..."
+        
+        # Save passwords to Credential Manager
+        $credentialSaved = $true
+        if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication:SQL_SUPER_USER"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
+                Write-Success "    [OK] Saved SQL_SUPER_USER to Credential Manager"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication:RFQ_USER_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
+                Write-Success "    [OK] Saved RFQ_USER_PASSWORD to Credential Manager"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication:SETTINGS_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
+                Write-Success "    [OK] Saved SETTINGS_PASSWORD to Credential Manager"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if ($credentialSaved) {
+            Write-Success "  [OK] All passwords stored in Windows Credential Manager"
+            # Use placeholders in .env file
+            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
+            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
+            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
+        } else {
+            Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
+            $UseCredentialManagerForPasswords = $false
+            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
+            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
+            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+        }
+    } else {
+        # Store passwords in .env file (traditional method)
+        $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
+        $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
+        $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+    }
+    
     $EnvContent = $EnvContent -replace "GITHUB_PAT=.*", "GITHUB_PAT=$GitHubToken"
     $EnvContent = $EnvContent -replace "GITHUB_USERNAME=.*", "GITHUB_USERNAME=RFQdebugging"
-    $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
-    $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
-    $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
     $EnvContent = $EnvContent -replace "CONTAINER=.*", "CONTAINER=0"
     # Only update MODEL_PATH if we have a value (preserve existing if empty)
     if (![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
@@ -1259,13 +1324,25 @@ if (Test-Path $EnvTemplatePath) {
         $EnvContent += "`nGITHUB_USERNAME=RFQdebugging"
     }
     if ($EnvContent -notmatch "SQL_SUPER_USER") {
-        $EnvContent += "`nSQL_SUPER_USER=$SuperUserPassword"
+        if ($UseCredentialManagerForPasswords) {
+            $EnvContent += "`nSQL_SUPER_USER=__CREDENTIAL_MANAGER__"
+        } else {
+            $EnvContent += "`nSQL_SUPER_USER=$SuperUserPassword"
+        }
     }
     if ($EnvContent -notmatch "RFQ_USER_PASSWORD") {
-        $EnvContent += "`nRFQ_USER_PASSWORD=$RFQUserPassword"
+        if ($UseCredentialManagerForPasswords) {
+            $EnvContent += "`nRFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
+        } else {
+            $EnvContent += "`nRFQ_USER_PASSWORD=$RFQUserPassword"
+        }
     }
     if ($EnvContent -notmatch "SETTINGS_PASSWORD") {
-        $EnvContent += "`nSETTINGS_PASSWORD=$SettingsPassword"
+        if ($UseCredentialManagerForPasswords) {
+            $EnvContent += "`nSETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
+        } else {
+            $EnvContent += "`nSETTINGS_PASSWORD=$SettingsPassword"
+        }
     }
     if ($EnvContent -notmatch "CONTAINER") {
         $EnvContent += "`nCONTAINER=0"
@@ -1312,6 +1389,58 @@ if (Test-Path $EnvTemplatePath) {
 else {
     # Create .env from scratch if template doesn't exist
     Write-Info "  .env.template not found, creating .env from default..."
+    
+    # Determine password values based on storage method
+    $sqlSuperUserValue = $SuperUserPassword
+    $rfqUserPasswordValue = $RFQUserPassword
+    $settingsPasswordValue = $SettingsPassword
+    
+    if ($UseCredentialManagerForPasswords) {
+        Write-Info "  Storing passwords in Windows Credential Manager..."
+        
+        # Save passwords to Credential Manager
+        $credentialSaved = $true
+        if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication:SQL_SUPER_USER"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
+                Write-Success "    [OK] Saved SQL_SUPER_USER to Credential Manager"
+                $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication:RFQ_USER_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
+                Write-Success "    [OK] Saved RFQ_USER_PASSWORD to Credential Manager"
+                $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication:SETTINGS_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
+                Write-Success "    [OK] Saved SETTINGS_PASSWORD to Credential Manager"
+                $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if ($credentialSaved) {
+            Write-Success "  [OK] All passwords stored in Windows Credential Manager"
+        } else {
+            Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
+            $UseCredentialManagerForPasswords = $false
+            $sqlSuperUserValue = $SuperUserPassword
+            $rfqUserPasswordValue = $RFQUserPassword
+            $settingsPasswordValue = $SettingsPassword
+        }
+    }
+    
     $EnvContent = @"
 # RFQ Application Configuration
 # Generated by installer on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
@@ -1340,13 +1469,16 @@ DEBUG_THREAD=0
 
 # Database Configuration (for setup_database_auto.bat)
 # SQL super user password (for database setup)
-SQL_SUPER_USER=$SuperUserPassword
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+SQL_SUPER_USER=$sqlSuperUserValue
 
 # Database password (for rfq_user)
-RFQ_USER_PASSWORD=$RFQUserPassword
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+RFQ_USER_PASSWORD=$rfqUserPasswordValue
 
 # Settings password
-SETTINGS_PASSWORD=$SettingsPassword
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+SETTINGS_PASSWORD=$settingsPasswordValue
 
 # Azure Configuration
 AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
