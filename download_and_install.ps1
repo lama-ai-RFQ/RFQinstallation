@@ -141,74 +141,22 @@ function Save-ToCredentialManager {
         Remove-Item "$env:TEMP\cmdkey_check_err.txt" -ErrorAction SilentlyContinue
         
         # Use cmdkey.exe to store credentials in Windows Credential Manager
+        # Simple direct call works best - no need for complex escaping
         # Format: cmdkey /add:target /user:username /pass:password
-        # Note: cmdkey.exe can be sensitive to special characters in passwords
-        # We'll use individual arguments properly quoted
         
-        # Escape quotes in password by doubling them (cmdkey.exe requirement)
-        $escapedPassword = $Password -replace '"', '""'
+        # Call cmdkey.exe directly (simplest approach that works)
+        $output = & cmdkey.exe /add:$TargetName /user:$UserName /pass:$Password 2>&1
+        $exitCode = $LASTEXITCODE
         
-        # Build arguments as an array - PowerShell will handle quoting automatically
-        $arguments = @(
-            "/add:$TargetName",
-            "/user:$UserName",
-            "/pass:$escapedPassword"
-        )
-        
-        # Use Start-Process with argument array and capture error output
-        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden -RedirectStandardError "$env:TEMP\cmdkey_error.txt" -RedirectStandardOutput "$env:TEMP\cmdkey_output.txt"
-        
-        if ($process.ExitCode -eq 0) {
+        if ($exitCode -eq 0) {
             Write-Verbose "Successfully saved credential: $TargetName"
             return $true
         } else {
-            # Capture error output for diagnostics
-            $errorOutput = ""
-            if (Test-Path "$env:TEMP\cmdkey_error.txt") {
-                $errorOutput = Get-Content "$env:TEMP\cmdkey_error.txt" -Raw -ErrorAction SilentlyContinue
+            $errorMsg = $output | Out-String
+            Write-Warning "Failed to save credential $TargetName (exit code: $exitCode)"
+            if ($errorMsg -and $errorMsg.Trim() -ne "") {
+                Write-Verbose "Error details: $errorMsg"
             }
-            if (Test-Path "$env:TEMP\cmdkey_output.txt") {
-                $stdOutput = Get-Content "$env:TEMP\cmdkey_output.txt" -Raw -ErrorAction SilentlyContinue
-                if ($stdOutput) {
-                    $errorOutput += " " + $stdOutput
-                }
-                Remove-Item "$env:TEMP\cmdkey_output.txt" -ErrorAction SilentlyContinue
-            }
-            if ($errorOutput) {
-                Remove-Item "$env:TEMP\cmdkey_error.txt" -ErrorAction SilentlyContinue
-            }
-            
-            Write-Warning "Failed to save credential $TargetName (exit code: $($process.ExitCode))"
-            if ($errorOutput) {
-                Write-Verbose "Error details: $errorOutput"
-            }
-            
-            # Try alternative method: use cmd.exe wrapper (sometimes handles special chars better)
-            Write-Verbose "Attempting alternative method for credential: $TargetName"
-            
-            # For cmd.exe, we need to escape differently
-            $cmdEscapedPassword = $Password -replace '"', '""' -replace '&', '^&' -replace '|', '^|' -replace '<', '^<' -replace '>', '^>' -replace '^', '^^'
-            $cmdLine = "cmdkey.exe /add:`"$TargetName`" /user:`"$UserName`" /pass:`"$cmdEscapedPassword`""
-            
-            $process2 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmdLine -Wait -PassThru -WindowStyle Hidden -RedirectStandardError "$env:TEMP\cmdkey_error2.txt"
-            
-            if ($process2.ExitCode -eq 0) {
-                Write-Verbose "Successfully saved credential using alternative method: $TargetName"
-                Remove-Item "$env:TEMP\cmdkey_error2.txt" -ErrorAction SilentlyContinue
-                return $true
-            } else {
-                $errorOutput2 = ""
-                if (Test-Path "$env:TEMP\cmdkey_error2.txt") {
-                    $errorOutput2 = Get-Content "$env:TEMP\cmdkey_error2.txt" -Raw -ErrorAction SilentlyContinue
-                    Remove-Item "$env:TEMP\cmdkey_error2.txt" -ErrorAction SilentlyContinue
-                }
-                Write-Warning "Alternative method also failed for $TargetName (exit code: $($process2.ExitCode))"
-                if ($errorOutput2) {
-                    Write-Verbose "Error details: $errorOutput2"
-                }
-                Write-Warning "Password may contain characters that cmdkey.exe cannot handle, or credential may already exist with different format"
-            }
-            
             return $false
         }
     }
@@ -1362,7 +1310,7 @@ if (Test-Path $EnvTemplatePath) {
         # Save passwords to Credential Manager
         $credentialSaved = $true
         if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication:SQL_SUPER_USER"
+            $targetName = "RFQApplication_SQL_SUPER_USER"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
                 Write-Success "    [OK] Saved SQL_SUPER_USER to Credential Manager"
             } else {
@@ -1371,7 +1319,7 @@ if (Test-Path $EnvTemplatePath) {
         }
         
         if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication:RFQ_USER_PASSWORD"
+            $targetName = "RFQApplication_RFQ_USER_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
                 Write-Success "    [OK] Saved RFQ_USER_PASSWORD to Credential Manager"
             } else {
@@ -1380,7 +1328,7 @@ if (Test-Path $EnvTemplatePath) {
         }
         
         if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication:SETTINGS_PASSWORD"
+            $targetName = "RFQApplication_SETTINGS_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
                 Write-Success "    [OK] Saved SETTINGS_PASSWORD to Credential Manager"
             } else {
@@ -1514,7 +1462,7 @@ else {
         # Save passwords to Credential Manager
         $credentialSaved = $true
         if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication:SQL_SUPER_USER"
+            $targetName = "RFQApplication_SQL_SUPER_USER"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
                 Write-Success "    [OK] Saved SQL_SUPER_USER to Credential Manager"
                 $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
@@ -1524,7 +1472,7 @@ else {
         }
         
         if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication:RFQ_USER_PASSWORD"
+            $targetName = "RFQApplication_RFQ_USER_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
                 Write-Success "    [OK] Saved RFQ_USER_PASSWORD to Credential Manager"
                 $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
@@ -1534,7 +1482,7 @@ else {
         }
         
         if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication:SETTINGS_PASSWORD"
+            $targetName = "RFQApplication_SETTINGS_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
                 Write-Success "    [OK] Saved SETTINGS_PASSWORD to Credential Manager"
                 $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
