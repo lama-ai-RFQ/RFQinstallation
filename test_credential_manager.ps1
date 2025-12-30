@@ -13,17 +13,17 @@ Write-Host ""
 # Test credentials
 $testTargets = @(
     @{
-        TargetName = "RFQApplication:SQL_SUPER_USER"
+        TargetName = "RFQApplication_SQL_SUPER_USER"
         UserName = "postgres"
         Password = "TestPassword123!"
     },
     @{
-        TargetName = "RFQApplication:RFQ_USER_PASSWORD"
+        TargetName = "RFQApplication_RFQ_USER_PASSWORD"
         UserName = "rfq_user"
         Password = "TestPassword456@"
     },
     @{
-        TargetName = "RFQApplication:SETTINGS_PASSWORD"
+        TargetName = "RFQApplication_SETTINGS_PASSWORD"
         UserName = "rfq_app"
         Password = "TestPassword789#"
     }
@@ -129,24 +129,21 @@ function Save-ToCredentialManager {
         Remove-Item "$env:TEMP\cmdkey_check_err.txt" -ErrorAction SilentlyContinue
         
         # Use cmdkey.exe to store credentials
+        # Simple direct call works best - no need for complex escaping
         Write-Host "    Attempting to save credential..." -ForegroundColor Gray
-        $escapedPassword = $Password -replace '"', '""'
-        $arguments = @(
-            "/add:$TargetName",
-            "/user:$UserName",
-            "/pass:$escapedPassword"
-        )
         
-        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden -RedirectStandardError "$env:TEMP\cmdkey_error.txt" -RedirectStandardOutput "$env:TEMP\cmdkey_output.txt"
+        # Call cmdkey.exe directly (simplest approach that works, like the user's example)
+        $output = & cmdkey.exe /add:$TargetName /user:$UserName /pass:$Password 2>&1
+        $exitCode = $LASTEXITCODE
         
         if ($exitCode -eq 0) {
             return $true
         } else {
             # Show any error output
-            if ($process) {
-                $output = $process | Out-String
-                if ($output -and $output.Trim() -ne "") {
-                    Write-Host "      Error output: $output" -ForegroundColor Red
+            if ($output) {
+                $errorMsg = $output | Out-String
+                if ($errorMsg -and $errorMsg.Trim() -ne "") {
+                    Write-Host "      Error output: $errorMsg" -ForegroundColor Red
                 }
             }
             Write-Host "      Exit code: $exitCode" -ForegroundColor Red
@@ -348,9 +345,9 @@ Write-Host "To view credentials manually:" -ForegroundColor Cyan
 Write-Host "  1. Open Control Panel" -ForegroundColor White
 Write-Host "  2. Go to Credential Manager" -ForegroundColor White
 Write-Host "  3. Click 'Windows Credentials'" -ForegroundColor White
-Write-Host "  4. Look for entries starting with 'RFQApplication:'" -ForegroundColor White
+Write-Host "  4. Look for entries starting with 'RFQApplication_'" -ForegroundColor White
 Write-Host ""
 Write-Host "Or use command line:" -ForegroundColor Cyan
-Write-Host "  cmdkey /list:RFQApplication:" -ForegroundColor White
+Write-Host "  cmdkey /list:RFQApplication_" -ForegroundColor White
 Write-Host ""
 
