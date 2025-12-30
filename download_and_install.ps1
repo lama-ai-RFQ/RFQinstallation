@@ -114,6 +114,42 @@ function Exit-WithError {
     exit 1
 }
 
+# Windows Credential Manager functions
+function Save-ToCredentialManager {
+    param(
+        [string]$TargetName,
+        [string]$UserName,
+        [string]$Password
+    )
+    
+    try {
+        # Use cmdkey.exe to store credentials in Windows Credential Manager
+        # Format: cmdkey /add:target /user:username /pass:password
+        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/add:$TargetName", "/user:$UserName", "/pass:$Password" -Wait -PassThru -NoNewWindow -WindowStyle Hidden
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Verbose "Successfully saved credential: $TargetName"
+            return $true
+        } else {
+            Write-Warning "Failed to save credential $TargetName (exit code: $($process.ExitCode))"
+            return $false
+        }
+    }
+    catch {
+        Write-Warning "Error saving credential to Windows Credential Manager: $_"
+        return $false
+    }
+}
+
+function Test-CredentialManagerAvailable {
+    # Check if cmdkey.exe is available (should be on all Windows systems)
+    $cmdkeyPath = Get-Command cmdkey -ErrorAction SilentlyContinue
+    if ($cmdkeyPath) {
+        return $true
+    }
+    return $false
+}
+
 # Show help
 if ($Help) {
     Write-Host @"
