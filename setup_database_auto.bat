@@ -36,16 +36,38 @@ REM Check if SQL_SUPER_USER is a Credential Manager placeholder
 if "%SQL_SUPER_USER%"=="__CREDENTIAL_MANAGER__" (
     echo Retrieving SQL_SUPER_USER from Windows Credential Manager...
     REM Use Python to retrieve password from Credential Manager
-    for /f "delims=" %%p in ('python -c "import sys; sys.path.insert(0, '.'); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); print(pwd if pwd else '')" 2^>nul') do set SQL_SUPER_USER=%%p
+    REM Try to find Python in PATH
+    set "SQL_SUPER_USER="
+    where python >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        REM Python found in PATH, try to retrieve credential
+        REM Try multiple path strategies to find the windows module
+        for /f "delims=" %%p in ('python -c "import sys; import os; cwd = os.getcwd(); parent = os.path.dirname(cwd) if os.path.basename(cwd) == 'RFQinstallation' else cwd; sys.path.insert(0, parent); sys.path.insert(0, cwd); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); print(pwd if pwd else '')" 2^>nul') do set SQL_SUPER_USER=%%p
+    )
     
+    REM If still empty, provide helpful error message
     if "%SQL_SUPER_USER%"=="" (
         echo ERROR: Could not retrieve SQL_SUPER_USER from Windows Credential Manager
-        echo Please ensure the credential 'RFQApplication_SQL_SUPER_USER' exists in Credential Manager
+        echo.
+        echo The password is stored in Windows Credential Manager, but this batch script
+        echo cannot retrieve it automatically. Please use one of these options:
+        echo.
+        echo Option 1: Temporarily set password in .env file
+        echo   Edit .env and change: SQL_SUPER_USER=__CREDENTIAL_MANAGER__
+        echo   To: SQL_SUPER_USER=your_actual_password
+        echo   Run this script, then change it back to __CREDENTIAL_MANAGER__
+        echo.
+        echo Option 2: Use Python to retrieve and set PGPASSWORD
+        echo   python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; import os; pwd = get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); os.environ['PGPASSWORD'] = pwd if pwd else ''"
+        echo.
+        echo To verify the credential exists:
+        echo   cmdkey /list:RFQApplication_SQL_SUPER_USER
         echo.
         pause
         exit /b 1
+    ) else (
+        echo [OK] Retrieved SQL_SUPER_USER from Credential Manager
     )
-    echo [OK] Retrieved SQL_SUPER_USER from Credential Manager
 )
 
 REM Check if SQL_SUPER_USER was found
@@ -71,16 +93,38 @@ REM Check if RFQ_USER_PASSWORD is a Credential Manager placeholder
 if "%RFQ_PASSWORD%"=="__CREDENTIAL_MANAGER__" (
     echo Retrieving RFQ_USER_PASSWORD from Windows Credential Manager...
     REM Use Python to retrieve password from Credential Manager
-    for /f "delims=" %%p in ('python -c "import sys; sys.path.insert(0, '.'); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD'); print(pwd if pwd else '')" 2^>nul') do set RFQ_PASSWORD=%%p
+    REM Try to find Python in PATH
+    set "RFQ_PASSWORD="
+    where python >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        REM Python found in PATH, try to retrieve credential
+        REM Try multiple path strategies to find the windows module
+        for /f "delims=" %%p in ('python -c "import sys; import os; cwd = os.getcwd(); parent = os.path.dirname(cwd) if os.path.basename(cwd) == 'RFQinstallation' else cwd; sys.path.insert(0, parent); sys.path.insert(0, cwd); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD'); print(pwd if pwd else '')" 2^>nul') do set RFQ_PASSWORD=%%p
+    )
     
+    REM If still empty, provide helpful error message
     if "%RFQ_PASSWORD%"=="" (
         echo ERROR: Could not retrieve RFQ_USER_PASSWORD from Windows Credential Manager
-        echo Please ensure the credential 'RFQApplication_RFQ_USER_PASSWORD' exists in Credential Manager
+        echo.
+        echo The password is stored in Windows Credential Manager, but this batch script
+        echo cannot retrieve it automatically. Please use one of these options:
+        echo.
+        echo Option 1: Temporarily set password in .env file
+        echo   Edit .env and change: RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__
+        echo   To: RFQ_USER_PASSWORD=your_actual_password
+        echo   Run this script, then change it back to __CREDENTIAL_MANAGER__
+        echo.
+        echo Option 2: Use Python to retrieve and set environment variable
+        echo   python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; import os; pwd = get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD'); print(pwd if pwd else '')"
+        echo.
+        echo To verify the credential exists:
+        echo   cmdkey /list:RFQApplication_RFQ_USER_PASSWORD
         echo.
         pause
         exit /b 1
+    ) else (
+        echo [OK] Retrieved RFQ_USER_PASSWORD from Credential Manager
     )
-    echo [OK] Retrieved RFQ_USER_PASSWORD from Credential Manager
 )
 
 REM Check if RFQ_USER_PASSWORD was found
