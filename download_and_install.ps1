@@ -125,7 +125,7 @@ function Save-ToCredentialManager {
     try {
         # Use cmdkey.exe to store credentials in Windows Credential Manager
         # Format: cmdkey /add:target /user:username /pass:password
-        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/add:$TargetName", "/user:$UserName", "/pass:$Password" -Wait -PassThru -NoNewWindow -WindowStyle Hidden
+        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/add:$TargetName", "/user:$UserName", "/pass:$Password" -Wait -PassThru -WindowStyle Hidden
         
         if ($process.ExitCode -eq 0) {
             Write-Verbose "Successfully saved credential: $TargetName"
