@@ -123,15 +123,92 @@ function Save-ToCredentialManager {
     )
     
     try {
+        # Check if credential already exists and delete it first
+        # cmdkey.exe will fail if the target already exists
+        $checkProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list:$TargetName" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_check.txt" -RedirectStandardError "$env:TEMP\cmdkey_check_err.txt"
+        
+        if ($checkProcess.ExitCode -eq 0) {
+            # Credential exists, delete it first
+            Write-Verbose "Credential $TargetName already exists, deleting first..."
+            $deleteProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/delete:$TargetName" -Wait -PassThru -WindowStyle Hidden
+            if ($deleteProcess.ExitCode -ne 0) {
+                Write-Warning "Warning: Could not delete existing credential $TargetName, but continuing..."
+            }
+            Start-Sleep -Milliseconds 500  # Brief pause to ensure deletion completes
+        }
+        
+        Remove-Item "$env:TEMP\cmdkey_check.txt" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\cmdkey_check_err.txt" -ErrorAction SilentlyContinue
+        
         # Use cmdkey.exe to store credentials in Windows Credential Manager
         # Format: cmdkey /add:target /user:username /pass:password
-        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/add:$TargetName", "/user:$UserName", "/pass:$Password" -Wait -PassThru -WindowStyle Hidden
+        # Note: cmdkey.exe can be sensitive to special characters in passwords
+        # We'll use individual arguments properly quoted
+        
+        # Escape quotes in password by doubling them (cmdkey.exe requirement)
+        $escapedPassword = $Password -replace '"', '""'
+        
+        # Build arguments as an array - PowerShell will handle quoting automatically
+        $arguments = @(
+            "/add:$TargetName",
+            "/user:$UserName",
+            "/pass:$escapedPassword"
+        )
+        
+        # Use Start-Process with argument array and capture error output
+        $process = Start-Process -FilePath "cmdkey.exe" -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden -RedirectStandardError "$env:TEMP\cmdkey_error.txt" -RedirectStandardOutput "$env:TEMP\cmdkey_output.txt"
         
         if ($process.ExitCode -eq 0) {
             Write-Verbose "Successfully saved credential: $TargetName"
             return $true
         } else {
+            # Capture error output for diagnostics
+            $errorOutput = ""
+            if (Test-Path "$env:TEMP\cmdkey_error.txt") {
+                $errorOutput = Get-Content "$env:TEMP\cmdkey_error.txt" -Raw -ErrorAction SilentlyContinue
+            }
+            if (Test-Path "$env:TEMP\cmdkey_output.txt") {
+                $stdOutput = Get-Content "$env:TEMP\cmdkey_output.txt" -Raw -ErrorAction SilentlyContinue
+                if ($stdOutput) {
+                    $errorOutput += " " + $stdOutput
+                }
+                Remove-Item "$env:TEMP\cmdkey_output.txt" -ErrorAction SilentlyContinue
+            }
+            if ($errorOutput) {
+                Remove-Item "$env:TEMP\cmdkey_error.txt" -ErrorAction SilentlyContinue
+            }
+            
             Write-Warning "Failed to save credential $TargetName (exit code: $($process.ExitCode))"
+            if ($errorOutput) {
+                Write-Verbose "Error details: $errorOutput"
+            }
+            
+            # Try alternative method: use cmd.exe wrapper (sometimes handles special chars better)
+            Write-Verbose "Attempting alternative method for credential: $TargetName"
+            
+            # For cmd.exe, we need to escape differently
+            $cmdEscapedPassword = $Password -replace '"', '""' -replace '&', '^&' -replace '|', '^|' -replace '<', '^<' -replace '>', '^>' -replace '^', '^^'
+            $cmdLine = "cmdkey.exe /add:`"$TargetName`" /user:`"$UserName`" /pass:`"$cmdEscapedPassword`""
+            
+            $process2 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmdLine -Wait -PassThru -WindowStyle Hidden -RedirectStandardError "$env:TEMP\cmdkey_error2.txt"
+            
+            if ($process2.ExitCode -eq 0) {
+                Write-Verbose "Successfully saved credential using alternative method: $TargetName"
+                Remove-Item "$env:TEMP\cmdkey_error2.txt" -ErrorAction SilentlyContinue
+                return $true
+            } else {
+                $errorOutput2 = ""
+                if (Test-Path "$env:TEMP\cmdkey_error2.txt") {
+                    $errorOutput2 = Get-Content "$env:TEMP\cmdkey_error2.txt" -Raw -ErrorAction SilentlyContinue
+                    Remove-Item "$env:TEMP\cmdkey_error2.txt" -ErrorAction SilentlyContinue
+                }
+                Write-Warning "Alternative method also failed for $TargetName (exit code: $($process2.ExitCode))"
+                if ($errorOutput2) {
+                    Write-Verbose "Error details: $errorOutput2"
+                }
+                Write-Warning "Password may contain characters that cmdkey.exe cannot handle, or credential may already exist with different format"
+            }
+            
             return $false
         }
     }
