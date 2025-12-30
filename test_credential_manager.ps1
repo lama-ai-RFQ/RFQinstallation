@@ -29,6 +29,71 @@ $testTargets = @(
     }
 )
 
+# Function to list all credentials (for debugging)
+function Show-AllCredentials {
+    Write-Host "  Listing all credentials containing 'RFQApplication':" -ForegroundColor Cyan
+    $listAllProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_list_all.txt" -RedirectStandardError "$env:TEMP\cmdkey_list_all_err.txt"
+    
+    if (Test-Path "$env:TEMP\cmdkey_list_all.txt") {
+        $allCreds = Get-Content "$env:TEMP\cmdkey_list_all.txt" -Raw
+        if ($allCreds -and $allCreds.Trim() -ne "" -and $allCreds -match "RFQApplication") {
+            Write-Host "    Found credentials:" -ForegroundColor Yellow
+            $allCreds -split "`n" | Where-Object { $_ -match "RFQApplication" } | ForEach-Object {
+                Write-Host "      $_" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "    No RFQApplication credentials found in list" -ForegroundColor Yellow
+            if ($allCreds) {
+                Write-Host "    (Output was: $($allCreds.Substring(0, [Math]::Min(100, $allCreds.Length))))" -ForegroundColor Gray
+            }
+        }
+        Remove-Item "$env:TEMP\cmdkey_list_all.txt" -ErrorAction SilentlyContinue
+    }
+    if (Test-Path "$env:TEMP\cmdkey_list_all_err.txt") {
+        $errOutput = Get-Content "$env:TEMP\cmdkey_list_all_err.txt" -Raw
+        if ($errOutput -and $errOutput.Trim() -ne "") {
+            Write-Host "    Error output: $errOutput" -ForegroundColor Red
+        }
+        Remove-Item "$env:TEMP\cmdkey_list_all_err.txt" -ErrorAction SilentlyContinue
+    }
+}
+
+# Function to delete credential (with better error handling)
+function Remove-Credential {
+    param([string]$TargetName)
+    
+    Write-Host "    Attempting to delete: $TargetName" -ForegroundColor Yellow
+    
+    # Try deletion
+    $deleteProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/delete:$TargetName" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_delete_out.txt" -RedirectStandardError "$env:TEMP\cmdkey_delete_err.txt"
+    
+    if ($deleteProcess.ExitCode -eq 0) {
+        Write-Host "      [OK] Deleted successfully" -ForegroundColor Green
+        Remove-Item "$env:TEMP\cmdkey_delete_out.txt" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\cmdkey_delete_err.txt" -ErrorAction SilentlyContinue
+        return $true
+    } else {
+        $errorOut = ""
+        if (Test-Path "$env:TEMP\cmdkey_delete_err.txt") {
+            $errorOut = Get-Content "$env:TEMP\cmdkey_delete_err.txt" -Raw -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\cmdkey_delete_err.txt" -ErrorAction SilentlyContinue
+        }
+        if (Test-Path "$env:TEMP\cmdkey_delete_out.txt") {
+            $stdOut = Get-Content "$env:TEMP\cmdkey_delete_out.txt" -Raw -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\cmdkey_delete_out.txt" -ErrorAction SilentlyContinue
+            if ($stdOut) {
+                Write-Host "      Output: $stdOut" -ForegroundColor Gray
+            }
+        }
+        if ($errorOut) {
+            Write-Host "      Error: $errorOut" -ForegroundColor Red
+        }
+        Write-Host "      [WARN] Delete returned exit code: $($deleteProcess.ExitCode)" -ForegroundColor Yellow
+        Write-Host "      This might mean the credential doesn't exist or is in a different store" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 # Function to save credential (same as in download_and_install.ps1)
 function Save-ToCredentialManager {
     param(
@@ -38,24 +103,33 @@ function Save-ToCredentialManager {
     )
     
     try {
-        # Check if credential already exists and delete it first
+        # Check if credential already exists by looking at the actual output
+        Write-Host "    Checking if credential exists..." -ForegroundColor Gray
         $checkProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list:$TargetName" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_check.txt" -RedirectStandardError "$env:TEMP\cmdkey_check_err.txt"
         
-        if ($checkProcess.ExitCode -eq 0) {
-            # Credential exists, delete it first
-            Write-Host "  Credential $TargetName already exists, deleting first..." -ForegroundColor Yellow
-            $deleteProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/delete:$TargetName" -Wait -PassThru -WindowStyle Hidden
-            if ($deleteProcess.ExitCode -ne 0) {
-                Write-Warning "  Warning: Could not delete existing credential $TargetName"
-                return $false
+        $credentialExists = $false
+        if (Test-Path "$env:TEMP\cmdkey_check.txt") {
+            $checkOutput = Get-Content "$env:TEMP\cmdkey_check.txt" -Raw
+            # Check if output actually contains the target name (not just empty or error message)
+            if ($checkOutput -and $checkOutput.Trim() -ne "" -and $checkOutput -match [regex]::Escape($TargetName)) {
+                $credentialExists = $true
+                Write-Host "    Credential exists, attempting to delete..." -ForegroundColor Yellow
+                $deleted = Remove-Credential -TargetName $TargetName
+                if (-not $deleted) {
+                    Write-Host "    [WARN] Could not delete existing credential, but will try to overwrite..." -ForegroundColor Yellow
+                    Write-Host "    Note: cmdkey.exe may allow overwriting without explicit deletion" -ForegroundColor Gray
+                }
+                Start-Sleep -Milliseconds 500
+            } else {
+                Write-Host "    Credential does not exist (or not found in output)" -ForegroundColor Gray
             }
-            Start-Sleep -Milliseconds 500
         }
         
         Remove-Item "$env:TEMP\cmdkey_check.txt" -ErrorAction SilentlyContinue
         Remove-Item "$env:TEMP\cmdkey_check_err.txt" -ErrorAction SilentlyContinue
         
         # Use cmdkey.exe to store credentials
+        Write-Host "    Attempting to save credential..." -ForegroundColor Gray
         $escapedPassword = $Password -replace '"', '""'
         $arguments = @(
             "/add:$TargetName",
@@ -76,9 +150,16 @@ function Save-ToCredentialManager {
                 Remove-Item "$env:TEMP\cmdkey_error.txt" -ErrorAction SilentlyContinue
             }
             if (Test-Path "$env:TEMP\cmdkey_output.txt") {
+                $stdOutput = Get-Content "$env:TEMP\cmdkey_output.txt" -Raw -ErrorAction SilentlyContinue
                 Remove-Item "$env:TEMP\cmdkey_output.txt" -ErrorAction SilentlyContinue
+                if ($stdOutput) {
+                    Write-Host "      Output: $stdOutput" -ForegroundColor Gray
+                }
             }
-            Write-Warning "  Error: $errorOutput"
+            if ($errorOutput) {
+                Write-Host "      Error: $errorOutput" -ForegroundColor Red
+            }
+            Write-Host "      Exit code: $($process.ExitCode)" -ForegroundColor Red
             return $false
         }
     }
@@ -143,7 +224,7 @@ function Get-FromCredentialManager {
 }
 
 # Test cmdkey.exe availability
-Write-Host "[1/4] Checking cmdkey.exe availability..." -ForegroundColor Cyan
+Write-Host "[1/5] Checking cmdkey.exe availability..." -ForegroundColor Cyan
 $cmdkeyPath = Get-Command cmdkey -ErrorAction SilentlyContinue
 if ($cmdkeyPath) {
     Write-Host "  [OK] cmdkey.exe found at: $($cmdkeyPath.Path)" -ForegroundColor Green
@@ -153,8 +234,13 @@ if ($cmdkeyPath) {
 }
 Write-Host ""
 
+# Show existing credentials first
+Write-Host "[2/4] Checking for existing credentials..." -ForegroundColor Cyan
+Show-AllCredentials
+Write-Host ""
+
 # Test saving credentials
-Write-Host "[2/4] Testing credential save operations..." -ForegroundColor Cyan
+Write-Host "[3/4] Testing credential save operations..." -ForegroundColor Cyan
 $saveResults = @{}
 foreach ($test in $testTargets) {
     Write-Host "  Testing: $($test.TargetName)" -ForegroundColor Yellow
@@ -168,8 +254,13 @@ foreach ($test in $testTargets) {
 }
 Write-Host ""
 
+# Show credentials after saving
+Write-Host "  Verifying credentials were saved..." -ForegroundColor Cyan
+Show-AllCredentials
+Write-Host ""
+
 # Test listing credentials
-Write-Host "[3/4] Testing credential listing..." -ForegroundColor Cyan
+Write-Host "[4/4] Testing credential listing..." -ForegroundColor Cyan
 foreach ($test in $testTargets) {
     Write-Host "  Checking: $($test.TargetName)" -ForegroundColor Yellow
     $listProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list:$($test.TargetName)" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_list.txt"
@@ -189,7 +280,7 @@ foreach ($test in $testTargets) {
 Write-Host ""
 
 # Test retrieving credentials
-Write-Host "[4/4] Testing credential retrieval..." -ForegroundColor Cyan
+Write-Host "[5/5] Testing credential retrieval..." -ForegroundColor Cyan
 $retrieveResults = @{}
 foreach ($test in $testTargets) {
     Write-Host "  Testing: $($test.TargetName)" -ForegroundColor Yellow
