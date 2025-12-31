@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 echo ========================================
 echo   PostgreSQL Database Setup (Automatic)
 echo ========================================
@@ -33,7 +34,7 @@ REM Read SQL_SUPER_USER from .env file
 for /f "tokens=1* delims==" %%a in ('findstr "SQL_SUPER_USER" .env') do set SQL_SUPER_USER=%%b
 
 REM Check if SQL_SUPER_USER is a Credential Manager placeholder
-if "%SQL_SUPER_USER%"=="__CREDENTIAL_MANAGER__" (
+if "!SQL_SUPER_USER!"=="__CREDENTIAL_MANAGER__" (
     echo Retrieving SQL_SUPER_USER from Windows Credential Manager...
     REM Use Python to retrieve password from Credential Manager
     REM Try to find Python in PATH
@@ -50,7 +51,7 @@ if "%SQL_SUPER_USER%"=="__CREDENTIAL_MANAGER__" (
     )
     
     REM If still empty, provide helpful error message
-    if "%SQL_SUPER_USER%"=="" (
+    if "!SQL_SUPER_USER!"=="" (
         echo ERROR: Could not retrieve SQL_SUPER_USER from Windows Credential Manager
         echo.
         echo The password is stored in Windows Credential Manager, but this batch script
@@ -75,7 +76,7 @@ if "%SQL_SUPER_USER%"=="__CREDENTIAL_MANAGER__" (
 )
 
 REM Check if SQL_SUPER_USER was found
-if "%SQL_SUPER_USER%"=="" (
+if "!SQL_SUPER_USER!"=="" (
     echo ERROR: SQL_SUPER_USER not found in .env file
     echo Please add SQL_SUPER_USER=your_sql_super_user_password to your .env file
     echo   OR set SQL_SUPER_USER=__CREDENTIAL_MANAGER__ to use Windows Credential Manager
@@ -88,13 +89,13 @@ echo Using SQL super user password from .env file or Credential Manager...
 echo.
 
 REM Set PGPASSWORD for psql commands
-set PGPASSWORD=%SQL_SUPER_USER%
+set PGPASSWORD=!SQL_SUPER_USER!
 
 REM Read RFQ_USER_PASSWORD from .env file
 for /f "tokens=1* delims==" %%a in ('findstr "RFQ_USER_PASSWORD" .env') do set RFQ_PASSWORD=%%b
 
 REM Check if RFQ_USER_PASSWORD is a Credential Manager placeholder
-if "%RFQ_PASSWORD%"=="__CREDENTIAL_MANAGER__" (
+if "!RFQ_PASSWORD!"=="__CREDENTIAL_MANAGER__" (
     echo Retrieving RFQ_USER_PASSWORD from Windows Credential Manager...
     REM Use Python to retrieve password from Credential Manager
     REM Try to find Python in PATH
@@ -111,7 +112,7 @@ if "%RFQ_PASSWORD%"=="__CREDENTIAL_MANAGER__" (
     )
     
     REM If still empty, provide helpful error message
-    if "%RFQ_PASSWORD%"=="" (
+    if "!RFQ_PASSWORD!"=="" (
         echo ERROR: Could not retrieve RFQ_USER_PASSWORD from Windows Credential Manager
         echo.
         echo The password is stored in Windows Credential Manager, but this batch script
@@ -136,7 +137,7 @@ if "%RFQ_PASSWORD%"=="__CREDENTIAL_MANAGER__" (
 )
 
 REM Check if RFQ_USER_PASSWORD was found
-if "%RFQ_PASSWORD%"=="" (
+if "!RFQ_PASSWORD!"=="" (
     echo ERROR: RFQ_USER_PASSWORD not found in .env file
     echo Please add RFQ_USER_PASSWORD=your_database_password to your .env file
     echo   OR set RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__ to use Windows Credential Manager
