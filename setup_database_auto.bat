@@ -9,12 +9,8 @@ echo   - Check if database 'rfq_db' exists (create if not)
 echo   - Check if user 'rfq_user' exists (create or update password)
 echo   - Grant all necessary permissions
 echo.
-echo Credentials are read from .env file or Windows Credential Manager
+echo Credentials are read from installer environment variables or .env file
 echo.
-
-REM Get the directory where this script is located
-set "SCRIPT_DIR=%~dp0"
-set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
 REM Check if .env file exists
 if not exist ".env" (
@@ -34,94 +30,23 @@ set "TEMP_SQL_1=%TEMP%\rfq_setup_1_%RANDOM%.sql"
 set "TEMP_SQL_2=%TEMP%\rfq_setup_2_%RANDOM%.sql"
 set "TEMP_SQL_3=%TEMP%\rfq_setup_3_%RANDOM%.sql"
 
-REM Read SQL_SUPER_USER from .env file
-for /f "tokens=1* delims==" %%a in ('findstr "SQL_SUPER_USER" .env') do set SQL_SUPER_USER=%%b
-
-REM Check if SQL_SUPER_USER is a Credential Manager placeholder
-if "!SQL_SUPER_USER!"=="__CREDENTIAL_MANAGER__" (
-    echo Retrieving SQL_SUPER_USER from Windows Credential Manager...
-    echo [DEBUG] Script directory: %SCRIPT_DIR%
-    REM Use Python to retrieve password from Credential Manager
-    REM Try to find Python in PATH
-    set "SQL_SUPER_USER="
-    where python >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
-        echo [DEBUG] Python found in PATH
-        REM Python found in PATH, try to retrieve credential
-        REM Try multiple path strategies to find the windows module
-        echo [DEBUG] Attempting to retrieve credential...
-        echo [DEBUG] Command: python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; sys.path.insert(0,str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER') or '')"
-        python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; print('DEBUG: script_dir=' + script_dir, file=sys.stderr); print('DEBUG: p=' + str(p), file=sys.stderr); print('DEBUG: parent=' + str(parent), file=sys.stderr); sys.path.insert(0,str(parent)); print('DEBUG: sys.path[0]=' + str(parent), file=sys.stderr); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd=get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); print('DEBUG: pwd found=' + str(pwd is not None), file=sys.stderr); print(pwd or '')" > "%TEMP%\rfq_sql_pwd.txt" 2>"%TEMP%\rfq_sql_pwd_err.txt"
-        set PYTHON_EXIT_CODE=%ERRORLEVEL%
-        echo [DEBUG] Python exit code: %PYTHON_EXIT_CODE%
-        if exist "%TEMP%\rfq_sql_pwd.txt" (
-            echo [DEBUG] Password file contents:
-            type "%TEMP%\rfq_sql_pwd.txt"
-            echo [DEBUG] End of password file
-        ) else (
-            echo [DEBUG] Password file does not exist
-        )
-        if exist "%TEMP%\rfq_sql_pwd_err.txt" (
-            echo [DEBUG] Python error output:
-            type "%TEMP%\rfq_sql_pwd_err.txt"
-            echo [DEBUG] End of error output
-        )
-        if %PYTHON_EXIT_CODE% EQU 0 (
-            setlocal DisableDelayedExpansion
-            for /f "usebackq delims=" %%p in ("%TEMP%\rfq_sql_pwd.txt") do set "SQL_SUPER_USER=%%p"
-            endlocal & set "SQL_SUPER_USER=!SQL_SUPER_USER!"
-            echo [DEBUG] SQL_SUPER_USER retrieved, length: !SQL_SUPER_USER:~0,1!... (hidden)
-        ) else (
-            echo [DEBUG] Python command failed with exit code %PYTHON_EXIT_CODE%
-        )
-        del "%TEMP%\rfq_sql_pwd.txt" 2>nul
-        del "%TEMP%\rfq_sql_pwd_err.txt" 2>nul
-    ) else (
-        echo [DEBUG] Python not found in PATH
-    )
-    
-    echo [DEBUG] Final check - SQL_SUPER_USER value:
-    if "!SQL_SUPER_USER!"=="" (
-        echo   Variable is EMPTY
-    ) else (
-        echo   Variable is SET (length: !SQL_SUPER_USER:~0,20!...)
-    )
-    echo [DEBUG] Final check before error message:
-    echo [DEBUG] SQL_SUPER_USER variable state:
-    if defined SQL_SUPER_USER (
-        echo [DEBUG]   Variable IS defined
-        echo [DEBUG]   First 5 chars: !SQL_SUPER_USER:~0,5!
-        echo [DEBUG]   Length: !SQL_SUPER_USER:~0,100! (showing first 100 chars)
-    ) else (
-        echo [DEBUG]   Variable is NOT defined
-    )
-    if "!SQL_SUPER_USER!"=="" (
-        echo [DEBUG]   Variable is EMPTY string
-    ) else (
-        echo [DEBUG]   Variable has value (not empty)
-    )
-    REM If still empty, provide helpful error message
-    if "!SQL_SUPER_USER!"=="" (
-        echo ERROR: Could not retrieve SQL_SUPER_USER from Windows Credential Manager
+REM Check if password was passed from installer via environment variable (base64 encoded)
+if defined SQL_SUPER_USER_B64 (
+    REM Decode from base64 (passed from installer)
+    for /f "delims=" %%p in ('powershell -Command "[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('%SQL_SUPER_USER_B64%'))"') do set SQL_SUPER_USER=%%p
+    echo Using SQL_SUPER_USER from installer (environment variable)
+) else (
+    REM Read SQL_SUPER_USER from .env file
+    for /f "tokens=1* delims==" %%a in ('findstr "SQL_SUPER_USER" .env') do set SQL_SUPER_USER=%%b
+    REM If .env has __CREDENTIAL_MANAGER__ placeholder, show error
+    if "!SQL_SUPER_USER!"=="__CREDENTIAL_MANAGER__" (
+        echo ERROR: SQL_SUPER_USER is set to __CREDENTIAL_MANAGER__ in .env file
         echo.
-        echo The password is stored in Windows Credential Manager, but this batch script
-        echo cannot retrieve it automatically. Please use one of these options:
-        echo.
-        echo Option 1: Temporarily set password in .env file
-        echo   Edit .env and change: SQL_SUPER_USER=__CREDENTIAL_MANAGER__
-        echo   To: SQL_SUPER_USER=your_actual_password
-        echo   Run this script, then change it back to __CREDENTIAL_MANAGER__
-        echo.
-        echo Option 2: Use Python to retrieve and set PGPASSWORD
-        echo   python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; import os; pwd = get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); os.environ['PGPASSWORD'] = pwd if pwd else ''"
-        echo.
-        echo To verify the credential exists:
-        echo   cmdkey /list:RFQApplication_SQL_SUPER_USER
+        echo This script cannot retrieve passwords from Windows Credential Manager.
+        echo Please edit .env and set SQL_SUPER_USER to the actual password.
         echo.
         pause
         exit /b 1
-    ) else (
-        echo [OK] Retrieved SQL_SUPER_USER from Credential Manager
     )
 )
 
@@ -129,62 +54,34 @@ REM Check if SQL_SUPER_USER was found
 if "!SQL_SUPER_USER!"=="" (
     echo ERROR: SQL_SUPER_USER not found in .env file
     echo Please add SQL_SUPER_USER=your_sql_super_user_password to your .env file
-    echo   OR set SQL_SUPER_USER=__CREDENTIAL_MANAGER__ to use Windows Credential Manager
     echo.
     pause
     exit /b 1
 )
 
-echo Using SQL super user password from .env file or Credential Manager...
+echo Using SQL super user password from installer or .env file...
 echo.
 
 REM Set PGPASSWORD for psql commands
 set PGPASSWORD=!SQL_SUPER_USER!
 
-REM Read RFQ_USER_PASSWORD from .env file
-for /f "tokens=1* delims==" %%a in ('findstr "RFQ_USER_PASSWORD" .env') do set RFQ_PASSWORD=%%b
-
-REM Check if RFQ_USER_PASSWORD is a Credential Manager placeholder
-if "!RFQ_PASSWORD!"=="__CREDENTIAL_MANAGER__" (
-    echo Retrieving RFQ_USER_PASSWORD from Windows Credential Manager...
-    REM Use Python to retrieve password from Credential Manager
-    REM Try to find Python in PATH
-    set "RFQ_PASSWORD="
-    where python >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
-        REM Python found in PATH, try to retrieve credential
-        REM Try multiple path strategies to find the windows module
-        python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; sys.path.insert(0,str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD') or '')" > "%TEMP%\rfq_user_pwd.txt" 2>nul
-        if %ERRORLEVEL% EQU 0 (
-            setlocal DisableDelayedExpansion
-            for /f "usebackq delims=" %%p in ("%TEMP%\rfq_user_pwd.txt") do set "RFQ_PASSWORD=%%p"
-            endlocal & set "RFQ_PASSWORD=!RFQ_PASSWORD!"
-        )
-        del "%TEMP%\rfq_user_pwd.txt" 2>nul
-    )
-    
-    REM If still empty, provide helpful error message
-    if "!RFQ_PASSWORD!"=="" (
-        echo ERROR: Could not retrieve RFQ_USER_PASSWORD from Windows Credential Manager
+REM Check if password was passed from installer via environment variable (base64 encoded)
+if defined RFQ_USER_B64 (
+    REM Decode from base64 (passed from installer)
+    for /f "delims=" %%p in ('powershell -Command "[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('%RFQ_USER_B64%'))"') do set RFQ_PASSWORD=%%p
+    echo Using RFQ_USER_PASSWORD from installer (environment variable)
+) else (
+    REM Read RFQ_USER_PASSWORD from .env file
+    for /f "tokens=1* delims==" %%a in ('findstr "RFQ_USER_PASSWORD" .env') do set RFQ_PASSWORD=%%b
+    REM If .env has __CREDENTIAL_MANAGER__ placeholder, show error
+    if "!RFQ_PASSWORD!"=="__CREDENTIAL_MANAGER__" (
+        echo ERROR: RFQ_USER_PASSWORD is set to __CREDENTIAL_MANAGER__ in .env file
         echo.
-        echo The password is stored in Windows Credential Manager, but this batch script
-        echo cannot retrieve it automatically. Please use one of these options:
-        echo.
-        echo Option 1: Temporarily set password in .env file
-        echo   Edit .env and change: RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__
-        echo   To: RFQ_USER_PASSWORD=your_actual_password
-        echo   Run this script, then change it back to __CREDENTIAL_MANAGER__
-        echo.
-        echo Option 2: Use Python to retrieve and set environment variable
-        echo   python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; import os; pwd = get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD'); print(pwd if pwd else '')"
-        echo.
-        echo To verify the credential exists:
-        echo   cmdkey /list:RFQApplication_RFQ_USER_PASSWORD
+        echo This script cannot retrieve passwords from Windows Credential Manager.
+        echo Please edit .env and set RFQ_USER_PASSWORD to the actual password.
         echo.
         pause
         exit /b 1
-    ) else (
-        echo [OK] Retrieved RFQ_USER_PASSWORD from Credential Manager
     )
 )
 
@@ -192,7 +89,6 @@ REM Check if RFQ_USER_PASSWORD was found
 if "!RFQ_PASSWORD!"=="" (
     echo ERROR: RFQ_USER_PASSWORD not found in .env file
     echo Please add RFQ_USER_PASSWORD=your_database_password to your .env file
-    echo   OR set RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__ to use Windows Credential Manager
     echo.
     pause
     exit /b 1
@@ -236,7 +132,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo Please check:
     echo   1. PostgreSQL service is running
-    echo   2. SQL_SUPER_USER password in .env is correct (or Credential Manager has correct password)
+    echo   2. SQL_SUPER_USER password in .env is correct
     echo   3. PostgreSQL is listening on localhost:5432
     echo   4. User 'postgres' exists and has superuser privileges
     echo.
@@ -363,7 +259,7 @@ echo.
 echo Database: rfq_db
 echo User: rfq_user
 echo Host: localhost:5432
-echo Password: (configured from .env file or Credential Manager)
+echo Password: (configured from installer or .env file)
 echo.
 echo Status:
 if %DB_EXISTS% EQU 0 (

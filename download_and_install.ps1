@@ -2081,6 +2081,17 @@ if (Test-Path $SetupDbScript) {
                     Write-Info "Running database setup..."
                     try {
                         Push-Location $InstallPath
+                        # Pass passwords as environment variables if available
+                        $env:SQL_SUPER_USER_B64 = ""
+                        $env:RFQ_USER_B64 = ""
+                        if ($SuperUserPassword -and !$SuperUserPassword.StartsWith("your_")) {
+                            $bytes = [System.Text.Encoding]::UTF8.GetBytes($SuperUserPassword)
+                            $env:SQL_SUPER_USER_B64 = [Convert]::ToBase64String($bytes)
+                        }
+                        if ($RFQUserPassword -and !$RFQUserPassword.StartsWith("your_")) {
+                            $bytes = [System.Text.Encoding]::UTF8.GetBytes($RFQUserPassword)
+                            $env:RFQ_USER_B64 = [Convert]::ToBase64String($bytes)
+                        }
                         & cmd.exe /c $SetupDbScript
                         if ($LASTEXITCODE -eq 0) {
                             Write-Success "[OK] Database setup completed"
