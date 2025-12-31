@@ -12,6 +12,10 @@ echo.
 echo Credentials are read from .env file or Windows Credential Manager
 echo.
 
+REM Get the directory where this script is located
+set "SCRIPT_DIR=%~dp0"
+set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+
 REM Check if .env file exists
 if not exist ".env" (
     echo ERROR: .env file not found
@@ -43,7 +47,7 @@ if "!SQL_SUPER_USER!"=="__CREDENTIAL_MANAGER__" (
     if %ERRORLEVEL% EQU 0 (
         REM Python found in PATH, try to retrieve credential
         REM Try multiple path strategies to find the windows module
-        python -c "import sys; from pathlib import Path; p=Path().resolve(); sys.path.insert(0,str(p.parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER') or '')" > "%TEMP%\rfq_sql_pwd.txt" 2>nul
+        python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; sys.path.insert(0,str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER') or '')" > "%TEMP%\rfq_sql_pwd.txt" 2>nul
         if %ERRORLEVEL% EQU 0 (
             setlocal DisableDelayedExpansion
             for /f "usebackq delims=" %%p in ("%TEMP%\rfq_sql_pwd.txt") do set "SQL_SUPER_USER=%%p"
@@ -106,7 +110,7 @@ if "!RFQ_PASSWORD!"=="__CREDENTIAL_MANAGER__" (
     if %ERRORLEVEL% EQU 0 (
         REM Python found in PATH, try to retrieve credential
         REM Try multiple path strategies to find the windows module
-        python -c "import sys; from pathlib import Path; p=Path().resolve(); sys.path.insert(0,str(p.parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD') or '')" > "%TEMP%\rfq_user_pwd.txt" 2>nul
+        python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; sys.path.insert(0,str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD') or '')" > "%TEMP%\rfq_user_pwd.txt" 2>nul
         if %ERRORLEVEL% EQU 0 (
             setlocal DisableDelayedExpansion
             for /f "usebackq delims=" %%p in ("%TEMP%\rfq_user_pwd.txt") do set "RFQ_PASSWORD=%%p"
