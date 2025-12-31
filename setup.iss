@@ -49,6 +49,7 @@ Source: "download_and_install.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
+Source: "setup_database_auto.bat"; DestDir: "{app}"; Flags: ignoreversion
 ; Include WinSW for service creation
 Source: "WinSW.exe"; DestDir: "{pf}\WinSW"; Flags: ignoreversion
 Source: "WinSW.exe"; DestDir: "{app}"; Flags: ignoreversion
