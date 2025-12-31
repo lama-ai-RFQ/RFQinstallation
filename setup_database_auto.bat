@@ -40,22 +40,66 @@ for /f "tokens=1* delims==" %%a in ('findstr "SQL_SUPER_USER" .env') do set SQL_
 REM Check if SQL_SUPER_USER is a Credential Manager placeholder
 if "!SQL_SUPER_USER!"=="__CREDENTIAL_MANAGER__" (
     echo Retrieving SQL_SUPER_USER from Windows Credential Manager...
+    echo [DEBUG] Script directory: %SCRIPT_DIR%
     REM Use Python to retrieve password from Credential Manager
     REM Try to find Python in PATH
     set "SQL_SUPER_USER="
     where python >nul 2>&1
     if %ERRORLEVEL% EQU 0 (
+        echo [DEBUG] Python found in PATH
         REM Python found in PATH, try to retrieve credential
         REM Try multiple path strategies to find the windows module
-        python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; sys.path.insert(0,str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER') or '')" > "%TEMP%\rfq_sql_pwd.txt" 2>nul
-        if %ERRORLEVEL% EQU 0 (
+        echo [DEBUG] Attempting to retrieve credential...
+        echo [DEBUG] Command: python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; sys.path.insert(0,str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER') or '')"
+        python -c "import sys, os; from pathlib import Path; script_dir=r'%SCRIPT_DIR%'; p=Path(script_dir); parent=p.parent if p.name=='RFQinstallation' else p; print('DEBUG: script_dir=' + script_dir, file=sys.stderr); print('DEBUG: p=' + str(p), file=sys.stderr); print('DEBUG: parent=' + str(parent), file=sys.stderr); sys.path.insert(0,str(parent)); print('DEBUG: sys.path[0]=' + str(parent), file=sys.stderr); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd=get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); print('DEBUG: pwd found=' + str(pwd is not None), file=sys.stderr); print(pwd or '')" > "%TEMP%\rfq_sql_pwd.txt" 2>"%TEMP%\rfq_sql_pwd_err.txt"
+        set PYTHON_EXIT_CODE=%ERRORLEVEL%
+        echo [DEBUG] Python exit code: %PYTHON_EXIT_CODE%
+        if exist "%TEMP%\rfq_sql_pwd.txt" (
+            echo [DEBUG] Password file contents:
+            type "%TEMP%\rfq_sql_pwd.txt"
+            echo [DEBUG] End of password file
+        ) else (
+            echo [DEBUG] Password file does not exist
+        )
+        if exist "%TEMP%\rfq_sql_pwd_err.txt" (
+            echo [DEBUG] Python error output:
+            type "%TEMP%\rfq_sql_pwd_err.txt"
+            echo [DEBUG] End of error output
+        )
+        if %PYTHON_EXIT_CODE% EQU 0 (
             setlocal DisableDelayedExpansion
             for /f "usebackq delims=" %%p in ("%TEMP%\rfq_sql_pwd.txt") do set "SQL_SUPER_USER=%%p"
             endlocal & set "SQL_SUPER_USER=!SQL_SUPER_USER!"
+            echo [DEBUG] SQL_SUPER_USER retrieved, length: !SQL_SUPER_USER:~0,1!... (hidden)
+        ) else (
+            echo [DEBUG] Python command failed with exit code %PYTHON_EXIT_CODE%
         )
         del "%TEMP%\rfq_sql_pwd.txt" 2>nul
+        del "%TEMP%\rfq_sql_pwd_err.txt" 2>nul
+    ) else (
+        echo [DEBUG] Python not found in PATH
     )
     
+    echo [DEBUG] Final check - SQL_SUPER_USER value:
+    if "!SQL_SUPER_USER!"=="" (
+        echo   Variable is EMPTY
+    ) else (
+        echo   Variable is SET (length: !SQL_SUPER_USER:~0,20!...)
+    )
+    echo [DEBUG] Final check before error message:
+    echo [DEBUG] SQL_SUPER_USER variable state:
+    if defined SQL_SUPER_USER (
+        echo [DEBUG]   Variable IS defined
+        echo [DEBUG]   First 5 chars: !SQL_SUPER_USER:~0,5!
+        echo [DEBUG]   Length: !SQL_SUPER_USER:~0,100! (showing first 100 chars)
+    ) else (
+        echo [DEBUG]   Variable is NOT defined
+    )
+    if "!SQL_SUPER_USER!"=="" (
+        echo [DEBUG]   Variable is EMPTY string
+    ) else (
+        echo [DEBUG]   Variable has value (not empty)
+    )
     REM If still empty, provide helpful error message
     if "!SQL_SUPER_USER!"=="" (
         echo ERROR: Could not retrieve SQL_SUPER_USER from Windows Credential Manager
