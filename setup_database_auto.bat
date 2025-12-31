@@ -42,7 +42,11 @@ if "%SQL_SUPER_USER%"=="__CREDENTIAL_MANAGER__" (
     if %ERRORLEVEL% EQU 0 (
         REM Python found in PATH, try to retrieve credential
         REM Try multiple path strategies to find the windows module
-        for /f "delims=" %%p in ('python -c "import sys; import os; from pathlib import Path; cwd = Path(os.getcwd()); parent = cwd.parent if cwd.name == \"RFQinstallation\" else cwd; sys.path.insert(0, str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager(\"RFQApplication_SQL_SUPER_USER\"); print(pwd if pwd else \"\")"') do set SQL_SUPER_USER=%%p
+        python -c "import sys; import os; from pathlib import Path; cwd = Path(os.getcwd()); parent = cwd.parent if cwd.name == \"RFQinstallation\" else cwd; sys.path.insert(0, str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager(\"RFQApplication_SQL_SUPER_USER\"); print(pwd if pwd else \"\")" > "%TEMP%\rfq_sql_pwd.txt" 2>&1
+        if %ERRORLEVEL% EQU 0 (
+            for /f "delims=" %%p in ('type "%TEMP%\rfq_sql_pwd.txt"') do set SQL_SUPER_USER=%%p
+        )
+        del "%TEMP%\rfq_sql_pwd.txt" 2>nul
     )
     
     REM If still empty, provide helpful error message
@@ -99,7 +103,11 @@ if "%RFQ_PASSWORD%"=="__CREDENTIAL_MANAGER__" (
     if %ERRORLEVEL% EQU 0 (
         REM Python found in PATH, try to retrieve credential
         REM Try multiple path strategies to find the windows module
-        for /f "delims=" %%p in ('python -c "import sys; import os; from pathlib import Path; cwd = Path(os.getcwd()); parent = cwd.parent if cwd.name == \"RFQinstallation\" else cwd; sys.path.insert(0, str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager(\"RFQApplication_RFQ_USER_PASSWORD\"); print(pwd if pwd else \"\")"') do set RFQ_PASSWORD=%%p
+        python -c "import sys; import os; from pathlib import Path; cwd = Path(os.getcwd()); parent = cwd.parent if cwd.name == \"RFQinstallation\" else cwd; sys.path.insert(0, str(parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; pwd = get_password_from_credential_manager(\"RFQApplication_RFQ_USER_PASSWORD\"); print(pwd if pwd else \"\")" > "%TEMP%\rfq_user_pwd.txt" 2>&1
+        if %ERRORLEVEL% EQU 0 (
+            for /f "delims=" %%p in ('type "%TEMP%\rfq_user_pwd.txt"') do set RFQ_PASSWORD=%%p
+        )
+        del "%TEMP%\rfq_user_pwd.txt" 2>nul
     )
     
     REM If still empty, provide helpful error message
