@@ -94,6 +94,16 @@ var
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
   CredentialManagerPage: TInputOptionWizardPage;
+  // Password visibility toggle buttons
+  AWSSecretToggleBtn: TButton;
+  SettingsPasswordToggleBtn: TButton;
+  SuperUserPasswordToggleBtn: TButton;
+  RFQUserPasswordToggleBtn: TButton;
+  // Password visibility state
+  AWSSecretVisible: Boolean;
+  SettingsPasswordVisible: Boolean;
+  SuperUserPasswordVisible: Boolean;
+  RFQUserPasswordVisible: Boolean;
 
 function ReadEnvValue(FilePath: String; Key: String): String;
 var
@@ -358,6 +368,97 @@ begin
     Result := True;
     Exit;
   end;
+end;
+
+function GetPasswordEditControl(Page: TInputQueryWizardPage; Index: Integer): TEdit;
+var
+  I: Integer;
+  Control: TControl;
+  EditCount: Integer;
+begin
+  Result := nil;
+  EditCount := 0;
+  
+  // Find the TEdit control for the specified index
+  // TInputQueryWizardPage creates controls in pairs: Label, Edit, Label, Edit, etc.
+  for I := 0 to Page.Surface.ControlCount - 1 do
+  begin
+    Control := Page.Surface.Controls[I];
+    if Control is TEdit then
+    begin
+      if EditCount = Index then
+      begin
+        Result := TEdit(Control);
+        Exit;
+      end;
+      EditCount := EditCount + 1;
+    end;
+  end;
+end;
+
+procedure TogglePasswordVisibility(EditControl: TEdit; var IsVisible: Boolean; ToggleBtn: TButton);
+begin
+  if EditControl = nil then
+    Exit;
+  
+  IsVisible := not IsVisible;
+  if IsVisible then
+  begin
+    EditControl.PasswordChar := #0;  // Show password
+    ToggleBtn.Caption := '👁';  // Eye open (showing)
+  end
+  else
+  begin
+    EditControl.PasswordChar := '*';  // Hide password
+    ToggleBtn.Caption := '👁';  // Eye icon (same, but password is hidden)
+  end;
+end;
+
+procedure SetupPasswordToggleButton(Page: TInputQueryWizardPage; var ToggleBtn: TButton; ClickHandler: TNotifyEvent; var IsVisible: Boolean);
+begin
+  // Create toggle button with default position
+  // CurPageChanged will reposition it correctly when the page is shown
+  ToggleBtn := TButton.Create(Page);
+  ToggleBtn.Parent := Page.Surface;
+  ToggleBtn.Caption := '👁';
+  ToggleBtn.Width := ScaleX(30);
+  ToggleBtn.Height := ScaleY(23);
+  ToggleBtn.OnClick := ClickHandler;
+  ToggleBtn.Left := Page.SurfaceWidth - ScaleX(40);  // Default position (will be repositioned)
+  ToggleBtn.Top := ScaleY(50);  // Default position (will be repositioned)
+  IsVisible := False;
+end;
+
+procedure AWSSecretToggleClick(Sender: TObject);
+var
+  EditControl: TEdit;
+begin
+  EditControl := GetPasswordEditControl(AWSSecretPage, 0);
+  TogglePasswordVisibility(EditControl, AWSSecretVisible, AWSSecretToggleBtn);
+end;
+
+procedure SettingsPasswordToggleClick(Sender: TObject);
+var
+  EditControl: TEdit;
+begin
+  EditControl := GetPasswordEditControl(SettingsPasswordPage, 0);
+  TogglePasswordVisibility(EditControl, SettingsPasswordVisible, SettingsPasswordToggleBtn);
+end;
+
+procedure SuperUserPasswordToggleClick(Sender: TObject);
+var
+  EditControl: TEdit;
+begin
+  EditControl := GetPasswordEditControl(SuperUserPasswordPage, 0);
+  TogglePasswordVisibility(EditControl, SuperUserPasswordVisible, SuperUserPasswordToggleBtn);
+end;
+
+procedure RFQUserPasswordToggleClick(Sender: TObject);
+var
+  EditControl: TEdit;
+begin
+  EditControl := GetPasswordEditControl(RFQUserPasswordPage, 0);
+  TogglePasswordVisibility(EditControl, RFQUserPasswordVisible, RFQUserPasswordToggleBtn);
 end;
 
 function CheckPythonInstalled(): Boolean;
@@ -839,6 +940,9 @@ begin
     'Please enter your AWS Secret Access Key:');
   AWSSecretPage.Add('AWS Secret Access Key:', True);  // True = password field (masked)
   
+  // Add password visibility toggle button for AWS Secret
+  SetupPasswordToggleButton(AWSSecretPage, AWSSecretToggleBtn, @AWSSecretToggleClick, AWSSecretVisible);
+  
   AWSRegionPage := CreateInputQueryPage(AWSSecretPage.ID,
     'AWS Region', 'AWS Region Configuration',
     'Please enter your AWS Region (default: us-east-1):');
@@ -871,6 +975,9 @@ begin
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SettingsPasswordPage.Add('Settings Password:', True);  // True = password field (masked)
   
+  // Add password visibility toggle button for Settings Password
+  SetupPasswordToggleButton(SettingsPasswordPage, SettingsPasswordToggleBtn, @SettingsPasswordToggleClick, SettingsPasswordVisible);
+  
   SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
     'Database Configuration', 'PostgreSQL Super User Password',
     'Enter the PostgreSQL super user password (for database setup).' + #13#10 + #13#10 +
@@ -879,6 +986,9 @@ begin
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SuperUserPasswordPage.Add('PostgreSQL Super User Password:', True);  // True = password field (masked)
   
+  // Add password visibility toggle button for Super User Password
+  SetupPasswordToggleButton(SuperUserPasswordPage, SuperUserPasswordToggleBtn, @SuperUserPasswordToggleClick, SuperUserPasswordVisible);
+  
   RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
     'Database Configuration', 'RFQ User Password',
     'Enter the password for the RFQ database user.' + #13#10 + #13#10 +
@@ -886,6 +996,9 @@ begin
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
+  
+  // Add password visibility toggle button for RFQ User Password
+  SetupPasswordToggleButton(RFQUserPasswordPage, RFQUserPasswordToggleBtn, @RFQUserPasswordToggleClick, RFQUserPasswordVisible);
   
   // Create Server URL page
   ServerURLPage := CreateInputQueryPage(RFQUserPasswordPage.ID,
@@ -1260,6 +1373,55 @@ begin
   // Skip Azure key input page if auto-generate is selected
   if PageID = AzureKeyInputPage.ID then
     Result := AzureKeyPage.SelectedValueIndex = 0;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  EditControl: TEdit;
+begin
+  // Reposition password toggle buttons when password pages are shown
+  // This ensures buttons are positioned correctly relative to edit controls
+  
+  if CurPageID = AWSSecretPage.ID then
+  begin
+    EditControl := GetPasswordEditControl(AWSSecretPage, 0);
+    if (EditControl <> nil) and (AWSSecretToggleBtn <> nil) then
+    begin
+      AWSSecretToggleBtn.Left := EditControl.Left + EditControl.Width + ScaleX(5);
+      AWSSecretToggleBtn.Top := EditControl.Top;
+      AWSSecretToggleBtn.Height := EditControl.Height;
+    end;
+  end
+  else if CurPageID = SettingsPasswordPage.ID then
+  begin
+    EditControl := GetPasswordEditControl(SettingsPasswordPage, 0);
+    if (EditControl <> nil) and (SettingsPasswordToggleBtn <> nil) then
+    begin
+      SettingsPasswordToggleBtn.Left := EditControl.Left + EditControl.Width + ScaleX(5);
+      SettingsPasswordToggleBtn.Top := EditControl.Top;
+      SettingsPasswordToggleBtn.Height := EditControl.Height;
+    end;
+  end
+  else if CurPageID = SuperUserPasswordPage.ID then
+  begin
+    EditControl := GetPasswordEditControl(SuperUserPasswordPage, 0);
+    if (EditControl <> nil) and (SuperUserPasswordToggleBtn <> nil) then
+    begin
+      SuperUserPasswordToggleBtn.Left := EditControl.Left + EditControl.Width + ScaleX(5);
+      SuperUserPasswordToggleBtn.Top := EditControl.Top;
+      SuperUserPasswordToggleBtn.Height := EditControl.Height;
+    end;
+  end
+  else if CurPageID = RFQUserPasswordPage.ID then
+  begin
+    EditControl := GetPasswordEditControl(RFQUserPasswordPage, 0);
+    if (EditControl <> nil) and (RFQUserPasswordToggleBtn <> nil) then
+    begin
+      RFQUserPasswordToggleBtn.Left := EditControl.Left + EditControl.Width + ScaleX(5);
+      RFQUserPasswordToggleBtn.Top := EditControl.Top;
+      RFQUserPasswordToggleBtn.Height := EditControl.Height;
+    end;
+  end;
 end;
 
 function GetInstallDescription(Param: String): String;
