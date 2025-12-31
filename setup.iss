@@ -94,6 +94,31 @@ var
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
   CredentialManagerPage: TInputOptionWizardPage;
+  // Password visibility checkboxes
+  AWSSecretShowCheck: TNewCheckBox;
+  SettingsPasswordShowCheck: TNewCheckBox;
+  SuperUserPasswordShowCheck: TNewCheckBox;
+  RFQUserPasswordShowCheck: TNewCheckBox;
+
+procedure AWSSecretShowCheckClick(Sender: TObject);
+begin
+  AWSSecretPage.Edits[0].Password := not AWSSecretShowCheck.Checked;
+end;
+
+procedure SettingsPasswordShowCheckClick(Sender: TObject);
+begin
+  SettingsPasswordPage.Edits[0].Password := not SettingsPasswordShowCheck.Checked;
+end;
+
+procedure SuperUserPasswordShowCheckClick(Sender: TObject);
+begin
+  SuperUserPasswordPage.Edits[0].Password := not SuperUserPasswordShowCheck.Checked;
+end;
+
+procedure RFQUserPasswordShowCheckClick(Sender: TObject);
+begin
+  RFQUserPasswordPage.Edits[0].Password := not RFQUserPasswordShowCheck.Checked;
+end;
 
 function ReadEnvValue(FilePath: String; Key: String): String;
 var
@@ -839,6 +864,14 @@ begin
     'Please enter your AWS Secret Access Key:');
   AWSSecretPage.Add('AWS Secret Access Key:', True);  // True = password field (masked)
   
+  // Add "Show password" checkbox
+  AWSSecretShowCheck := TNewCheckBox.Create(WizardForm);
+  AWSSecretShowCheck.Parent := AWSSecretPage.Surface;
+  AWSSecretShowCheck.Top := AWSSecretPage.Edits[0].Top + AWSSecretPage.Edits[0].Height + ScaleY(8);
+  AWSSecretShowCheck.Left := AWSSecretPage.Edits[0].Left;
+  AWSSecretShowCheck.Caption := '&Show password';
+  AWSSecretShowCheck.OnClick := @AWSSecretShowCheckClick;
+  
   AWSRegionPage := CreateInputQueryPage(AWSSecretPage.ID,
     'AWS Region', 'AWS Region Configuration',
     'Please enter your AWS Region (default: us-east-1):');
@@ -871,6 +904,14 @@ begin
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SettingsPasswordPage.Add('Settings Password:', True);  // True = password field (masked)
   
+  // Add "Show password" checkbox
+  SettingsPasswordShowCheck := TNewCheckBox.Create(WizardForm);
+  SettingsPasswordShowCheck.Parent := SettingsPasswordPage.Surface;
+  SettingsPasswordShowCheck.Top := SettingsPasswordPage.Edits[0].Top + SettingsPasswordPage.Edits[0].Height + ScaleY(8);
+  SettingsPasswordShowCheck.Left := SettingsPasswordPage.Edits[0].Left;
+  SettingsPasswordShowCheck.Caption := '&Show password';
+  SettingsPasswordShowCheck.OnClick := @SettingsPasswordShowCheckClick;
+  
   SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
     'Database Configuration', 'PostgreSQL Super User Password',
     'Enter the PostgreSQL super user password (for database setup).' + #13#10 + #13#10 +
@@ -879,6 +920,14 @@ begin
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SuperUserPasswordPage.Add('PostgreSQL Super User Password:', True);  // True = password field (masked)
   
+  // Add "Show password" checkbox
+  SuperUserPasswordShowCheck := TNewCheckBox.Create(WizardForm);
+  SuperUserPasswordShowCheck.Parent := SuperUserPasswordPage.Surface;
+  SuperUserPasswordShowCheck.Top := SuperUserPasswordPage.Edits[0].Top + SuperUserPasswordPage.Edits[0].Height + ScaleY(8);
+  SuperUserPasswordShowCheck.Left := SuperUserPasswordPage.Edits[0].Left;
+  SuperUserPasswordShowCheck.Caption := '&Show password';
+  SuperUserPasswordShowCheck.OnClick := @SuperUserPasswordShowCheckClick;
+  
   RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
     'Database Configuration', 'RFQ User Password',
     'Enter the password for the RFQ database user.' + #13#10 + #13#10 +
@@ -886,6 +935,14 @@ begin
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
+  
+  // Add "Show password" checkbox
+  RFQUserPasswordShowCheck := TNewCheckBox.Create(WizardForm);
+  RFQUserPasswordShowCheck.Parent := RFQUserPasswordPage.Surface;
+  RFQUserPasswordShowCheck.Top := RFQUserPasswordPage.Edits[0].Top + RFQUserPasswordPage.Edits[0].Height + ScaleY(8);
+  RFQUserPasswordShowCheck.Left := RFQUserPasswordPage.Edits[0].Left;
+  RFQUserPasswordShowCheck.Caption := '&Show password';
+  RFQUserPasswordShowCheck.OnClick := @RFQUserPasswordShowCheckClick;
   
   // Create Server URL page
   ServerURLPage := CreateInputQueryPage(RFQUserPasswordPage.ID,
