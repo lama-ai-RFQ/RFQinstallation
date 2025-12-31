@@ -1,71 +1,201 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
-
+setlocal enabledelayedexpansion
 echo ========================================
 echo   PostgreSQL Database Setup (Automatic)
 echo ========================================
 echo.
+echo This script will:
+echo   - Check if database 'rfq_db' exists (create if not)
+echo   - Check if user 'rfq_user' exists (create or update password)
+echo   - Grant all necessary permissions
+echo.
+echo Credentials are read from .env file or Windows Credential Manager
+echo.
 
-REM --------------------------------------------------
-REM Validate .env
-REM --------------------------------------------------
+REM Check if .env file exists
 if not exist ".env" (
     echo ERROR: .env file not found
-    echo Please copy env.template to .env and update values
+    echo Please copy env.template to .env and update the SQL_SUPER_USER value
+    echo.
+    echo Example:
+    echo   copy env.template .env
+    echo   edit .env
+    echo.
     pause
     exit /b 1
 )
 
-REM --------------------------------------------------
-REM Temp SQL files
-REM --------------------------------------------------
-set "TEMP_SQL_1=%TEMP%\rfq_db_%RANDOM%.sql"
-set "TEMP_SQL_2=%TEMP%\rfq_user_%RANDOM%.sql"
-set "TEMP_SQL_3=%TEMP%\rfq_perm_%RANDOM%.sql"
+REM Create temporary SQL script files to avoid command-line password issues
+set "TEMP_SQL_1=%TEMP%\rfq_setup_1_%RANDOM%.sql"
+set "TEMP_SQL_2=%TEMP%\rfq_setup_2_%RANDOM%.sql"
+set "TEMP_SQL_3=%TEMP%\rfq_setup_3_%RANDOM%.sql"
 
-REM --------------------------------------------------
-REM Load values from .env
-REM --------------------------------------------------
-for /f "tokens=1* delims==" %%A in ('findstr /B "SQL_SUPER_USER=" .env') do set "SQL_SUPER_USER=%%B"
-for /f "tokens=1* delims==" %%A in ('findstr /B "RFQ_USER_PASSWORD=" .env') do set "RFQ_PASSWORD=%%B"
+REM Read SQL_SUPER_USER from .env file
+for /f "tokens=1* delims==" %%a in ('findstr "SQL_SUPER_USER" .env') do set SQL_SUPER_USER=%%b
 
-REM --------------------------------------------------
-REM Credential retrieval function
-REM --------------------------------------------------
-call :GET_CREDENTIAL SQL_SUPER_USER RFQApplication_SQL_SUPER_USER
-call :GET_CREDENTIAL RFQ_PASSWORD RFQApplication_RFQ_USER_PASSWORD
+REM Check if SQL_SUPER_USER is a Credential Manager placeholder
+if "!SQL_SUPER_USER!"=="__CREDENTIAL_MANAGER__" (
+    echo Retrieving SQL_SUPER_USER from Windows Credential Manager...
+    REM Use Python to retrieve password from Credential Manager
+    REM Try to find Python in PATH
+    set "SQL_SUPER_USER="
+    where python >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        REM Python found in PATH, try to retrieve credential
+        REM Try multiple path strategies to find the windows module
+        python -c "import sys; from pathlib import Path; p=Path().resolve(); sys.path.insert(0,str(p.parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER') or '')" > "%TEMP%\rfq_sql_pwd.txt" 2>nul
+        if %ERRORLEVEL% EQU 0 (
+            setlocal DisableDelayedExpansion
+            for /f "usebackq delims=" %%p in ("%TEMP%\rfq_sql_pwd.txt") do set "SQL_SUPER_USER=%%p"
+            endlocal & set "SQL_SUPER_USER=!SQL_SUPER_USER!"
+        )
+        del "%TEMP%\rfq_sql_pwd.txt" 2>nul
+    )
+    
+    REM If still empty, provide helpful error message
+    if "!SQL_SUPER_USER!"=="" (
+        echo ERROR: Could not retrieve SQL_SUPER_USER from Windows Credential Manager
+        echo.
+        echo The password is stored in Windows Credential Manager, but this batch script
+        echo cannot retrieve it automatically. Please use one of these options:
+        echo.
+        echo Option 1: Temporarily set password in .env file
+        echo   Edit .env and change: SQL_SUPER_USER=__CREDENTIAL_MANAGER__
+        echo   To: SQL_SUPER_USER=your_actual_password
+        echo   Run this script, then change it back to __CREDENTIAL_MANAGER__
+        echo.
+        echo Option 2: Use Python to retrieve and set PGPASSWORD
+        echo   python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; import os; pwd = get_password_from_credential_manager('RFQApplication_SQL_SUPER_USER'); os.environ['PGPASSWORD'] = pwd if pwd else ''"
+        echo.
+        echo To verify the credential exists:
+        echo   cmdkey /list:RFQApplication_SQL_SUPER_USER
+        echo.
+        pause
+        exit /b 1
+    ) else (
+        echo [OK] Retrieved SQL_SUPER_USER from Credential Manager
+    )
+)
 
-REM --------------------------------------------------
-REM Final validation
-REM --------------------------------------------------
-if not defined SQL_SUPER_USER (
-    echo ERROR: SQL_SUPER_USER not resolved
+REM Check if SQL_SUPER_USER was found
+if "!SQL_SUPER_USER!"=="" (
+    echo ERROR: SQL_SUPER_USER not found in .env file
+    echo Please add SQL_SUPER_USER=your_sql_super_user_password to your .env file
+    echo   OR set SQL_SUPER_USER=__CREDENTIAL_MANAGER__ to use Windows Credential Manager
+    echo.
     pause
     exit /b 1
 )
 
-if not defined RFQ_PASSWORD (
-    echo ERROR: RFQ_USER_PASSWORD not resolved
+echo Using SQL super user password from .env file or Credential Manager...
+echo.
+
+REM Set PGPASSWORD for psql commands
+set PGPASSWORD=!SQL_SUPER_USER!
+
+REM Read RFQ_USER_PASSWORD from .env file
+for /f "tokens=1* delims==" %%a in ('findstr "RFQ_USER_PASSWORD" .env') do set RFQ_PASSWORD=%%b
+
+REM Check if RFQ_USER_PASSWORD is a Credential Manager placeholder
+if "!RFQ_PASSWORD!"=="__CREDENTIAL_MANAGER__" (
+    echo Retrieving RFQ_USER_PASSWORD from Windows Credential Manager...
+    REM Use Python to retrieve password from Credential Manager
+    REM Try to find Python in PATH
+    set "RFQ_PASSWORD="
+    where python >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        REM Python found in PATH, try to retrieve credential
+        REM Try multiple path strategies to find the windows module
+        python -c "import sys; from pathlib import Path; p=Path().resolve(); sys.path.insert(0,str(p.parent)); from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD') or '')" > "%TEMP%\rfq_user_pwd.txt" 2>nul
+        if %ERRORLEVEL% EQU 0 (
+            setlocal DisableDelayedExpansion
+            for /f "usebackq delims=" %%p in ("%TEMP%\rfq_user_pwd.txt") do set "RFQ_PASSWORD=%%p"
+            endlocal & set "RFQ_PASSWORD=!RFQ_PASSWORD!"
+        )
+        del "%TEMP%\rfq_user_pwd.txt" 2>nul
+    )
+    
+    REM If still empty, provide helpful error message
+    if "!RFQ_PASSWORD!"=="" (
+        echo ERROR: Could not retrieve RFQ_USER_PASSWORD from Windows Credential Manager
+        echo.
+        echo The password is stored in Windows Credential Manager, but this batch script
+        echo cannot retrieve it automatically. Please use one of these options:
+        echo.
+        echo Option 1: Temporarily set password in .env file
+        echo   Edit .env and change: RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__
+        echo   To: RFQ_USER_PASSWORD=your_actual_password
+        echo   Run this script, then change it back to __CREDENTIAL_MANAGER__
+        echo.
+        echo Option 2: Use Python to retrieve and set environment variable
+        echo   python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; import os; pwd = get_password_from_credential_manager('RFQApplication_RFQ_USER_PASSWORD'); print(pwd if pwd else '')"
+        echo.
+        echo To verify the credential exists:
+        echo   cmdkey /list:RFQApplication_RFQ_USER_PASSWORD
+        echo.
+        pause
+        exit /b 1
+    ) else (
+        echo [OK] Retrieved RFQ_USER_PASSWORD from Credential Manager
+    )
+)
+
+REM Check if RFQ_USER_PASSWORD was found
+if "!RFQ_PASSWORD!"=="" (
+    echo ERROR: RFQ_USER_PASSWORD not found in .env file
+    echo Please add RFQ_USER_PASSWORD=your_database_password to your .env file
+    echo   OR set RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__ to use Windows Credential Manager
+    echo.
     pause
     exit /b 1
 )
 
-REM --------------------------------------------------
-REM PostgreSQL client
-REM --------------------------------------------------
-where psql >nul 2>&1 || (
-    echo ERROR: psql not found in PATH
+REM Check if psql command is available
+where psql >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: PostgreSQL 'psql' command not found
+    echo.
+    echo Please ensure PostgreSQL is installed and psql.exe is in your PATH
+    echo.
+    echo Common PostgreSQL installation paths:
+    echo   C:\Program Files\PostgreSQL\16\bin
+    echo   C:\Program Files\PostgreSQL\15\bin
+    echo.
+    echo You can add PostgreSQL to your PATH by:
+    echo   1. Right-click 'This PC' ^> Properties ^> Advanced System Settings
+    echo   2. Click 'Environment Variables'
+    echo   3. Edit 'Path' under System Variables
+    echo   4. Add PostgreSQL bin directory
+    echo.
     pause
     exit /b 1
 )
 
-REM --------------------------------------------------
-REM Test connection
-REM --------------------------------------------------
-set "PGPASSWORD=%SQL_SUPER_USER%"
+echo [STEP 2/6] Checking PostgreSQL client...
+echo [OK] Found psql
+echo.
 
-psql -U postgres -h localhost -p 5432 -c "SELECT 1" >nul 2>&1 || (
-    echo ERROR: Cannot connect to PostgreSQL
+echo [STEP 3/6] Testing PostgreSQL connection...
+echo.
+
+REM Test PostgreSQL connection
+psql -U postgres -h localhost -p 5432 -c "SELECT version();" > nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Cannot connect to PostgreSQL server
+    echo.
+    echo Error details:
+    psql -U postgres -h localhost -p 5432 -c "SELECT version();" 2>&1 | findstr /V "PostgreSQL"
+    echo.
+    echo Please check:
+    echo   1. PostgreSQL service is running
+    echo   2. SQL_SUPER_USER password in .env is correct (or Credential Manager has correct password)
+    echo   3. PostgreSQL is listening on localhost:5432
+    echo   4. User 'postgres' exists and has superuser privileges
+    echo.
+    echo To start PostgreSQL service:
+    echo   - Windows Services: services.msc ^(look for 'postgresql-x64-XX'^)
+    echo   - Command Line: net start postgresql-x64-16
+    echo.
     pause
     exit /b 1
 )
@@ -73,89 +203,133 @@ psql -U postgres -h localhost -p 5432 -c "SELECT 1" >nul 2>&1 || (
 echo [OK] Connected to PostgreSQL
 echo.
 
-REM --------------------------------------------------
-REM Check database
-REM --------------------------------------------------
-psql -U postgres -lqt | findstr /C:"rfq_db" >nul
-set DB_EXISTS=%ERRORLEVEL%
+echo [STEP 4/6] Checking database and user...
+echo.
 
-REM --------------------------------------------------
-REM Check user
-REM --------------------------------------------------
-psql -U postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='rfq_user'" | findstr 1 >nul
-set USER_EXISTS=%ERRORLEVEL%
+REM Check if database exists
+echo Checking if database 'rfq_db' exists...
+psql -U postgres -h localhost -p 5432 -lqt | findstr /C:"rfq_db" > nul 2>&1
+set "DB_EXISTS=%ERRORLEVEL%"
 
-REM --------------------------------------------------
-REM Create DB
-REM --------------------------------------------------
-if %DB_EXISTS% NEQ 0 (
+REM Check if user exists
+echo Checking if user 'rfq_user' exists...
+psql -U postgres -h localhost -p 5432 -tAc "SELECT 1 FROM pg_roles WHERE rolname='rfq_user'" | findstr "1" > nul 2>&1
+set "USER_EXISTS=%ERRORLEVEL%"
+
+echo.
+
+echo [STEP 5/6] Creating database and user...
+echo.
+
+REM Handle existing database
+if %DB_EXISTS% EQU 0 (
+    echo [FOUND] Database 'rfq_db' already exists
+) else (
+    echo [CREATE] Creating database 'rfq_db'...
     echo CREATE DATABASE rfq_db; > "%TEMP_SQL_1%"
-    psql -U postgres -f "%TEMP_SQL_1%" || goto :FAIL
+    psql -U postgres -h localhost -p 5432 -f "%TEMP_SQL_1%" 2>&1 | findstr /V "CREATE DATABASE"
+    if %ERRORLEVEL% NEQ 0 (
+        echo [ERROR] Failed to create database 'rfq_db'
+        del "%TEMP_SQL_1%" 2>nul
+        pause
+        exit /b 1
+    )
+    echo [OK] Database 'rfq_db' created successfully
 )
 
-REM --------------------------------------------------
-REM Create or update user
-REM --------------------------------------------------
-powershell -NoProfile -Command ^
-"[IO.File]::WriteAllText('%TEMP_SQL_2%', 'DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname=''rfq_user'') THEN ALTER USER rfq_user WITH PASSWORD ''''$env:RFQ_PASSWORD''''; ELSE CREATE USER rfq_user WITH PASSWORD ''''$env:RFQ_PASSWORD''''; END IF; END $$;')"
+echo.
 
-psql -U postgres -f "%TEMP_SQL_2%" || goto :FAIL
+REM Handle existing user
+if %USER_EXISTS% EQU 0 (
+    echo [FOUND] User 'rfq_user' already exists
+    echo [UPDATE] Updating password for user 'rfq_user'...
+    REM Update password using PowerShell to avoid batch special char issues
+    powershell -Command "[System.IO.File]::WriteAllText($env:TEMP_SQL_2, 'ALTER USER rfq_user WITH PASSWORD $$' + $env:RFQ_PASSWORD + '$$;')"
+    psql -U postgres -h localhost -p 5432 -f "%TEMP_SQL_2%" > nul 2>&1
+    if %ERRORLEVEL% NEQ 0 (
+        echo [WARNING] Failed to update password for user 'rfq_user'
+        echo           User exists but password update failed
+    ) else (
+        echo [OK] Password updated for user 'rfq_user'
+    )
+) else (
+    echo [CREATE] Creating user 'rfq_user'...
+    REM Create user with password using PowerShell to avoid batch special char issues
+    powershell -Command "[System.IO.File]::WriteAllText($env:TEMP_SQL_2, 'CREATE USER rfq_user WITH PASSWORD $$' + $env:RFQ_PASSWORD + '$$;')"
+    psql -U postgres -h localhost -p 5432 -f "%TEMP_SQL_2%" 2>&1 | findstr /V "CREATE ROLE"
+    if %ERRORLEVEL% NEQ 0 (
+        echo [ERROR] Failed to create user 'rfq_user'
+        del "%TEMP_SQL_1%" 2>nul
+        del "%TEMP_SQL_2%" 2>nul
+        pause
+        exit /b 1
+    )
+    echo [OK] User 'rfq_user' created successfully
+)
 
-REM --------------------------------------------------
-REM Permissions
-REM --------------------------------------------------
+echo.
+echo [STEP 6/6] Setting up permissions...
+echo.
+
+REM Create SQL script for privilege grants
 (
     echo GRANT ALL PRIVILEGES ON DATABASE rfq_db TO rfq_user;
 ) > "%TEMP_SQL_3%"
 
-psql -U postgres -f "%TEMP_SQL_3%" || goto :FAIL
-
-psql -U postgres -d rfq_db -c "ALTER SCHEMA public OWNER TO rfq_user;" >nul
-psql -U postgres -d rfq_db -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO rfq_user;" >nul
-psql -U postgres -d rfq_db -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO rfq_user;" >nul
-psql -U postgres -d rfq_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO rfq_user;" >nul
-psql -U postgres -d rfq_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO rfq_user;" >nul
-
-REM --------------------------------------------------
-REM Cleanup
-REM --------------------------------------------------
-del "%TEMP_SQL_1%" "%TEMP_SQL_2%" "%TEMP_SQL_3%" >nul 2>&1
-
-echo.
-echo ========================================
-echo   Database Setup Complete
-echo ========================================
-echo.
-exit /b 0
-
-REM ==================================================
-REM Credential function
-REM ==================================================
-:GET_CREDENTIAL
-set "VAR_NAME=%1"
-set "CRED_NAME=%2"
-
-call set VALUE=%%%VAR_NAME%%%
-
-if "%VALUE%"=="__CREDENTIAL_MANAGER__" (
-    where python >nul 2>&1 || goto :CRED_FAIL
-
-    python -c "from windows.run_windows_wrapper import get_password_from_credential_manager; print(get_password_from_credential_manager('%CRED_NAME%') or '')" > "%TEMP%\cred.txt" 2>nul
-
-    setlocal DisableDelayedExpansion
-    for /f "usebackq delims=" %%P in ("%TEMP%\cred.txt") do set "VALUE=%%P"
-    endlocal & set "%VAR_NAME%=%VALUE%"
-
-    del "%TEMP%\cred.txt" >nul 2>&1
+REM Grant privileges using script file
+psql -U postgres -h localhost -p 5432 -f "%TEMP_SQL_3%" > nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [WARNING] Failed to grant database privileges
+) else (
+    echo [OK] Granted database privileges to 'rfq_user'
 )
 
-exit /b
+REM Connect to rfq_db and set up schema permissions
+echo [GRANT] Setting up schema permissions...
+psql -U postgres -h localhost -p 5432 -d rfq_db -c "ALTER SCHEMA public OWNER TO rfq_user;" > nul 2>&1
+psql -U postgres -h localhost -p 5432 -d rfq_db -c "GRANT USAGE, CREATE ON SCHEMA public TO rfq_user;" > nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [WARNING] Failed to grant schema permissions
+) else (
+    echo [OK] Granted schema permissions to 'rfq_user'
+)
 
-:CRED_FAIL
-echo ERROR: Failed to retrieve credential %CRED_NAME%
-exit /b 1
+REM Grant table and sequence permissions (safe to run even if no tables exist yet)
+echo [GRANT] Setting up table and sequence permissions...
+psql -U postgres -h localhost -p 5432 -d rfq_db -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO rfq_user;" > nul 2>&1
+psql -U postgres -h localhost -p 5432 -d rfq_db -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO rfq_user;" > nul 2>&1
+psql -U postgres -h localhost -p 5432 -d rfq_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO rfq_user;" > nul 2>&1
+psql -U postgres -h localhost -p 5432 -d rfq_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO rfq_user;" > nul 2>&1
+echo [OK] Granted table and sequence permissions to 'rfq_user'
 
-:FAIL
-echo ERROR: PostgreSQL setup failed
-pause
-exit /b 1
+REM Clean up temporary files
+del "%TEMP_SQL_1%" 2>nul
+del "%TEMP_SQL_2%" 2>nul
+del "%TEMP_SQL_3%" 2>nul
+
+echo.
+echo ========================================
+echo   Database Setup Complete!
+echo ========================================
+echo.
+echo Database: rfq_db
+echo User: rfq_user
+echo Host: localhost:5432
+echo Password: (configured from .env file or Credential Manager)
+echo.
+echo Status:
+if %DB_EXISTS% EQU 0 (
+    echo   - Database: Already existed ^(reused^)
+) else (
+    echo   - Database: Created new
+)
+if %USER_EXISTS% EQU 0 (
+    echo   - User: Already existed ^(password updated^)
+) else (
+    echo   - User: Created new
+)
+echo   - Permissions: Granted
+echo.
+echo You can now run the RFQ Application!
+echo.
+
