@@ -8,7 +8,9 @@
 # or from .env file as fallback
 
 param(
-    [string]$InstallPath = $PSScriptRoot
+    [string]$InstallPath = $PSScriptRoot,
+    [switch]$Debug,
+    [switch]$ShowPasswordPreview
 )
 
 # Set error action preference
@@ -39,20 +41,38 @@ function Write-Error-Custom {
 function Get-RegistryValue {
     param(
         [string]$KeyPath,
-        [string]$ValueName
+        [string]$ValueName,
+        [switch]$Verbose
     )
     
     try {
         $regPath = "HKCU:\$KeyPath"
+        if ($Verbose) {
+            Write-Info "    Checking registry: $regPath\$ValueName"
+        }
+        
         if (Test-Path $regPath) {
             $value = Get-ItemProperty -Path $regPath -Name $ValueName -ErrorAction SilentlyContinue
             if ($value -and $value.$ValueName) {
+                if ($Verbose) {
+                    Write-Info "    Found in registry: $regPath\$ValueName"
+                }
                 return $value.$ValueName
+            } else {
+                if ($Verbose) {
+                    Write-Warning "    Value not found in registry: $regPath\$ValueName"
+                }
+            }
+        } else {
+            if ($Verbose) {
+                Write-Warning "    Registry path does not exist: $regPath"
             }
         }
     }
     catch {
-        # Silently fail
+        if ($Verbose) {
+            Write-Warning "    Error reading registry: $_"
+        }
     }
     return $null
 }
@@ -132,15 +152,51 @@ if (-not (Test-Path $EnvFilePath)) {
 }
 
 Write-Info "[STEP 1/6] Reading credentials..."
+Write-Host ""
+
+# Verify registry path exists
+$regPath = "HKCU:\Software\RFQApplication\Installer"
+if ($Debug) {
+    Write-Info "  Debug: Checking registry path: $regPath"
+    if (Test-Path $regPath) {
+        Write-Info "  Debug: Registry path exists"
+        $regValues = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
+        if ($regValues) {
+            Write-Info "  Debug: Registry values found:"
+            $regValues.PSObject.Properties | Where-Object { $_.Name -notlike "PS*" } | ForEach-Object {
+                $val = $_.Value
+                $valPreview = if ($val -and $val.Length -gt 0) {
+                    if ($_.Name -like "*Password*") {
+                        "$($val.Substring(0, 1))***$($val.Substring($val.Length - 1, 1)) (length: $($val.Length))"
+                    } else {
+                        $val
+                    }
+                } else {
+                    "(empty)"
+                }
+                Write-Info "    - $($_.Name): $valPreview"
+            }
+        } else {
+            Write-Warning "  Debug: No values found in registry path"
+        }
+    } else {
+        Write-Warning "  Debug: Registry path does not exist"
+    }
+    Write-Host ""
+}
 
 # Read SQL_SUPER_USER password
 # Priority: 1. Registry, 2. Environment variable (base64), 3. .env file
 $SQL_SUPER_USER = $null
 
 # Try registry first
-$SQL_SUPER_USER = Get-RegistryValue -KeyPath "Software\RFQApplication\Installer" -ValueName "SuperUserPassword"
+Write-Info "  Checking registry: HKCU:\Software\RFQApplication\Installer\SuperUserPassword"
+$SQL_SUPER_USER = Get-RegistryValue -KeyPath "Software\RFQApplication\Installer" -ValueName "SuperUserPassword" -Verbose
 if ($SQL_SUPER_USER) {
     Write-Info "  Using SQL_SUPER_USER from registry"
+    Write-Info "  Registry path: HKCU:\Software\RFQApplication\Installer"
+} else {
+    Write-Warning "  Not found in registry, trying other sources..."
 }
 
 # Try environment variable (base64 encoded) if not in registry
@@ -190,6 +246,30 @@ if ([string]::IsNullOrWhiteSpace($SQL_SUPER_USER)) {
 }
 
 Write-Success "[OK] SQL_SUPER_USER password found"
+
+# Diagnostic information (masked for security)
+$passwordLength = $SQL_SUPER_USER.Length
+$passwordPreview = if ($passwordLength -gt 0) {
+    $firstChar = $SQL_SUPER_USER.Substring(0, 1)
+    $lastChar = $SQL_SUPER_USER.Substring($passwordLength - 1, 1)
+    "$firstChar***$lastChar"
+} else {
+    "(empty)"
+}
+Write-Info "  Password length: $passwordLength characters"
+if ($ShowPasswordPreview -or $Debug) {
+    Write-Info "  Password preview: $passwordPreview"
+}
+Write-Info "  Contains special chars: $(if ($SQL_SUPER_USER -match '[^a-zA-Z0-9]') { 'Yes' } else { 'No' })"
+
+# Show first few bytes in hex for debugging (if debug mode)
+if ($Debug) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($SQL_SUPER_USER)
+    $hexPreview = ($bytes[0..([Math]::Min(10, $bytes.Length - 1))] | ForEach-Object { $_.ToString("X2") }) -join " "
+    Write-Info "  First bytes (hex): $hexPreview..."
+    Write-Info "  Full password (DEBUG): $SQL_SUPER_USER"
+}
+
 Write-Host ""
 
 # Read RFQ_USER_PASSWORD
@@ -197,9 +277,13 @@ Write-Host ""
 $RFQ_PASSWORD = $null
 
 # Try registry first
-$RFQ_PASSWORD = Get-RegistryValue -KeyPath "Software\RFQApplication\Installer" -ValueName "RFQUserPassword"
+Write-Info "  Checking registry: HKCU:\Software\RFQApplication\Installer\RFQUserPassword"
+$RFQ_PASSWORD = Get-RegistryValue -KeyPath "Software\RFQApplication\Installer" -ValueName "RFQUserPassword" -Verbose
 if ($RFQ_PASSWORD) {
     Write-Info "  Using RFQ_USER_PASSWORD from registry"
+    Write-Info "  Registry path: HKCU:\Software\RFQApplication\Installer"
+} else {
+    Write-Warning "  Not found in registry, trying other sources..."
 }
 
 # Try environment variable (base64 encoded) if not in registry
@@ -282,26 +366,101 @@ Write-Host ""
 Write-Info "[STEP 3/6] Testing PostgreSQL connection..."
 Write-Host ""
 
+# Diagnostic: Show connection details
+Write-Info "  Connection details:"
+Write-Info "    Host: localhost"
+Write-Info "    Port: 5432"
+Write-Info "    User: postgres"
+Write-Info "    Password source: $(if ($SQL_SUPER_USER) { 'Found (length: ' + $SQL_SUPER_USER.Length + ' chars)' } else { 'NOT FOUND' })"
+Write-Host ""
+
+# Check if PostgreSQL service is running
+Write-Info "  Checking PostgreSQL service status..."
+$pgServices = Get-Service | Where-Object { $_.Name -like "postgresql*" -or $_.DisplayName -like "*PostgreSQL*" }
+if ($pgServices) {
+    Write-Info "  Found PostgreSQL service(s):"
+    foreach ($svc in $pgServices) {
+        $status = $svc.Status
+        $statusColor = if ($status -eq 'Running') { 'Green' } else { 'Yellow' }
+        Write-Host "    - $($svc.Name) ($($svc.DisplayName)): $status" -ForegroundColor $statusColor
+    }
+} else {
+    Write-Warning "  No PostgreSQL service found in Windows Services"
+    Write-Warning "  This might indicate PostgreSQL is not installed or not running as a service"
+}
+Write-Host ""
+
 # Set PGPASSWORD environment variable for psql
+# Note: PGPASSWORD is the standard way to pass password to psql
 $env:PGPASSWORD = $SQL_SUPER_USER
 
+# Also try without PGPASSWORD and use connection string (for debugging)
+Write-Info "  Attempting connection with PGPASSWORD environment variable..."
 try {
+    # Clear any existing PGPASSWORD to avoid conflicts
+    $originalPGPASSWORD = $env:PGPASSWORD
+    $env:PGPASSWORD = $SQL_SUPER_USER
+    
+    # Test connection with verbose error output
     $testResult = & psql -U postgres -h localhost -p 5432 -c "SELECT version();" 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = $LASTEXITCODE
+    
+    if ($exitCode -ne 0) {
         Write-Error-Custom "[ERROR] Cannot connect to PostgreSQL server"
         Write-Host ""
         Write-Host "Error details:"
         Write-Host $testResult
         Write-Host ""
-        Write-Host "Please check:"
-        Write-Host "  1. PostgreSQL service is running"
-        Write-Host "  2. SQL_SUPER_USER password is correct"
-        Write-Host "  3. PostgreSQL is listening on localhost:5432"
-        Write-Host "  4. User 'postgres' exists and has superuser privileges"
+        Write-Host "Diagnostic information:"
+        Write-Host "  - Exit code: $exitCode"
+        Write-Host "  - Password length: $($SQL_SUPER_USER.Length) characters"
+        Write-Host "  - Password contains special characters: $(if ($SQL_SUPER_USER -match '[^a-zA-Z0-9]') { 'Yes' } else { 'No' })"
+        Write-Host "  - PGPASSWORD environment variable set: $(if ($env:PGPASSWORD) { 'Yes' } else { 'No' })"
         Write-Host ""
-        Write-Host "To start PostgreSQL service:"
-        Write-Host "  - Windows Services: services.msc (look for 'postgresql-x64-XX')"
-        Write-Host "  - Command Line: net start postgresql-x64-16"
+        
+        # Try alternative connection methods for diagnosis
+        Write-Info "  Attempting alternative connection test..."
+        
+        # Try connecting without password (to see if it prompts)
+        Write-Info "    Testing if PostgreSQL is accessible..."
+        $testNoPassword = & psql -U postgres -h localhost -p 5432 -l 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Warning "    Connection works without password - password might not be needed"
+        } else {
+            Write-Info "    Connection requires password (expected)"
+        }
+        
+        Write-Host ""
+        Write-Host "Troubleshooting steps:"
+        Write-Host "  1. Verify PostgreSQL service is running:"
+        Write-Host "     Get-Service | Where-Object { `$_.Name -like 'postgresql*' }"
+        Write-Host ""
+        Write-Host "  2. Check if password in registry matches PostgreSQL 'postgres' user password"
+        Write-Host "     Registry path: HKCU:\Software\RFQApplication\Installer\SuperUserPassword"
+        Write-Host "     Current registry value length: $($SQL_SUPER_USER.Length) characters"
+        Write-Host ""
+        Write-Host "     To view registry value (PowerShell):"
+        Write-Host "       Get-ItemProperty -Path 'HKCU:\Software\RFQApplication\Installer' -Name 'SuperUserPassword'"
+        Write-Host ""
+        Write-Host "     To test password manually:"
+        Write-Host "       `$pwd = (Get-ItemProperty -Path 'HKCU:\Software\RFQApplication\Installer' -Name 'SuperUserPassword').SuperUserPassword"
+        Write-Host "       `$env:PGPASSWORD = `$pwd"
+        Write-Host "       psql -U postgres -h localhost -p 5432 -c 'SELECT version();'"
+        Write-Host ""
+        Write-Host "  3. Test password manually:"
+        Write-Host "     psql -U postgres -h localhost -p 5432"
+        Write-Host "     (You will be prompted for password)"
+        Write-Host ""
+        Write-Host "  4. Verify PostgreSQL is listening on localhost:5432:"
+        Write-Host "     netstat -an | findstr 5432"
+        Write-Host ""
+        Write-Host "  5. Check PostgreSQL authentication configuration:"
+        Write-Host "     Look for pg_hba.conf file (usually in PostgreSQL data directory)"
+        Write-Host "     Verify it allows local connections with password authentication"
+        Write-Host ""
+        Write-Host "  6. If password contains special characters, try:"
+        Write-Host "     - Escaping special characters"
+        Write-Host "     - Using connection string: psql 'postgresql://postgres:PASSWORD@localhost:5432/postgres'"
         Write-Host ""
         Write-Host "Press any key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -311,9 +470,22 @@ try {
 catch {
     Write-Error-Custom "[ERROR] Failed to test PostgreSQL connection: $_"
     Write-Host ""
+    Write-Host "Exception details:"
+    Write-Host "  Type: $($_.Exception.GetType().FullName)"
+    Write-Host "  Message: $($_.Exception.Message)"
+    if ($_.Exception.InnerException) {
+        Write-Host "  Inner: $($_.Exception.InnerException.Message)"
+    }
+    Write-Host ""
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 1
+}
+finally {
+    # Restore original PGPASSWORD if it existed
+    if ($originalPGPASSWORD) {
+        $env:PGPASSWORD = $originalPGPASSWORD
+    }
 }
 
 Write-Success "[OK] Connected to PostgreSQL"
@@ -472,8 +644,19 @@ try {
     }
     Write-Host "  - Permissions: Granted"
     Write-Host ""
-    Write-Host "You can now run the RFQ Application!"
+Write-Host "You can now run the RFQ Application!"
+Write-Host ""
+
+# Summary of credentials used
+if ($Debug) {
     Write-Host ""
+    Write-Host "=== DEBUG SUMMARY ===" -ForegroundColor Cyan
+    Write-Host "SQL_SUPER_USER source: $(if ($SQL_SUPER_USER) { 'Found (length: ' + $SQL_SUPER_USER.Length + ')' } else { 'NOT FOUND' })"
+    Write-Host "RFQ_USER_PASSWORD source: $(if ($RFQ_PASSWORD) { 'Found (length: ' + $RFQ_PASSWORD.Length + ')' } else { 'NOT FOUND' })"
+    Write-Host "Registry path checked: $regPath"
+    Write-Host "=====================" -ForegroundColor Cyan
+    Write-Host ""
+}
 }
 catch {
     Write-Error-Custom "[ERROR] An error occurred during database setup: $_"
