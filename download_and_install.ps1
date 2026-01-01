@@ -2233,30 +2233,50 @@ if ($ExePath) {
             $serviceAccountXml = ""
             
             # Only add service account if not running as SYSTEM (which would be the case during installation)
+            # Note: We'll configure the service account AFTER WinSW installs it using sc.exe config
+            # This avoids storing the password in plain text in the XML file
+            $serviceAccountXml = ""
+            $serviceAccountPassword = $null
+            $configureServiceAccount = $false
+            
             if ($currentUser -and $currentUser -ne "SYSTEM") {
-                Write-Info "  Configuring service to run as user: $currentDomain\$currentUser"
+                Write-Info "  Service will be configured to run as: $currentDomain\$currentUser"
                 Write-Info "  This allows the service to access Windows Credential Manager credentials"
-                Write-Info "  Note: The user account must have 'Log on as a service' permission"
+                Write-Info ""
+                Write-Info "  WinSW will install the service first, then we'll configure it with your password."
+                Write-Info "  Your password will NOT be stored in any files."
+                Write-Info ""
                 
-                # Check if user has 'Log on as a service' right
-                try {
-                    $seServiceLogonRight = "SeServiceLogonRight"
-                    $userSid = (New-Object System.Security.Principal.NTAccount($currentDomain, $currentUser)).Translate([System.Security.Principal.SecurityIdentifier])
-                    $policy = [System.Security.AccessControl.LsaSecurityPolicy]::new()
-                    $hasRight = $false
-                    # Note: Checking this right programmatically is complex, so we'll just grant it
-                    # and let Windows handle the error if it fails
-                } catch {
-                    # Ignore errors checking the right
+                # Prompt for password (we'll use it after service installation)
+                $passwordAttempts = 0
+                $maxAttempts = 3
+                
+                while ($passwordAttempts -lt $maxAttempts) {
+                    try {
+                        $securePassword = Read-Host "  Enter password for $currentDomain\$currentUser" -AsSecureString
+                        if ($securePassword -and $securePassword.Length -gt 0) {
+                            # Convert to plain text temporarily (will be cleared after use)
+                            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+                            $serviceAccountPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+                            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+                            $securePassword = $null
+                            $configureServiceAccount = $true
+                            Write-Info "  Password accepted. Will configure service account after installation."
+                            break
+                        } else {
+                            Write-Warning "  Password cannot be empty. Please try again."
+                            $passwordAttempts++
+                        }
+                    } catch {
+                        Write-Warning "  Error reading password: $_"
+                        $passwordAttempts++
+                        if ($passwordAttempts -ge $maxAttempts) {
+                            Write-Warning "  Maximum attempts reached. Service will run as SYSTEM."
+                            Write-Warning "  You can manually configure it later using: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                            break
+                        }
+                    }
                 }
-                
-                $serviceAccountXml = @"
-  <serviceaccount>
-    <domain>$currentDomain</domain>
-    <user>$currentUser</user>
-    <allowservicelogon>true</allowservicelogon>
-  </serviceaccount>
-"@
             } else {
                 Write-Warning "  Cannot determine user account for service - service will run as SYSTEM"
                 Write-Warning "  Service may not be able to access Windows Credential Manager credentials"
@@ -2324,9 +2344,49 @@ SeServiceLogonRight = $currentDomain\$currentUser
                 Write-Success "[OK] Service '$ServiceName' created successfully using WinSW"
                 $script:serviceCreated = $true
                 
+                # Configure service account if user account was detected and password should be prompted
+                if ($currentUser -and $currentUser -ne "SYSTEM" -and -not $serviceAccountPassword) {
+                    Write-Info ""
+                    Write-Info "  To access Windows Credential Manager credentials, the service must run as your user account."
+                    Write-Info "  Your password will NOT be stored in any files - it's only used to configure the service."
+                    Write-Info ""
+                    
+                    try {
+                        $securePassword = Read-Host "  Enter password for $currentDomain\$currentUser" -AsSecureString
+                        if ($securePassword -and $securePassword.Length -gt 0) {
+                            # Convert to plain text temporarily (will be cleared after use)
+                            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+                            $serviceAccountPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+                            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+                            $securePassword = $null
+                            
+                            Write-Info "  Configuring service to run as $currentDomain\$currentUser..."
+                            $configResult = & sc.exe config $ServiceName obj= "$currentDomain\$currentUser" password= "$serviceAccountPassword" 2>&1
+                            
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Success "  [OK] Service account configured successfully"
+                                Write-Info "  Service will now be able to access Windows Credential Manager credentials"
+                            } else {
+                                Write-Warning "  [!] Failed to configure service account (exit code: $LASTEXITCODE)"
+                                Write-Warning "  [!] Error: $configResult"
+                                Write-Warning "  [!] Service will run as SYSTEM and cannot access user credentials"
+                                Write-Warning "  [!] You can manually configure it: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                            }
+                            
+                            # Clear password from memory
+                            $serviceAccountPassword = $null
+                        } else {
+                            Write-Warning "  Password not provided. Service will run as SYSTEM."
+                        }
+                    } catch {
+                        Write-Warning "  [!] Error configuring service account: $_"
+                        Write-Warning "  Service will run as SYSTEM. You can configure it manually later."
+                    }
+                }
+                
                 # Verify the service account configuration
                 Write-Info "  Verifying service account configuration..."
-                Start-Sleep -Seconds 1  # Brief pause to ensure service is registered
+                Start-Sleep -Seconds 2  # Brief pause to ensure service is registered
                 
                 try {
                     $serviceQuery = sc.exe qc $ServiceName 2>&1
