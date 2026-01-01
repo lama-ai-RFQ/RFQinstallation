@@ -9,9 +9,67 @@
 
 param(
     [string]$InstallPath = $PSScriptRoot,
+    [string]$EnvFilePath = "",
     [switch]$Debug,
-    [switch]$ShowPasswordPreview
+    [switch]$ShowPasswordPreview,
+    [switch]$Help
 )
+
+# Show help if requested
+if ($Help) {
+    Write-Host @"
+PostgreSQL Database Setup Script
+
+USAGE:
+    .\setup_database_auto.ps1 [-InstallPath <path>] [-EnvFilePath <path>] [-Debug] [-ShowPasswordPreview] [-Help]
+
+PARAMETERS:
+    -InstallPath      Installation directory path (default: script directory)
+                     The script will look for .env file in this directory
+                     Example: -InstallPath "C:\Program Files\RFQApplication"
+
+    -EnvFilePath      Direct path to .env file (overrides InstallPath)
+                     Example: -EnvFilePath "C:\Program Files\RFQApplication\.env"
+
+    -Debug            Enable debug mode (shows detailed diagnostic information)
+                     Example: -Debug
+
+    -ShowPasswordPreview
+                     Show masked password preview (first and last character)
+                     Example: -ShowPasswordPreview
+
+    -Help             Show this help message
+
+EXAMPLES:
+    # Basic usage (looks for .env in script directory)
+    .\setup_database_auto.ps1
+
+    # Specify installation directory
+    .\setup_database_auto.ps1 -InstallPath "C:\Program Files\RFQApplication"
+
+    # Specify .env file directly
+    .\setup_database_auto.ps1 -EnvFilePath "C:\Program Files\RFQApplication\.env"
+
+    # Debug mode with password preview
+    .\setup_database_auto.ps1 -Debug -ShowPasswordPreview
+
+    # Full example with all options
+    .\setup_database_auto.ps1 -EnvFilePath "C:\RFQ\.env" -Debug -ShowPasswordPreview
+
+CREDENTIAL SOURCES (checked in order):
+    1. Registry: HKCU:\Software\RFQApplication\Installer\SuperUserPassword
+    2. Environment variable: SQL_SUPER_USER_B64 (base64 encoded)
+    3. .env file: SQL_SUPER_USER=your_password
+
+NOTES:
+    - The script requires PostgreSQL to be installed and psql.exe in PATH
+    - Passwords are read from registry first, then .env file as fallback
+    - If password is stored in Windows Credential Manager (__CREDENTIAL_MANAGER__),
+      you must provide the actual password in registry or .env file
+
+"@
+    exit 0
+}
 
 # Set error action preference
 $ErrorActionPreference = "Continue"
@@ -138,17 +196,45 @@ Write-Host "Credentials are read from registry or .env file"
 Write-Host ""
 
 # Determine .env file path
-$EnvFilePath = Join-Path $InstallPath ".env"
+if ([string]::IsNullOrWhiteSpace($EnvFilePath)) {
+    # Use InstallPath to construct .env path
+    $EnvFilePath = Join-Path $InstallPath ".env"
+} else {
+    # Use provided .env file path directly
+    $EnvFilePath = $EnvFilePath
+}
 
-# Check if .env file exists
+# Normalize the path
+$EnvFilePath = [System.IO.Path]::GetFullPath($EnvFilePath)
+
+if ($Debug) {
+    Write-Info "  Debug: InstallPath: $InstallPath"
+    Write-Info "  Debug: EnvFilePath: $EnvFilePath"
+    Write-Info "  Debug: Env file exists: $(Test-Path $EnvFilePath)"
+    Write-Host ""
+}
+
+# Check if .env file exists (only warn, don't exit - registry might have passwords)
 if (-not (Test-Path $EnvFilePath)) {
-    Write-Error-Custom "ERROR: .env file not found at: $EnvFilePath"
+    Write-Warning "WARNING: .env file not found at: $EnvFilePath"
     Write-Host ""
-    Write-Host "Please ensure the .env file exists in the installation directory."
+    Write-Host "The script will try to read passwords from registry instead."
+    Write-Host "If registry doesn't have passwords, the script will fail."
     Write-Host ""
-    Write-Host "Press any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    exit 1
+    Write-Host "To specify a different .env file path, use:"
+    Write-Host "  -EnvFilePath 'C:\path\to\.env'"
+    Write-Host ""
+    
+    if (-not $Debug) {
+        $continue = Read-Host "Continue anyway? (y/N)"
+        if ($continue -ne 'y' -and $continue -ne 'Y') {
+            Write-Host "Exiting..."
+            exit 1
+        }
+    } else {
+        Write-Info "  Debug mode: Continuing without .env file (will rely on registry)"
+    }
+    Write-Host ""
 }
 
 Write-Info "[STEP 1/6] Reading credentials..."
