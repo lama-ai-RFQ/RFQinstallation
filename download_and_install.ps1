@@ -1528,7 +1528,7 @@ SERVER_URL=$ServerURL
 # Debug Configuration
 DEBUG_THREAD=0
 
-# Database Configuration (for setup_database_auto.bat)
+# Database Configuration (for setup_database_auto.ps1)
 # SQL super user password (for database setup)
 # Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
 SQL_SUPER_USER=$sqlSuperUserValue
@@ -2044,7 +2044,7 @@ except Exception as e:
 
 # Setup database (optional)
 Write-Info "`nDatabase setup..."
-$SetupDbScript = Join-Path $InstallPath "setup_database_auto.bat"
+$SetupDbScript = Join-Path $InstallPath "setup_database_auto.ps1"
 
 if (Test-Path $SetupDbScript) {
     # Check if PostgreSQL is installed
@@ -2092,7 +2092,7 @@ if (Test-Path $SetupDbScript) {
                             $bytes = [System.Text.Encoding]::UTF8.GetBytes($RFQUserPassword)
                             $env:RFQ_USER_B64 = [Convert]::ToBase64String($bytes)
                         }
-                        & cmd.exe /c $SetupDbScript
+                        & powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript -InstallPath $InstallPath
                         if ($LASTEXITCODE -eq 0) {
                             Write-Success "[OK] Database setup completed"
                         } else {
@@ -2102,7 +2102,8 @@ if (Test-Path $SetupDbScript) {
                     }
                     catch {
                         Write-Warning "[!] Failed to run database setup: $_"
-                        Write-Info "  You can run it manually later: $SetupDbScript"
+                        Write-Info "  You can run it manually later:"
+                    Write-Info "    powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript"
                         $script:SkippedSteps += "Database setup (setup failed)"
                     }
                     finally {
@@ -2112,13 +2113,14 @@ if (Test-Path $SetupDbScript) {
             }
         } else {
             Write-Info "  Skipping database setup. You can run it manually later:"
-            Write-Info "  $SetupDbScript"
+            Write-Info "    powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript"
             $script:SkippedSteps += "Database setup (skipped by user)"
         }
     } else {
         Write-Warning "[!] PostgreSQL (psql) not found in PATH"
         Write-Info "  Database setup script is available at: $SetupDbScript"
-        Write-Info "  Please install PostgreSQL first, then run the setup script manually"
+        Write-Info "  Please install PostgreSQL first, then run the setup script manually:"
+        Write-Info "    powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript"
         $script:SkippedSteps += "Database setup (PostgreSQL not found)"
     }
 } else {
@@ -2400,7 +2402,7 @@ NEXT STEPS:
 
 CONFIGURATION:
   - Config file: $InstallPath\.env
-  - Database setup: Run setup_database_auto.bat if not already done
+  - Database setup: Run setup_database_auto.ps1 if not already done
   - Logs: $InstallPath\logs\
 
 TROUBLESHOOTING:
@@ -2433,7 +2435,7 @@ if ($MissingParams.Count -gt 0) {
     Write-Log "File location: $EnvPath" "Cyan"
     Write-Log "" "Cyan"
     Write-Log "After editing .env, you can:" "Cyan"
-    Write-Log "  1. Run setup_database_auto.bat to set up the database" "Cyan"
+    Write-Log "  1. Run setup_database_auto.ps1 to set up the database" "Cyan"
     Write-Log "  2. Then launch the application" "Cyan"
     Write-Log "" "Cyan"
 }
