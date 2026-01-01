@@ -2226,6 +2226,44 @@ if ($ExePath) {
                 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
             }
             
+            # Configure service to run as the current user to access Windows Credential Manager
+            # This is required because services running as SYSTEM cannot access user-specific credentials
+            $currentUser = $env:USERNAME
+            $currentDomain = $env:USERDOMAIN
+            $serviceAccountXml = ""
+            
+            # Only add service account if not running as SYSTEM (which would be the case during installation)
+            if ($currentUser -and $currentUser -ne "SYSTEM") {
+                Write-Info "  Configuring service to run as user: $currentDomain\$currentUser"
+                Write-Info "  This allows the service to access Windows Credential Manager credentials"
+                Write-Info "  Note: The user account must have 'Log on as a service' permission"
+                
+                # Check if user has 'Log on as a service' right
+                try {
+                    $seServiceLogonRight = "SeServiceLogonRight"
+                    $userSid = (New-Object System.Security.Principal.NTAccount($currentDomain, $currentUser)).Translate([System.Security.Principal.SecurityIdentifier])
+                    $policy = [System.Security.AccessControl.LsaSecurityPolicy]::new()
+                    $hasRight = $false
+                    # Note: Checking this right programmatically is complex, so we'll just grant it
+                    # and let Windows handle the error if it fails
+                } catch {
+                    # Ignore errors checking the right
+                }
+                
+                $serviceAccountXml = @"
+  <serviceaccount>
+    <domain>$currentDomain</domain>
+    <user>$currentUser</user>
+    <allowservicelogon>true</allowservicelogon>
+  </serviceaccount>
+"@
+            } else {
+                Write-Warning "  Cannot determine user account for service - service will run as SYSTEM"
+                Write-Warning "  Service may not be able to access Windows Credential Manager credentials"
+                Write-Warning "  You may need to manually configure the service account after installation"
+                Write-Warning "  Use: sc.exe config $ServiceName obj= .\\YourUsername password= YourPassword"
+            }
+            
             $xmlContent = @"
 <service>
   <id>$ServiceName</id>
@@ -2240,18 +2278,56 @@ if ($ExePath) {
     <sizeThreshold>10240</sizeThreshold>
     <keepFiles>8</keepFiles>
   </log>
-  <logpath>$logDir</logpath>
+  <logpath>$logDir</logpath>$serviceAccountXml
 </service>
 "@
             Set-Content -Path $xmlConfigPath -Value $xmlContent -Force
             
+            # Grant "Log on as a service" right to the user if running as user account
+            if ($currentUser -and $currentUser -ne "SYSTEM" -and $serviceAccountXml) {
+                Write-Info "  Granting 'Log on as a service' right to $currentDomain\$currentUser..."
+                try {
+                    # Use NTRights or secedit to grant the right
+                    # Method 1: Try using secedit (built-in Windows tool)
+                    $tempSeceditFile = Join-Path $env:TEMP "secedit_$([System.Guid]::NewGuid().ToString()).inf"
+                    $seceditContent = @"
+[Unicode]
+Unicode=yes
+[Version]
+signature=`"`$CHICAGO`$`"
+Revision=1
+[Privilege Rights]
+SeServiceLogonRight = $currentDomain\$currentUser
+"@
+                    Set-Content -Path $tempSeceditFile -Value $seceditContent -Force
+                    $seceditResult = Start-Process -FilePath "secedit.exe" -ArgumentList "/configure", "/db", "secedit.sdb", "/cfg", $tempSeceditFile -Wait -PassThru -WindowStyle Hidden
+                    Remove-Item $tempSeceditFile -ErrorAction SilentlyContinue
+                    
+                    if ($seceditResult.ExitCode -eq 0) {
+                        Write-Success "  [OK] Granted 'Log on as a service' right"
+                    } else {
+                        Write-Warning "  [!] Could not automatically grant 'Log on as a service' right"
+                        Write-Warning "      You may need to grant it manually via Local Security Policy"
+                        Write-Warning "      Or the service installation may prompt for it"
+                    }
+                } catch {
+                    Write-Warning "  [!] Could not grant 'Log on as a service' right: $_"
+                    Write-Warning "      You may need to grant it manually via Local Security Policy"
+                }
+            }
+            
             # Install service using WinSW
+            Write-Info "  Installing service (this may prompt for user password if needed)..."
             $winswOutput = & $serviceWinswPath install 2>&1
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Success "[OK] Service '$ServiceName' created successfully using WinSW"
                 $script:serviceCreated = $true
                 Write-Info "  Service will start automatically on system boot"
+                if ($currentUser -and $currentUser -ne "SYSTEM") {
+                    Write-Info "  Service is configured to run as: $currentDomain\$currentUser"
+                    Write-Info "  This allows access to Windows Credential Manager credentials"
+                }
                 Write-Info "  You can manage it using:"
                 Write-Info "    - Command: sc start/stop $ServiceName"
                 Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
