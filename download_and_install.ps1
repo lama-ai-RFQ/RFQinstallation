@@ -2344,44 +2344,31 @@ SeServiceLogonRight = $currentDomain\$currentUser
                 Write-Success "[OK] Service '$ServiceName' created successfully using WinSW"
                 $script:serviceCreated = $true
                 
-                # Configure service account if user account was detected and password should be prompted
-                if ($currentUser -and $currentUser -ne "SYSTEM" -and -not $serviceAccountPassword) {
-                    Write-Info ""
-                    Write-Info "  To access Windows Credential Manager credentials, the service must run as your user account."
-                    Write-Info "  Your password will NOT be stored in any files - it's only used to configure the service."
-                    Write-Info ""
-                    
+                # Configure service account if password was provided earlier
+                if ($currentUser -and $currentUser -ne "SYSTEM" -and $serviceAccountPassword) {
+                    Write-Info "  Configuring service to run as $currentDomain\$currentUser..."
                     try {
-                        $securePassword = Read-Host "  Enter password for $currentDomain\$currentUser" -AsSecureString
-                        if ($securePassword -and $securePassword.Length -gt 0) {
-                            # Convert to plain text temporarily (will be cleared after use)
-                            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
-                            $serviceAccountPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-                            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
-                            $securePassword = $null
-                            
-                            Write-Info "  Configuring service to run as $currentDomain\$currentUser..."
-                            $configResult = & sc.exe config $ServiceName obj= "$currentDomain\$currentUser" password= "$serviceAccountPassword" 2>&1
-                            
-                            if ($LASTEXITCODE -eq 0) {
-                                Write-Success "  [OK] Service account configured successfully"
-                                Write-Info "  Service will now be able to access Windows Credential Manager credentials"
-                            } else {
-                                Write-Warning "  [!] Failed to configure service account (exit code: $LASTEXITCODE)"
-                                Write-Warning "  [!] Error: $configResult"
-                                Write-Warning "  [!] Service will run as SYSTEM and cannot access user credentials"
-                                Write-Warning "  [!] You can manually configure it: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
-                            }
-                            
-                            # Clear password from memory
-                            $serviceAccountPassword = $null
+                        $configResult = & sc.exe config $ServiceName obj= "$currentDomain\$currentUser" password= "$serviceAccountPassword" 2>&1
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Success "  [OK] Service account configured successfully"
+                            Write-Info "  Service will now be able to access Windows Credential Manager credentials"
                         } else {
-                            Write-Warning "  Password not provided. Service will run as SYSTEM."
+                            Write-Warning "  [!] Failed to configure service account (exit code: $LASTEXITCODE)"
+                            Write-Warning "  [!] Error: $configResult"
+                            Write-Warning "  [!] Service will run as SYSTEM and cannot access user credentials"
+                            Write-Warning "  [!] You can manually configure it: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
                         }
                     } catch {
                         Write-Warning "  [!] Error configuring service account: $_"
                         Write-Warning "  Service will run as SYSTEM. You can configure it manually later."
+                    } finally {
+                        # Clear password from memory
+                        $serviceAccountPassword = $null
                     }
+                } elseif ($currentUser -and $currentUser -ne "SYSTEM" -and -not $serviceAccountPassword) {
+                    Write-Warning "  [!] Password was not provided earlier. Service will run as SYSTEM."
+                    Write-Warning "  [!] To fix, run: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
                 }
                 
                 # Verify the service account configuration
