@@ -49,6 +49,7 @@ Source: "download_and_install.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
+Source: "setup_database_auto.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; Include WinSW for service creation
 Source: "WinSW.exe"; DestDir: "{pf}\WinSW"; Flags: ignoreversion
 Source: "WinSW.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -93,6 +94,32 @@ var
   ServerURLPage: TInputQueryWizardPage;
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
+  CredentialManagerPage: TInputOptionWizardPage;
+  // Password visibility checkboxes
+  AWSSecretShowCheck: TNewCheckBox;
+  SettingsPasswordShowCheck: TNewCheckBox;
+  SuperUserPasswordShowCheck: TNewCheckBox;
+  RFQUserPasswordShowCheck: TNewCheckBox;
+
+procedure AWSSecretShowCheckClick(Sender: TObject);
+begin
+  AWSSecretPage.Edits[0].Password := not AWSSecretShowCheck.Checked;
+end;
+
+procedure SettingsPasswordShowCheckClick(Sender: TObject);
+begin
+  SettingsPasswordPage.Edits[0].Password := not SettingsPasswordShowCheck.Checked;
+end;
+
+procedure SuperUserPasswordShowCheckClick(Sender: TObject);
+begin
+  SuperUserPasswordPage.Edits[0].Password := not SuperUserPasswordShowCheck.Checked;
+end;
+
+procedure RFQUserPasswordShowCheckClick(Sender: TObject);
+begin
+  RFQUserPasswordPage.Edits[0].Password := not RFQUserPasswordShowCheck.Checked;
+end;
 
 function ReadEnvValue(FilePath: String; Key: String): String;
 var
@@ -838,6 +865,14 @@ begin
     'Please enter your AWS Secret Access Key:');
   AWSSecretPage.Add('AWS Secret Access Key:', True);  // True = password field (masked)
   
+  // Add "Show password" checkbox
+  AWSSecretShowCheck := TNewCheckBox.Create(WizardForm);
+  AWSSecretShowCheck.Parent := AWSSecretPage.Surface;
+  AWSSecretShowCheck.Top := AWSSecretPage.Edits[0].Top + AWSSecretPage.Edits[0].Height + ScaleY(8);
+  AWSSecretShowCheck.Left := AWSSecretPage.Edits[0].Left;
+  AWSSecretShowCheck.Caption := '&Show password';
+  AWSSecretShowCheck.OnClick := @AWSSecretShowCheckClick;
+  
   AWSRegionPage := CreateInputQueryPage(AWSSecretPage.ID,
     'AWS Region', 'AWS Region Configuration',
     'Please enter your AWS Region (default: us-east-1):');
@@ -870,6 +905,14 @@ begin
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SettingsPasswordPage.Add('Settings Password:', True);  // True = password field (masked)
   
+  // Add "Show password" checkbox
+  SettingsPasswordShowCheck := TNewCheckBox.Create(WizardForm);
+  SettingsPasswordShowCheck.Parent := SettingsPasswordPage.Surface;
+  SettingsPasswordShowCheck.Top := SettingsPasswordPage.Edits[0].Top + SettingsPasswordPage.Edits[0].Height + ScaleY(8);
+  SettingsPasswordShowCheck.Left := SettingsPasswordPage.Edits[0].Left;
+  SettingsPasswordShowCheck.Caption := '&Show password';
+  SettingsPasswordShowCheck.OnClick := @SettingsPasswordShowCheckClick;
+  
   SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
     'Database Configuration', 'PostgreSQL Super User Password',
     'Enter the PostgreSQL super user password (for database setup).' + #13#10 + #13#10 +
@@ -878,6 +921,14 @@ begin
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   SuperUserPasswordPage.Add('PostgreSQL Super User Password:', True);  // True = password field (masked)
   
+  // Add "Show password" checkbox
+  SuperUserPasswordShowCheck := TNewCheckBox.Create(WizardForm);
+  SuperUserPasswordShowCheck.Parent := SuperUserPasswordPage.Surface;
+  SuperUserPasswordShowCheck.Top := SuperUserPasswordPage.Edits[0].Top + SuperUserPasswordPage.Edits[0].Height + ScaleY(8);
+  SuperUserPasswordShowCheck.Left := SuperUserPasswordPage.Edits[0].Left;
+  SuperUserPasswordShowCheck.Caption := '&Show password';
+  SuperUserPasswordShowCheck.OnClick := @SuperUserPasswordShowCheckClick;
+  
   RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
     'Database Configuration', 'RFQ User Password',
     'Enter the password for the RFQ database user.' + #13#10 + #13#10 +
@@ -885,6 +936,14 @@ begin
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
   RFQUserPasswordPage.Add('RFQ User Password:', True);  // True = password field (masked)
+  
+  // Add "Show password" checkbox
+  RFQUserPasswordShowCheck := TNewCheckBox.Create(WizardForm);
+  RFQUserPasswordShowCheck.Parent := RFQUserPasswordPage.Surface;
+  RFQUserPasswordShowCheck.Top := RFQUserPasswordPage.Edits[0].Top + RFQUserPasswordPage.Edits[0].Height + ScaleY(8);
+  RFQUserPasswordShowCheck.Left := RFQUserPasswordPage.Edits[0].Left;
+  RFQUserPasswordShowCheck.Caption := '&Show password';
+  RFQUserPasswordShowCheck.OnClick := @RFQUserPasswordShowCheckClick;
   
   // Create Server URL page
   ServerURLPage := CreateInputQueryPage(RFQUserPasswordPage.ID,
@@ -908,6 +967,22 @@ begin
     'Azure Configuration', 'Custom Encryption Key',
     'Enter your custom Azure configuration encryption key (base64 encoded):');
   AzureKeyInputPage.Add('Azure Config Encryption Key:', False);
+  
+  // Create Windows Credential Manager page
+  CredentialManagerPage := CreateInputOptionPage(AzureKeyInputPage.ID,
+    'Password Storage', 'Windows Credential Manager',
+    'Choose how to store critical passwords (Settings, PostgreSQL Super User, RFQ User):' + #13#10 + #13#10 +
+    'Windows Credential Manager (Recommended):' + #13#10 +
+    '  • Passwords stored securely in Windows Credential Manager' + #13#10 +
+    '  • More secure than plain text .env file' + #13#10 +
+    '  • Requires Windows Credential Manager to be available' + #13#10 + #13#10 +
+    '.env File:' + #13#10 +
+    '  • Passwords stored in .env file (plain text)' + #13#10 +
+    '  • Less secure but more portable',
+    True, False);
+  CredentialManagerPage.Add('Use Windows Credential Manager (recommended - more secure)');
+  CredentialManagerPage.Add('Store in .env file (less secure but portable)');
+  CredentialManagerPage.SelectedValueIndex := 0;  // Default to Credential Manager
 end;
 
 procedure LoadExistingEnvValues();
@@ -1221,6 +1296,15 @@ begin
     end;
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyInputPage.Values[0]);
   end;
+  
+  // Store Credential Manager preference
+  if CurPageID = CredentialManagerPage.ID then
+  begin
+    if CredentialManagerPage.SelectedValueIndex = 0 then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', 'False');
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -1265,10 +1349,12 @@ var
   CleanReinstall: Boolean;
   CleanupAfterInstall: Boolean;
   UpdateChannel: String;
+  UseCredentialManager: Boolean;
   ModelDownloadStr: String;
   AzureKeyGenerateStr: String;
   CleanReinstallStr: String;
   CleanupAfterInstallStr: String;
+  UseCredentialManagerStr: String;
   Params: String;
 begin
   // Get installation path
@@ -1312,6 +1398,12 @@ begin
   else
     CleanupAfterInstall := True;  // Default to cleanup after install
   
+  // Read UseCredentialManager from registry (default to True if not set)
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', UseCredentialManagerStr) then
+    UseCredentialManager := (UseCredentialManagerStr = 'True')
+  else
+    UseCredentialManager := True;  // Default to Credential Manager
+  
   // If ModelPath is empty, use default
   if ModelPath = '' then
     ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
@@ -1344,6 +1436,10 @@ begin
   
   // Add Update Channel
   Params := Params + ' -UpdateChannel "' + UpdateChannel + '"';
+  
+  // Add Credential Manager flag
+  if UseCredentialManager then
+    Params := Params + ' -UseCredentialManager';
   
   // Add database passwords
   if SettingsPassword <> '' then

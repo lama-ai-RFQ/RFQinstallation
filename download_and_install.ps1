@@ -20,7 +20,8 @@ param(
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
     [switch]$CleanupAfterInstall,
-    [string]$UpdateChannel = "customer"
+    [string]$UpdateChannel = "customer",
+    [switch]$UseCredentialManager
 )
 
 # Set error action preference to continue so we can handle errors gracefully
@@ -111,6 +112,67 @@ function Exit-WithError {
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 1
+}
+
+# Windows Credential Manager functions
+function Save-ToCredentialManager {
+    param(
+        [string]$TargetName,
+        [string]$UserName,
+        [string]$Password
+    )
+    
+    try {
+        # Check if credential already exists and delete it first
+        # cmdkey.exe will fail if the target already exists
+        $checkProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list:$TargetName" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_check.txt" -RedirectStandardError "$env:TEMP\cmdkey_check_err.txt"
+        
+        if ($checkProcess.ExitCode -eq 0) {
+            # Credential exists, delete it first
+            Write-Verbose "Credential $TargetName already exists, deleting first..."
+            $deleteProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/delete:$TargetName" -Wait -PassThru -WindowStyle Hidden
+            if ($deleteProcess.ExitCode -ne 0) {
+                Write-Warning "Warning: Could not delete existing credential $TargetName, but continuing..."
+            }
+            Start-Sleep -Milliseconds 500  # Brief pause to ensure deletion completes
+        }
+        
+        Remove-Item "$env:TEMP\cmdkey_check.txt" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\cmdkey_check_err.txt" -ErrorAction SilentlyContinue
+        
+        # Use cmdkey.exe to store credentials in Windows Credential Manager as GENERIC credentials
+        # Generic credentials are required for CredReadW API and keyring library access
+        # Format: cmdkey /generic:target /user:username /pass:password
+        
+        # Call cmdkey.exe directly with /generic: to create generic credentials
+        $output = & cmdkey.exe /generic:$TargetName /user:$UserName /pass:$Password 2>&1
+        $exitCode = $LASTEXITCODE
+        
+        if ($exitCode -eq 0) {
+            Write-Verbose "Successfully saved credential: $TargetName"
+            return $true
+        } else {
+            $errorMsg = $output | Out-String
+            Write-Warning "Failed to save credential $TargetName (exit code: $exitCode)"
+            if ($errorMsg -and $errorMsg.Trim() -ne "") {
+                Write-Verbose "Error details: $errorMsg"
+            }
+            return $false
+        }
+    }
+    catch {
+        Write-Warning "Error saving credential to Windows Credential Manager: $_"
+        return $false
+    }
+}
+
+function Test-CredentialManagerAvailable {
+    # Check if cmdkey.exe is available (should be on all Windows systems)
+    $cmdkeyPath = Get-Command cmdkey -ErrorAction SilentlyContinue
+    if ($cmdkeyPath) {
+        return $true
+    }
+    return $false
 }
 
 # Show help
@@ -377,7 +439,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         
         # Show progress for manifest download
         Write-Info "    Downloading from: $($ManifestAsset.url)"
-        $ProgressPreference = 'Continue'
+        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
         
         $Manifest = Get-Content $ManifestPath | ConvertFrom-Json
@@ -608,8 +670,8 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                     Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
                 }
                 
-                # Show progress bar during download
-                $ProgressPreference = 'Continue'
+                # Disable progress bar for faster downloads
+                $ProgressPreference = 'SilentlyContinue'
                 
                 # Full download
                 Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
@@ -1156,6 +1218,19 @@ else {
 
 # Setup .env file with GitHub token
 Write-Info "`n[8/8] Configuring application..."
+
+# Check if Windows Credential Manager should be used
+$UseCredentialManagerForPasswords = $false
+if ($UseCredentialManager) {
+    if (Test-CredentialManagerAvailable) {
+        $UseCredentialManagerForPasswords = $true
+        Write-Success "[OK] Windows Credential Manager detected - will store passwords securely"
+    } else {
+        Write-Warning "[!] Windows Credential Manager not available - falling back to .env file"
+        $UseCredentialManagerForPasswords = $false
+    }
+}
+
 $EnvPath = Join-Path $InstallPath ".env"
 $EnvTemplatePath = Join-Path $InstallPath ".env.template"
 
@@ -1227,11 +1302,62 @@ if (Test-Path $EnvTemplatePath) {
     
     # Update values in the .env file
     $EnvContent = Get-Content $EnvPath -Raw
+    
+    # Store passwords in Windows Credential Manager if enabled
+    if ($UseCredentialManagerForPasswords) {
+        Write-Info "  Storing passwords in Windows Credential Manager..."
+        
+        # Save passwords to Credential Manager
+        $credentialSaved = $true
+        if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication_SQL_SUPER_USER"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
+                Write-Success "    [OK] Saved SQL_SUPER_USER as generic credential in Windows Credential Manager"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication_RFQ_USER_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
+                Write-Success "    [OK] Saved RFQ_USER_PASSWORD as generic credential in Windows Credential Manager"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication_SETTINGS_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
+                Write-Success "    [OK] Saved SETTINGS_PASSWORD as generic credential in Windows Credential Manager"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if ($credentialSaved) {
+            Write-Success "  [OK] All passwords stored as generic credentials in Windows Credential Manager"
+            # Use placeholders in .env file
+            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
+            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
+            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
+        } else {
+            Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
+            $UseCredentialManagerForPasswords = $false
+            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
+            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
+            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+        }
+    } else {
+        # Store passwords in .env file (traditional method)
+        $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
+        $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
+        $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+    }
+    
     $EnvContent = $EnvContent -replace "GITHUB_PAT=.*", "GITHUB_PAT=$GitHubToken"
     $EnvContent = $EnvContent -replace "GITHUB_USERNAME=.*", "GITHUB_USERNAME=RFQdebugging"
-    $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
-    $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
-    $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
     $EnvContent = $EnvContent -replace "CONTAINER=.*", "CONTAINER=0"
     # Only update MODEL_PATH if we have a value (preserve existing if empty)
     if (![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
@@ -1259,13 +1385,25 @@ if (Test-Path $EnvTemplatePath) {
         $EnvContent += "`nGITHUB_USERNAME=RFQdebugging"
     }
     if ($EnvContent -notmatch "SQL_SUPER_USER") {
-        $EnvContent += "`nSQL_SUPER_USER=$SuperUserPassword"
+        if ($UseCredentialManagerForPasswords) {
+            $EnvContent += "`nSQL_SUPER_USER=__CREDENTIAL_MANAGER__"
+        } else {
+            $EnvContent += "`nSQL_SUPER_USER=$SuperUserPassword"
+        }
     }
     if ($EnvContent -notmatch "RFQ_USER_PASSWORD") {
-        $EnvContent += "`nRFQ_USER_PASSWORD=$RFQUserPassword"
+        if ($UseCredentialManagerForPasswords) {
+            $EnvContent += "`nRFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
+        } else {
+            $EnvContent += "`nRFQ_USER_PASSWORD=$RFQUserPassword"
+        }
     }
     if ($EnvContent -notmatch "SETTINGS_PASSWORD") {
-        $EnvContent += "`nSETTINGS_PASSWORD=$SettingsPassword"
+        if ($UseCredentialManagerForPasswords) {
+            $EnvContent += "`nSETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
+        } else {
+            $EnvContent += "`nSETTINGS_PASSWORD=$SettingsPassword"
+        }
     }
     if ($EnvContent -notmatch "CONTAINER") {
         $EnvContent += "`nCONTAINER=0"
@@ -1312,6 +1450,58 @@ if (Test-Path $EnvTemplatePath) {
 else {
     # Create .env from scratch if template doesn't exist
     Write-Info "  .env.template not found, creating .env from default..."
+    
+    # Determine password values based on storage method
+    $sqlSuperUserValue = $SuperUserPassword
+    $rfqUserPasswordValue = $RFQUserPassword
+    $settingsPasswordValue = $SettingsPassword
+    
+    if ($UseCredentialManagerForPasswords) {
+        Write-Info "  Storing passwords in Windows Credential Manager..."
+        
+        # Save passwords to Credential Manager
+        $credentialSaved = $true
+        if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication_SQL_SUPER_USER"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
+                Write-Success "    [OK] Saved SQL_SUPER_USER as generic credential in Windows Credential Manager"
+                $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication_RFQ_USER_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
+                Write-Success "    [OK] Saved RFQ_USER_PASSWORD as generic credential in Windows Credential Manager"
+                $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
+            $targetName = "RFQApplication_SETTINGS_PASSWORD"
+            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
+                Write-Success "    [OK] Saved SETTINGS_PASSWORD as generic credential in Windows Credential Manager"
+                $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
+            } else {
+                $credentialSaved = $false
+            }
+        }
+        
+        if ($credentialSaved) {
+            Write-Success "  [OK] All passwords stored as generic credentials in Windows Credential Manager"
+        } else {
+            Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
+            $UseCredentialManagerForPasswords = $false
+            $sqlSuperUserValue = $SuperUserPassword
+            $rfqUserPasswordValue = $RFQUserPassword
+            $settingsPasswordValue = $SettingsPassword
+        }
+    }
+    
     $EnvContent = @"
 # RFQ Application Configuration
 # Generated by installer on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
@@ -1338,15 +1528,18 @@ SERVER_URL=$ServerURL
 # Debug Configuration
 DEBUG_THREAD=0
 
-# Database Configuration (for setup_database_auto.bat)
+# Database Configuration (for setup_database_auto.ps1)
 # SQL super user password (for database setup)
-SQL_SUPER_USER=$SuperUserPassword
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+SQL_SUPER_USER=$sqlSuperUserValue
 
 # Database password (for rfq_user)
-RFQ_USER_PASSWORD=$RFQUserPassword
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+RFQ_USER_PASSWORD=$rfqUserPasswordValue
 
 # Settings password
-SETTINGS_PASSWORD=$SettingsPassword
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+SETTINGS_PASSWORD=$settingsPasswordValue
 
 # Azure Configuration
 AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
@@ -1851,7 +2044,7 @@ except Exception as e:
 
 # Setup database (optional)
 Write-Info "`nDatabase setup..."
-$SetupDbScript = Join-Path $InstallPath "setup_database_auto.bat"
+$SetupDbScript = Join-Path $InstallPath "setup_database_auto.ps1"
 
 if (Test-Path $SetupDbScript) {
     # Check if PostgreSQL is installed
@@ -1888,7 +2081,18 @@ if (Test-Path $SetupDbScript) {
                     Write-Info "Running database setup..."
                     try {
                         Push-Location $InstallPath
-                        & cmd.exe /c $SetupDbScript
+                        # Pass passwords as environment variables if available
+                        $env:SQL_SUPER_USER_B64 = ""
+                        $env:RFQ_USER_B64 = ""
+                        if ($SuperUserPassword -and !$SuperUserPassword.StartsWith("your_")) {
+                            $bytes = [System.Text.Encoding]::UTF8.GetBytes($SuperUserPassword)
+                            $env:SQL_SUPER_USER_B64 = [Convert]::ToBase64String($bytes)
+                        }
+                        if ($RFQUserPassword -and !$RFQUserPassword.StartsWith("your_")) {
+                            $bytes = [System.Text.Encoding]::UTF8.GetBytes($RFQUserPassword)
+                            $env:RFQ_USER_B64 = [Convert]::ToBase64String($bytes)
+                        }
+                        & powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript -InstallPath $InstallPath
                         if ($LASTEXITCODE -eq 0) {
                             Write-Success "[OK] Database setup completed"
                         } else {
@@ -1898,7 +2102,8 @@ if (Test-Path $SetupDbScript) {
                     }
                     catch {
                         Write-Warning "[!] Failed to run database setup: $_"
-                        Write-Info "  You can run it manually later: $SetupDbScript"
+                        Write-Info "  You can run it manually later:"
+                    Write-Info "    powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript"
                         $script:SkippedSteps += "Database setup (setup failed)"
                     }
                     finally {
@@ -1908,13 +2113,14 @@ if (Test-Path $SetupDbScript) {
             }
         } else {
             Write-Info "  Skipping database setup. You can run it manually later:"
-            Write-Info "  $SetupDbScript"
+            Write-Info "    powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript"
             $script:SkippedSteps += "Database setup (skipped by user)"
         }
     } else {
         Write-Warning "[!] PostgreSQL (psql) not found in PATH"
         Write-Info "  Database setup script is available at: $SetupDbScript"
-        Write-Info "  Please install PostgreSQL first, then run the setup script manually"
+        Write-Info "  Please install PostgreSQL first, then run the setup script manually:"
+        Write-Info "    powershell.exe -ExecutionPolicy Bypass -File $SetupDbScript"
         $script:SkippedSteps += "Database setup (PostgreSQL not found)"
     }
 } else {
@@ -2020,6 +2226,64 @@ if ($ExePath) {
                 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
             }
             
+            # Configure service to run as the current user to access Windows Credential Manager
+            # This is required because services running as SYSTEM cannot access user-specific credentials
+            $currentUser = $env:USERNAME
+            $currentDomain = $env:USERDOMAIN
+            $serviceAccountXml = ""
+            
+            # Only add service account if not running as SYSTEM (which would be the case during installation)
+            # Note: We'll configure the service account AFTER WinSW installs it using sc.exe config
+            # This avoids storing the password in plain text in the XML file
+            $serviceAccountXml = ""
+            $serviceAccountPassword = $null
+            $configureServiceAccount = $false
+            
+            if ($currentUser -and $currentUser -ne "SYSTEM") {
+                Write-Info "  Service will be configured to run as: $currentDomain\$currentUser"
+                Write-Info "  This allows the service to access Windows Credential Manager credentials"
+                Write-Info ""
+                Write-Info "  WinSW will install the service first, then we'll configure it with your password."
+                Write-Info "  Your password will NOT be stored in any files."
+                Write-Info ""
+                
+                # Prompt for password (we'll use it after service installation)
+                $passwordAttempts = 0
+                $maxAttempts = 3
+                
+                while ($passwordAttempts -lt $maxAttempts) {
+                    try {
+                        $securePassword = Read-Host "  Enter password for $currentDomain\$currentUser" -AsSecureString
+                        if ($securePassword -and $securePassword.Length -gt 0) {
+                            # Convert to plain text temporarily (will be cleared after use)
+                            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+                            $serviceAccountPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+                            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+                            $securePassword = $null
+                            $configureServiceAccount = $true
+                            Write-Info "  Password accepted. Will configure service account after installation."
+                            break
+                        } else {
+                            Write-Warning "  Password cannot be empty. Please try again."
+                            $passwordAttempts++
+                        }
+                    } catch {
+                        Write-Warning "  Error reading password: $_"
+                        $passwordAttempts++
+                        if ($passwordAttempts -ge $maxAttempts) {
+                            Write-Warning "  Maximum attempts reached. Service will run as SYSTEM."
+                            Write-Warning "  You can manually configure it later using: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                            break
+                        }
+                    }
+                }
+            } else {
+                Write-Warning "  Cannot determine user account for service - service will run as SYSTEM"
+                Write-Warning "  Service may not be able to access Windows Credential Manager credentials"
+                Write-Warning "  You may need to manually configure the service account after installation"
+                Write-Warning "  Use: sc.exe config $ServiceName obj= .\\YourUsername password= YourPassword"
+            }
+            
             $xmlContent = @"
 <service>
   <id>$ServiceName</id>
@@ -2034,17 +2298,123 @@ if ($ExePath) {
     <sizeThreshold>10240</sizeThreshold>
     <keepFiles>8</keepFiles>
   </log>
-  <logpath>$logDir</logpath>
+  <logpath>$logDir</logpath>$serviceAccountXml
 </service>
 "@
             Set-Content -Path $xmlConfigPath -Value $xmlContent -Force
             
+            # Grant "Log on as a service" right to the user if running as user account
+            if ($currentUser -and $currentUser -ne "SYSTEM" -and $serviceAccountXml) {
+                Write-Info "  Granting 'Log on as a service' right to $currentDomain\$currentUser..."
+                try {
+                    # Use NTRights or secedit to grant the right
+                    # Method 1: Try using secedit (built-in Windows tool)
+                    $tempSeceditFile = Join-Path $env:TEMP "secedit_$([System.Guid]::NewGuid().ToString()).inf"
+                    $seceditContent = @"
+[Unicode]
+Unicode=yes
+[Version]
+signature=`"`$CHICAGO`$`"
+Revision=1
+[Privilege Rights]
+SeServiceLogonRight = $currentDomain\$currentUser
+"@
+                    Set-Content -Path $tempSeceditFile -Value $seceditContent -Force
+                    $seceditResult = Start-Process -FilePath "secedit.exe" -ArgumentList "/configure", "/db", "secedit.sdb", "/cfg", $tempSeceditFile -Wait -PassThru -WindowStyle Hidden
+                    Remove-Item $tempSeceditFile -ErrorAction SilentlyContinue
+                    
+                    if ($seceditResult.ExitCode -eq 0) {
+                        Write-Success "  [OK] Granted 'Log on as a service' right"
+                    } else {
+                        Write-Warning "  [!] Could not automatically grant 'Log on as a service' right"
+                        Write-Warning "      You may need to grant it manually via Local Security Policy"
+                        Write-Warning "      Or the service installation may prompt for it"
+                    }
+                } catch {
+                    Write-Warning "  [!] Could not grant 'Log on as a service' right: $_"
+                    Write-Warning "      You may need to grant it manually via Local Security Policy"
+                }
+            }
+            
             # Install service using WinSW
+            Write-Info "  Installing service (this may prompt for user password if needed)..."
             $winswOutput = & $serviceWinswPath install 2>&1
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Success "[OK] Service '$ServiceName' created successfully using WinSW"
                 $script:serviceCreated = $true
+                
+                # Configure service account if password was provided earlier
+                if ($currentUser -and $currentUser -ne "SYSTEM" -and $serviceAccountPassword) {
+                    Write-Info "  Configuring service to run as $currentDomain\$currentUser..."
+                    try {
+                        $configResult = & sc.exe config $ServiceName obj= "$currentDomain\$currentUser" password= "$serviceAccountPassword" 2>&1
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Success "  [OK] Service account configured successfully"
+                            Write-Info "  Service will now be able to access Windows Credential Manager credentials"
+                        } else {
+                            Write-Warning "  [!] Failed to configure service account (exit code: $LASTEXITCODE)"
+                            Write-Warning "  [!] Error: $configResult"
+                            Write-Warning "  [!] Service will run as SYSTEM and cannot access user credentials"
+                            Write-Warning "  [!] You can manually configure it: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                        }
+                    } catch {
+                        Write-Warning "  [!] Error configuring service account: $_"
+                        Write-Warning "  Service will run as SYSTEM. You can configure it manually later."
+                    } finally {
+                        # Clear password from memory
+                        $serviceAccountPassword = $null
+                    }
+                } elseif ($currentUser -and $currentUser -ne "SYSTEM" -and -not $serviceAccountPassword) {
+                    Write-Warning "  [!] Password was not provided earlier. Service will run as SYSTEM."
+                    Write-Warning "  [!] To fix, run: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                }
+                
+                # Verify the service account configuration
+                Write-Info "  Verifying service account configuration..."
+                Start-Sleep -Seconds 2  # Brief pause to ensure service is registered
+                
+                try {
+                    $serviceQuery = sc.exe qc $ServiceName 2>&1
+                    $serviceQueryString = $serviceQuery | Out-String
+                    
+                    # Check if service is running as SYSTEM
+                    if ($serviceQueryString -match "SERVICE_START_NAME\s*:\s*LocalSystem") {
+                        Write-Warning "  [!] WARNING: Service is running as LocalSystem (SYSTEM account)"
+                        Write-Warning "  [!] This means the service CANNOT access Windows Credential Manager credentials"
+                        
+                        if ($currentUser -and $currentUser -ne "SYSTEM" -and $serviceAccountXml) {
+                            Write-Warning "  [!] The service account configuration was not applied by WinSW"
+                            Write-Warning "  [!] WinSW requires a password in the serviceaccount XML section"
+                            Write-Warning "  [!]"
+                            Write-Warning "  [!] SOLUTION: Manually configure the service account:"
+                            Write-Warning "  [!]   1. Stop service: sc.exe stop $ServiceName"
+                            Write-Warning "  [!]   2. Configure: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                            Write-Warning "  [!]   3. Start service: sc.exe start $ServiceName"
+                            Write-Warning "  [!]"
+                            Write-Warning "  [!] Without this, the service will not be able to retrieve passwords"
+                            Write-Warning "  [!] from Windows Credential Manager (SETTINGS_PASSWORD, etc.)"
+                        } else {
+                            Write-Warning "  [!] Service account was not configured during installation"
+                            Write-Warning "  [!] To fix, run: sc.exe config $ServiceName obj= .\YourUsername password= YourPassword"
+                        }
+                    } elseif ($serviceQueryString -match "SERVICE_START_NAME\s*:\s*.*\\$currentUser") {
+                        Write-Success "  [OK] Service is correctly configured to run as: $currentDomain\$currentUser"
+                        Write-Info "  This allows access to Windows Credential Manager credentials"
+                    } elseif ($serviceQueryString -match "SERVICE_START_NAME\s*:\s*(.+)") {
+                        $actualAccount = $matches[1].Trim()
+                        Write-Info "  Service is running as: $actualAccount"
+                        if ($actualAccount -ne "LocalSystem" -and $currentUser -and $actualAccount -like "*\$currentUser") {
+                            Write-Success "  [OK] Service account is correctly configured"
+                        }
+                    } else {
+                        Write-Warning "  [!] Could not determine service account from query output"
+                    }
+                } catch {
+                    Write-Warning "  [!] Could not verify service account configuration: $_"
+                }
+                
                 Write-Info "  Service will start automatically on system boot"
                 Write-Info "  You can manage it using:"
                 Write-Info "    - Command: sc start/stop $ServiceName"
@@ -2196,7 +2566,7 @@ NEXT STEPS:
 
 CONFIGURATION:
   - Config file: $InstallPath\.env
-  - Database setup: Run setup_database_auto.bat if not already done
+  - Database setup: Run setup_database_auto.ps1 if not already done
   - Logs: $InstallPath\logs\
 
 TROUBLESHOOTING:
@@ -2229,7 +2599,7 @@ if ($MissingParams.Count -gt 0) {
     Write-Log "File location: $EnvPath" "Cyan"
     Write-Log "" "Cyan"
     Write-Log "After editing .env, you can:" "Cyan"
-    Write-Log "  1. Run setup_database_auto.bat to set up the database" "Cyan"
+    Write-Log "  1. Run setup_database_auto.ps1 to set up the database" "Cyan"
     Write-Log "  2. Then launch the application" "Cyan"
     Write-Log "" "Cyan"
 }
