@@ -140,12 +140,12 @@ function Save-ToCredentialManager {
         Remove-Item "$env:TEMP\cmdkey_check.txt" -ErrorAction SilentlyContinue
         Remove-Item "$env:TEMP\cmdkey_check_err.txt" -ErrorAction SilentlyContinue
         
-        # Use cmdkey.exe to store credentials in Windows Credential Manager
-        # Simple direct call works best - no need for complex escaping
-        # Format: cmdkey /add:target /user:username /pass:password
+        # Use cmdkey.exe to store credentials in Windows Credential Manager as GENERIC credentials
+        # Generic credentials are required for CredReadW API and keyring library access
+        # Format: cmdkey /generic:target /user:username /pass:password
         
-        # Call cmdkey.exe directly (simplest approach that works)
-        $output = & cmdkey.exe /add:$TargetName /user:$UserName /pass:$Password 2>&1
+        # Call cmdkey.exe directly with /generic: to create generic credentials
+        $output = & cmdkey.exe /generic:$TargetName /user:$UserName /pass:$Password 2>&1
         $exitCode = $LASTEXITCODE
         
         if ($exitCode -eq 0) {
