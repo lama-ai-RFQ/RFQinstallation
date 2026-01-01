@@ -2323,11 +2323,52 @@ SeServiceLogonRight = $currentDomain\$currentUser
             if ($LASTEXITCODE -eq 0) {
                 Write-Success "[OK] Service '$ServiceName' created successfully using WinSW"
                 $script:serviceCreated = $true
-                Write-Info "  Service will start automatically on system boot"
-                if ($currentUser -and $currentUser -ne "SYSTEM") {
-                    Write-Info "  Service is configured to run as: $currentDomain\$currentUser"
-                    Write-Info "  This allows access to Windows Credential Manager credentials"
+                
+                # Verify the service account configuration
+                Write-Info "  Verifying service account configuration..."
+                Start-Sleep -Seconds 1  # Brief pause to ensure service is registered
+                
+                try {
+                    $serviceQuery = sc.exe qc $ServiceName 2>&1
+                    $serviceQueryString = $serviceQuery | Out-String
+                    
+                    # Check if service is running as SYSTEM
+                    if ($serviceQueryString -match "SERVICE_START_NAME\s*:\s*LocalSystem") {
+                        Write-Warning "  [!] WARNING: Service is running as LocalSystem (SYSTEM account)"
+                        Write-Warning "  [!] This means the service CANNOT access Windows Credential Manager credentials"
+                        
+                        if ($currentUser -and $currentUser -ne "SYSTEM" -and $serviceAccountXml) {
+                            Write-Warning "  [!] The service account configuration was not applied by WinSW"
+                            Write-Warning "  [!] WinSW requires a password in the serviceaccount XML section"
+                            Write-Warning "  [!]"
+                            Write-Warning "  [!] SOLUTION: Manually configure the service account:"
+                            Write-Warning "  [!]   1. Stop service: sc.exe stop $ServiceName"
+                            Write-Warning "  [!]   2. Configure: sc.exe config $ServiceName obj= .\$currentUser password= YourPassword"
+                            Write-Warning "  [!]   3. Start service: sc.exe start $ServiceName"
+                            Write-Warning "  [!]"
+                            Write-Warning "  [!] Without this, the service will not be able to retrieve passwords"
+                            Write-Warning "  [!] from Windows Credential Manager (SETTINGS_PASSWORD, etc.)"
+                        } else {
+                            Write-Warning "  [!] Service account was not configured during installation"
+                            Write-Warning "  [!] To fix, run: sc.exe config $ServiceName obj= .\YourUsername password= YourPassword"
+                        }
+                    } elseif ($serviceQueryString -match "SERVICE_START_NAME\s*:\s*.*\\$currentUser") {
+                        Write-Success "  [OK] Service is correctly configured to run as: $currentDomain\$currentUser"
+                        Write-Info "  This allows access to Windows Credential Manager credentials"
+                    } elseif ($serviceQueryString -match "SERVICE_START_NAME\s*:\s*(.+)") {
+                        $actualAccount = $matches[1].Trim()
+                        Write-Info "  Service is running as: $actualAccount"
+                        if ($actualAccount -ne "LocalSystem" -and $currentUser -and $actualAccount -like "*\$currentUser") {
+                            Write-Success "  [OK] Service account is correctly configured"
+                        }
+                    } else {
+                        Write-Warning "  [!] Could not determine service account from query output"
+                    }
+                } catch {
+                    Write-Warning "  [!] Could not verify service account configuration: $_"
                 }
+                
+                Write-Info "  Service will start automatically on system boot"
                 Write-Info "  You can manage it using:"
                 Write-Info "    - Command: sc start/stop $ServiceName"
                 Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
