@@ -2500,17 +2500,22 @@ SeServiceLogonRight = $currentDomain\$currentUser
     # Create scheduled task for updates (allows service to update without admin privileges)
     Write-Info "`nCreating scheduled task for updates..."
     try {
-        # Find create_update_task.ps1 script (should be in windows/ directory relative to this script)
+        # Find create_update_task.ps1 script (now located in RFQinstallation/ in the repo)
         $scriptDir = Split-Path -Parent $PSCommandPath
         $projectRoot = Split-Path -Parent $scriptDir
         $createTaskScript = $null
         
         # Try multiple possible locations
         $possiblePaths = @(
-            (Join-Path $projectRoot "windows\create_update_task.ps1"),
-            (Join-Path $scriptDir "create_update_task.ps1"),
-            (Join-Path $PWD.Path "windows\create_update_task.ps1"),
-            (Join-Path $PWD.Path "create_update_task.ps1")
+            # Preferred (repo layout): RFQinstallation/create_update_task.ps1
+            (Join-Path $projectRoot "RFQinstallation\create_update_task.ps1"),
+            (Join-Path $PWD.Path "RFQinstallation\create_update_task.ps1"),
+            
+            # If the file was already extracted into the installation directory
+            (Join-Path $InstallPath "create_update_task.ps1"),
+            
+            # Same directory as this script (e.g., running from repo)
+            (Join-Path $scriptDir "create_update_task.ps1")
         )
         
         foreach ($path in $possiblePaths) {

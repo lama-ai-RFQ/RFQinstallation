@@ -50,7 +50,7 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
 Source: "setup_database_auto.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\windows\create_update_task.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "create_update_task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; Include WinSW for service creation
 Source: "WinSW.exe"; DestDir: "{pf}\WinSW"; Flags: ignoreversion
 Source: "WinSW.exe"; DestDir: "{app}"; Flags: ignoreversion
