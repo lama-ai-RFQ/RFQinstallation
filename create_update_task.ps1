@@ -18,6 +18,10 @@ param(
     [switch]$Help
 )
 
+# Bypass execution policy for this script session
+# This allows the script to run even if system execution policy is restrictive
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+
 # Show help
 if ($Help) {
     Write-Host @"
@@ -198,7 +202,7 @@ $createCmd = @(
     "/TN", $TaskName,
     "/TR", "`"$updaterPath`"",
     "/SC", "ONCE",
-    "/SD", "2000/01/01",  # Past date - task won't run automatically (yyyy/mm/dd format)
+    "/SD", "01/01/2000",  # Past date - task won't run automatically (mm/dd/yyyy format required by Windows)
     "/ST", "00:00",
     "/RL", "HIGHEST",     # Run with highest privileges
     "/RU", "SYSTEM",      # Run as SYSTEM account
