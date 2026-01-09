@@ -2497,6 +2497,63 @@ SeServiceLogonRight = $currentDomain\$currentUser
         }
     }
     
+    # Create scheduled task for updates (allows service to update without admin privileges)
+    Write-Info "`nCreating scheduled task for updates..."
+    try {
+        # Find create_update_task.ps1 script (should be in windows/ directory relative to this script)
+        $scriptDir = Split-Path -Parent $PSCommandPath
+        $projectRoot = Split-Path -Parent $scriptDir
+        $createTaskScript = $null
+        
+        # Try multiple possible locations
+        $possiblePaths = @(
+            Join-Path $projectRoot "windows\create_update_task.ps1",
+            Join-Path $scriptDir "create_update_task.ps1",
+            Join-Path $PWD "windows\create_update_task.ps1",
+            Join-Path $PWD "create_update_task.ps1"
+        )
+        
+        foreach ($path in $possiblePaths) {
+            if (Test-Path $path) {
+                $createTaskScript = $path
+                break
+            }
+        }
+        
+        if ($createTaskScript -and (Test-Path $createTaskScript)) {
+            # Copy script to installation directory for user reference
+            $installTaskScript = Join-Path $InstallPath "create_update_task.ps1"
+            Copy-Item -Path $createTaskScript -Destination $installTaskScript -Force
+            Write-Success "[OK] Copied create_update_task.ps1 to installation directory"
+            
+            # Run the script to create the scheduled task
+            Write-Info "  Creating update scheduled task (requires admin privileges)..."
+            $taskResult = & powershell.exe -ExecutionPolicy Bypass -File $createTaskScript -InstallPath $InstallPath 2>&1
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "[OK] Update scheduled task created successfully"
+                Write-Info "  The service can now trigger updates without requiring admin privileges"
+            } else {
+                Write-Warning "[!] Failed to create update scheduled task (exit code: $LASTEXITCODE)"
+                Write-Warning "  The service will need to run as administrator to perform updates"
+                Write-Warning "  You can create the task manually later by running:"
+                Write-Warning "    powershell.exe -ExecutionPolicy Bypass -File `"$installTaskScript`""
+                $script:SkippedSteps += "Update scheduled task (creation failed)"
+            }
+        } else {
+            Write-Warning "[!] create_update_task.ps1 script not found"
+            Write-Warning "  Update scheduled task will not be created automatically"
+            Write-Warning "  The service will need to run as administrator to perform updates"
+            $script:SkippedSteps += "Update scheduled task (script not found)"
+        }
+    }
+    catch {
+        Write-Warning "[!] Error creating update scheduled task: $_"
+        Write-Warning "  The service will need to run as administrator to perform updates"
+        Write-Warning "  You can create the task manually later by running create_update_task.ps1"
+        $script:SkippedSteps += "Update scheduled task (error during creation)"
+    }
+    
     # Create desktop shortcut (optional)
     Write-Info "`nCreating shortcuts..."
     try {
