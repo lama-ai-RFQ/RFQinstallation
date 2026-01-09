@@ -2507,10 +2507,10 @@ SeServiceLogonRight = $currentDomain\$currentUser
         
         # Try multiple possible locations
         $possiblePaths = @(
-            Join-Path $projectRoot "windows\create_update_task.ps1",
-            Join-Path $scriptDir "create_update_task.ps1",
-            Join-Path $PWD "windows\create_update_task.ps1",
-            Join-Path $PWD "create_update_task.ps1"
+            (Join-Path $projectRoot "windows\create_update_task.ps1"),
+            (Join-Path $scriptDir "create_update_task.ps1"),
+            (Join-Path $PWD.Path "windows\create_update_task.ps1"),
+            (Join-Path $PWD.Path "create_update_task.ps1")
         )
         
         foreach ($path in $possiblePaths) {
