@@ -197,19 +197,71 @@ Write-Info ""
 # Create task that runs as SYSTEM with highest privileges
 # Use /SC ONCE with a past date so it doesn't run automatically
 # The task will be triggered on-demand using 'schtasks /Run'
-$createCmd = @(
-    "schtasks", "/Create",
-    "/TN", $TaskName,
-    "/TR", "`"$updaterPath`"",
-    "/SC", "ONCE",
-    "/SD", "01/01/2000",  # Past date - task won't run automatically (mm/dd/yyyy format required by Windows)
-    "/ST", "00:00",
-    "/RL", "HIGHEST",     # Run with highest privileges
-    "/RU", "SYSTEM",      # Run as SYSTEM account
-    "/F"                  # Force (overwrite if exists)
-)
+# Note: Use XML import method to properly handle paths with spaces
+# schtasks has issues with quoted paths in command-line arguments
 
-$result = & $createCmd[0] $createCmd[1..($createCmd.Length-1)] 2>&1
+# Create temporary XML file for task definition
+$xmlContent = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>RFQ Application Update Task - Allows the service to trigger updates without admin privileges</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <StartBoundary>2000-01-01T00:00:00</StartBoundary>
+      <Enabled>false</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT72H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$updaterPath</Command>
+      <WorkingDirectory>$InstallPath</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"@
+
+$xmlPath = Join-Path $env:TEMP "RFQUpdateTask.xml"
+$xmlContent | Out-File -FilePath $xmlPath -Encoding Unicode -Force
+
+Write-Info "Generated XML file: $xmlPath"
+Write-Info "Updater path in XML: $updaterPath"
+Write-Info "Working directory in XML: $InstallPath"
+
+# Import the task from XML
+$result = & schtasks.exe /Create /TN $TaskName /XML $xmlPath /F 2>&1
+$exitCode = $LASTEXITCODE
+
+# Clean up temporary XML file
+Remove-Item $xmlPath -ErrorAction SilentlyContinue
+
+$LASTEXITCODE = $exitCode
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success ""
