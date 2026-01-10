@@ -237,9 +237,6 @@ $xmlContent = @"
     <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT72H</ExecutionTimeLimit>
     <Priority>7</Priority>
-    <SecurityDescriptor>
-D:(A;;GRGX;;;BU)(A;;GRGX;;;SY)(A;;GRGX;;;BA)
-    </SecurityDescriptor>
   </Settings>
   <Actions Context="Author">
     <Exec>
