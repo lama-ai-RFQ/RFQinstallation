@@ -2497,66 +2497,158 @@ SeServiceLogonRight = $currentDomain\$currentUser
         }
     }
     
-    # Create scheduled task for updates (allows service to update without admin privileges)
-    Write-Info "`nCreating scheduled task for updates..."
+    # Create updater service (polls for trigger file to perform updates)
+    Write-Info "`nCreating updater service..."
     try {
-        # Find create_update_task.ps1 script (now located in RFQinstallation/ in the repo)
-        $scriptDir = Split-Path -Parent $PSCommandPath
-        $projectRoot = Split-Path -Parent $scriptDir
-        $createTaskScript = $null
+        # Find windows_updater.exe
+        $updaterExePath = Join-Path $InstallPath "windows_updater.exe"
         
-        # Try multiple possible locations
-        $possiblePaths = @(
-            # Preferred (repo layout): RFQinstallation/create_update_task.ps1
-            (Join-Path $projectRoot "RFQinstallation\create_update_task.ps1"),
-            (Join-Path $PWD.Path "RFQinstallation\create_update_task.ps1"),
+        if (Test-Path $updaterExePath) {
+            $UpdaterServiceName = "RFQUpdaterService"
+            $UpdaterServiceDisplayName = "RFQ Application Updater Service"
+            $UpdaterServiceDescription = "Polls for update triggers and applies updates to RFQ Application"
             
-            # If the file was already extracted into the installation directory
-            (Join-Path $InstallPath "create_update_task.ps1"),
+            # Check if updater service already exists
+            $updaterServiceExists = Get-Service -Name $UpdaterServiceName -ErrorAction SilentlyContinue
             
-            # Same directory as this script (e.g., running from repo)
-            (Join-Path $scriptDir "create_update_task.ps1")
-        )
-        
-        foreach ($path in $possiblePaths) {
-            if (Test-Path $path) {
-                $createTaskScript = $path
-                break
+            if ($updaterServiceExists) {
+                Write-Warning "[!] Updater service '$UpdaterServiceName' already exists"
+                Write-Info "  Stopping existing updater service..."
+                try {
+                    Stop-Service -Name $UpdaterServiceName -Force -ErrorAction Stop
+                    Write-Success "  [OK] Stopped existing updater service"
+                }
+                catch {
+                    Write-Warning "  [!] Could not stop existing updater service: $_"
+                }
+                
+                Write-Info "  Removing existing updater service..."
+                try {
+                    sc.exe delete $UpdaterServiceName | Out-Null
+                    Start-Sleep -Seconds 2
+                    Write-Success "  [OK] Removed existing updater service"
+                }
+                catch {
+                    Write-Warning "  [!] Could not remove existing updater service: $_"
+                }
             }
-        }
-        
-        if ($createTaskScript -and (Test-Path $createTaskScript)) {
-            # Copy script to installation directory for user reference
-            $installTaskScript = Join-Path $InstallPath "create_update_task.ps1"
-            Copy-Item -Path $createTaskScript -Destination $installTaskScript -Force
-            Write-Success "[OK] Copied create_update_task.ps1 to installation directory"
             
-            # Run the script to create the scheduled task
-            Write-Info "  Creating update scheduled task (requires admin privileges)..."
-            $taskResult = & powershell.exe -ExecutionPolicy Bypass -File $createTaskScript -InstallPath $InstallPath 2>&1
+            # Create updater service using WinSW
+            $script:updaterServiceCreated = $false
             
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "[OK] Update scheduled task created successfully"
-                Write-Info "  The service can now trigger updates without requiring admin privileges"
-            } else {
-                Write-Warning "[!] Failed to create update scheduled task (exit code: $LASTEXITCODE)"
-                Write-Warning "  The service will need to run as administrator to perform updates"
-                Write-Warning "  You can create the task manually later by running:"
-                Write-Warning "    powershell.exe -ExecutionPolicy Bypass -File `"$installTaskScript`""
-                $script:SkippedSteps += "Update scheduled task (creation failed)"
+            if ($winswPath) {
+                Write-Info "  Using WinSW to create updater service..."
+                try {
+                    # Copy WinSW to installation directory with updater service name
+                    $updaterServiceWinswPath = Join-Path $InstallPath "$UpdaterServiceName.exe"
+                    Copy-Item $winswPath $updaterServiceWinswPath -Force
+                    
+                    # Create WinSW XML configuration file for updater
+                    $updaterXmlConfigPath = Join-Path $InstallPath "$UpdaterServiceName.xml"
+                    $updaterXmlContent = @"
+<service>
+  <id>$UpdaterServiceName</id>
+  <name>$UpdaterServiceDisplayName</name>
+  <description>$UpdaterServiceDescription</description>
+  <executable>$updaterExePath</executable>
+  <arguments>--service</arguments>
+  <workingdirectory>$InstallPath</workingdirectory>
+  <startmode>Automatic</startmode>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <logpath>$logDir</logpath>
+</service>
+"@
+                    Set-Content -Path $updaterXmlConfigPath -Value $updaterXmlContent -Force
+                    
+                    # Install updater service using WinSW
+                    Write-Info "  Installing updater service..."
+                    $winswUpdaterOutput = & $updaterServiceWinswPath install 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "[OK] Updater service '$UpdaterServiceName' created successfully using WinSW"
+                        $script:updaterServiceCreated = $true
+                        
+                        # Start the updater service
+                        Write-Info "  Starting updater service..."
+                        try {
+                            Start-Service -Name $UpdaterServiceName -ErrorAction Stop
+                            Write-Success "  [OK] Updater service started successfully"
+                            Write-Info "  The updater service is now polling for update triggers"
+                        }
+                        catch {
+                            Write-Warning "  [!] Could not start updater service: $_"
+                            Write-Info "  You can start it manually: sc start $UpdaterServiceName"
+                        }
+                    } else {
+                        Write-Warning "  [!] WinSW updater service creation failed (exit code: $LASTEXITCODE)"
+                        if ($winswUpdaterOutput) {
+                            Write-Warning "    Error: $winswUpdaterOutput"
+                        }
+                    }
+                }
+                catch {
+                    Write-Warning "  [!] Failed to create updater service with WinSW: $_"
+                }
+            }
+            
+            # Fallback to sc.exe if WinSW failed or is not available
+            if (-not $script:updaterServiceCreated) {
+                Write-Info "  Using sc.exe to create updater service..."
+                try {
+                    $updaterExePathQuoted = "`"$updaterExePath`" --service"
+                    $createOutput = sc.exe create $UpdaterServiceName binPath= $updaterExePathQuoted start= auto DisplayName= $UpdaterServiceDisplayName 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Success "[OK] Updater service '$UpdaterServiceName' created successfully"
+                        $script:updaterServiceCreated = $true
+                        
+                        # Set service description
+                        try {
+                            sc.exe description $UpdaterServiceName $UpdaterServiceDescription | Out-Null
+                        }
+                        catch {
+                            Write-Warning "  [!] Could not set updater service description: $_"
+                        }
+                        
+                        # Start the updater service
+                        Write-Info "  Starting updater service..."
+                        try {
+                            Start-Service -Name $UpdaterServiceName -ErrorAction Stop
+                            Write-Success "  [OK] Updater service started successfully"
+                        }
+                        catch {
+                            Write-Warning "  [!] Could not start updater service: $_"
+                            Write-Info "  You can start it manually: sc start $UpdaterServiceName"
+                        }
+                    }
+                    else {
+                        Write-Warning "[!] Failed to create updater service (exit code: $LASTEXITCODE)"
+                        $script:SkippedSteps += "Updater service (creation failed)"
+                    }
+                }
+                catch {
+                    Write-Warning "[!] Could not create updater service: $_"
+                    $script:SkippedSteps += "Updater service (creation error)"
+                }
+            }
+            
+            if ($script:updaterServiceCreated) {
+                Write-Info ""
+                Write-Info "  The updater service will poll for file: $InstallPath\update.trigger"
+                Write-Info "  The main application can trigger updates by writing to this file"
             }
         } else {
-            Write-Warning "[!] create_update_task.ps1 script not found"
-            Write-Warning "  Update scheduled task will not be created automatically"
-            Write-Warning "  The service will need to run as administrator to perform updates"
-            $script:SkippedSteps += "Update scheduled task (script not found)"
+            Write-Warning "[!] windows_updater.exe not found at: $updaterExePath"
+            Write-Warning "  Updater service will not be created"
+            $script:SkippedSteps += "Updater service (windows_updater.exe not found)"
         }
     }
     catch {
-        Write-Warning "[!] Error creating update scheduled task: $_"
-        Write-Warning "  The service will need to run as administrator to perform updates"
-        Write-Warning "  You can create the task manually later by running create_update_task.ps1"
-        $script:SkippedSteps += "Update scheduled task (error during creation)"
+        Write-Warning "[!] Error creating updater service: $_"
+        $script:SkippedSteps += "Updater service (error during creation)"
     }
     
     # Create desktop shortcut (optional)
