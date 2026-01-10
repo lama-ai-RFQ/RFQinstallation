@@ -998,10 +998,11 @@ begin
   ServiceAccountPage.SelectedValueIndex := 0;  // Default to Current User
   
   // Add warning label about Windows Credential Manager requirement
+  // Position it below the option radio buttons (typically around ScaleY(200))
   ServiceAccountWarningLabel := TLabel.Create(ServiceAccountPage);
   ServiceAccountWarningLabel.Parent := ServiceAccountPage.Surface;
   ServiceAccountWarningLabel.Left := 0;
-  ServiceAccountWarningLabel.Top := ServiceAccountPage.Edits[0].Top + ServiceAccountPage.Edits[0].Height + ScaleY(20);
+  ServiceAccountWarningLabel.Top := ScaleY(200);
   ServiceAccountWarningLabel.Width := ServiceAccountPage.SurfaceWidth;
   ServiceAccountWarningLabel.Height := ScaleY(60);
   ServiceAccountWarningLabel.AutoSize := False;
