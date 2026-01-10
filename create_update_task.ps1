@@ -279,6 +279,23 @@ if ($LASTEXITCODE -eq 0) {
     Write-Info ""
     Write-Success "The service account does NOT need administrator privileges to trigger this task."
     Write-Success ""
+    
+    # Grant Authenticated Users permission to RUN the task
+    Write-Info "Granting Authenticated Users permission to run the task..."
+    try {
+        $task = Get-ScheduledTask -TaskName $TaskName
+        $sd = $task.SecurityDescriptorSddl
+        
+        # Grant Authenticated Users permission to RUN the task
+        # GR = Execute
+        $sd += "(A;;GR;;;AU)"
+        
+        Set-ScheduledTask -TaskName $TaskName -SecurityDescriptorSddl $sd
+        Write-Success "Successfully granted Authenticated Users permission to run the task"
+    } catch {
+        Write-Warning "Could not modify task security descriptor: $_"
+        Write-Warning "The task was created but may require manual permission configuration"
+    }
 } else {
     Write-Error-Custom ""
     Write-Error-Custom "[FAIL] Failed to create scheduled task"
