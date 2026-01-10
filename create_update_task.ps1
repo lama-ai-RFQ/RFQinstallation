@@ -241,6 +241,7 @@ $xmlContent = @"
   <Actions Context="Author">
     <Exec>
       <Command>$updaterPath</Command>
+      <Arguments>--scheduled</Arguments>
       <WorkingDirectory>$InstallPath</WorkingDirectory>
     </Exec>
   </Actions>
