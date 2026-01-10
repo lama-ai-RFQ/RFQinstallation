@@ -95,6 +95,8 @@ var
   AzureKeyPage: TInputOptionWizardPage;
   AzureKeyInputPage: TInputQueryWizardPage;
   CredentialManagerPage: TInputOptionWizardPage;
+  ServiceAccountPage: TInputOptionWizardPage;
+  ServiceAccountWarningLabel: TLabel;
   // Password visibility checkboxes
   AWSSecretShowCheck: TNewCheckBox;
   SettingsPasswordShowCheck: TNewCheckBox;
@@ -983,6 +985,33 @@ begin
   CredentialManagerPage.Add('Use Windows Credential Manager (recommended - more secure)');
   CredentialManagerPage.Add('Store in .env file (less secure but portable)');
   CredentialManagerPage.SelectedValueIndex := 0;  // Default to Credential Manager
+  
+  // Create Windows Service Account page
+  ServiceAccountPage := CreateInputOptionPage(CredentialManagerPage.ID,
+    'Windows Service Configuration', 'Service Account Selection',
+    'Choose which account the Windows service should run as:' + #13#10 + #13#10 +
+    'The service account determines what permissions and resources the service can access.',
+    True, False);
+  ServiceAccountPage.Add('Current User (for Windows Credential Manager)');
+  ServiceAccountPage.Add('Network Service');
+  ServiceAccountPage.Add('Local System (SYSTEM)');
+  ServiceAccountPage.SelectedValueIndex := 0;  // Default to Current User
+  
+  // Add warning label about Windows Credential Manager requirement
+  ServiceAccountWarningLabel := TLabel.Create(ServiceAccountPage);
+  ServiceAccountWarningLabel.Parent := ServiceAccountPage.Surface;
+  ServiceAccountWarningLabel.Left := 0;
+  ServiceAccountWarningLabel.Top := ServiceAccountPage.Edits[0].Top + ServiceAccountPage.Edits[0].Height + ScaleY(20);
+  ServiceAccountWarningLabel.Width := ServiceAccountPage.SurfaceWidth;
+  ServiceAccountWarningLabel.Height := ScaleY(60);
+  ServiceAccountWarningLabel.AutoSize := False;
+  ServiceAccountWarningLabel.WordWrap := True;
+  ServiceAccountWarningLabel.Font.Size := 8;
+  ServiceAccountWarningLabel.Font.Color := clMaroon;
+  ServiceAccountWarningLabel.Caption := '⚠ WARNING: If you selected "Use Windows Credential Manager" on the previous page,' + #13#10 +
+    'the service MUST run as "Current User" to access user-specific credentials.' + #13#10 +
+    'If you choose Network Service or Local System, you will need to manually' + #13#10 +
+    'change the service account to a user account after installation.';
 end;
 
 procedure LoadExistingEnvValues();
@@ -1305,6 +1334,17 @@ begin
     else
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', 'False');
   end;
+  
+  // Store Service Account preference
+  if CurPageID = ServiceAccountPage.ID then
+  begin
+    // 0 = Current User, 1 = Network Service, 2 = Local System
+    case ServiceAccountPage.SelectedValueIndex of
+      0: RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', 'CurrentUser');
+      1: RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', 'NetworkService');
+      2: RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', 'LocalSystem');
+    end;
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -1350,6 +1390,7 @@ var
   CleanupAfterInstall: Boolean;
   UpdateChannel: String;
   UseCredentialManager: Boolean;
+  ServiceAccount: String;
   ModelDownloadStr: String;
   AzureKeyGenerateStr: String;
   CleanReinstallStr: String;
@@ -1404,6 +1445,10 @@ begin
   else
     UseCredentialManager := True;  // Default to Credential Manager
   
+  // Read ServiceAccount from registry (default to CurrentUser if not set)
+  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', ServiceAccount) then
+    ServiceAccount := 'CurrentUser';  // Default to Current User
+  
   // If ModelPath is empty, use default
   if ModelPath = '' then
     ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
@@ -1440,6 +1485,9 @@ begin
   // Add Credential Manager flag
   if UseCredentialManager then
     Params := Params + ' -UseCredentialManager';
+  
+  // Add Service Account parameter
+  Params := Params + ' -ServiceAccount "' + ServiceAccount + '"';
   
   // Add database passwords
   if SettingsPassword <> '' then
