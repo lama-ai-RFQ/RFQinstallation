@@ -1441,6 +1441,15 @@ if (Test-Path $EnvTemplatePath) {
     if ($EnvContent -notmatch "SERVER_URL") {
         $EnvContent += "`nSERVER_URL=$ServerURL"
     }
+    if ($EnvContent -notmatch "PORT") {
+        $EnvContent += "`nPORT=8000"
+    }
+    if ($EnvContent -notmatch "OAUTH_PORT_LOGIN") {
+        $EnvContent += "`nOAUTH_PORT_LOGIN=8502"
+    }
+    if ($EnvContent -notmatch "OAUTH_PORT_SEND_RECEIVE") {
+        $EnvContent += "`nOAUTH_PORT_SEND_RECEIVE=8502"
+    }
     if ($EnvContent -notmatch "DEBUG_THREAD") {
         $EnvContent += "`nDEBUG_THREAD=0"
     }
