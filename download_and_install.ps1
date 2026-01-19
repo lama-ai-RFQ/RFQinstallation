@@ -2208,8 +2208,31 @@ if ($ExePath) {
         Write-Info "  Removing existing service..."
         try {
             sc.exe delete $ServiceName | Out-Null
-            Start-Sleep -Seconds 2
-            Write-Success "  [OK] Removed existing service"
+            
+            # Wait for service to be fully deleted (can take 5-30 seconds)
+            Write-Info "  Waiting for service deletion to complete..."
+            $maxWait = 30  # Maximum wait time in seconds
+            $waited = 0
+            $serviceStillExists = $true
+            
+            while ($serviceStillExists -and $waited -lt $maxWait) {
+                Start-Sleep -Seconds 2
+                $waited += 2
+                $checkService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                if (-not $checkService) {
+                    $serviceStillExists = $false
+                    Write-Success "  [OK] Service fully removed (waited $waited seconds)"
+                } else {
+                    Write-Info "    Still waiting... ($waited/$maxWait seconds)"
+                }
+            }
+            
+            if ($serviceStillExists) {
+                Write-Warning "  [!] Service still exists after $maxWait seconds - may be marked for deletion"
+                Write-Warning "  [!] You may need to restart the system or wait longer"
+            } else {
+                Write-Success "  [OK] Removed existing service"
+            }
         }
         catch {
             Write-Warning "  [!] Could not remove existing service: $_"
@@ -2251,12 +2274,29 @@ if ($ExePath) {
     if ($winswPath) {
         Write-Info "  Using WinSW to create service (recommended for GUI applications)..."
         try {
-            # Remove service if it exists
+            # Remove service if it exists (with proper wait)
             $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
             if ($existingService) {
                 Write-Info "    Removing existing service first..."
                 sc.exe delete $ServiceName | Out-Null
-                Start-Sleep -Seconds 2
+                
+                # Wait for service to be fully deleted
+                $maxWait = 30
+                $waited = 0
+                $serviceStillExists = $true
+                
+                while ($serviceStillExists -and $waited -lt $maxWait) {
+                    Start-Sleep -Seconds 2
+                    $waited += 2
+                    $checkService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                    if (-not $checkService) {
+                        $serviceStillExists = $false
+                    }
+                }
+                
+                if ($serviceStillExists) {
+                    Write-Warning "    [!] Service still marked for deletion - creation may fail"
+                }
             }
             
             # Copy WinSW to installation directory with service name
@@ -2522,6 +2562,8 @@ Revision=1
                 if ($winswOutput) {
                     Write-Warning "    Error: $winswOutput"
                 }
+                Write-Warning "  [!] Service may be left in 'marked for deletion' state"
+                Write-Warning "  [!] Solution: Restart the system, or wait 30+ seconds and try again"
             }
         }
         catch {
@@ -2570,6 +2612,8 @@ Revision=1
                     Write-Warning "  Error output: $createOutputString"
                 }
                 Write-Warning "  Service creation may require administrator privileges"
+                Write-Warning "  If service was deleted but creation failed, it may be 'marked for deletion'"
+                Write-Warning "  Solution: Restart the system, or wait 30+ seconds and run installer again"
             }
         }
         catch {
@@ -2622,8 +2666,30 @@ Revision=1
                 Write-Info "  Removing existing updater service..."
                 try {
                     sc.exe delete $UpdaterServiceName | Out-Null
-                    Start-Sleep -Seconds 2
-                    Write-Success "  [OK] Removed existing updater service"
+                    
+                    # Wait for service to be fully deleted
+                    Write-Info "  Waiting for updater service deletion to complete..."
+                    $maxWait = 30
+                    $waited = 0
+                    $serviceStillExists = $true
+                    
+                    while ($serviceStillExists -and $waited -lt $maxWait) {
+                        Start-Sleep -Seconds 2
+                        $waited += 2
+                        $checkService = Get-Service -Name $UpdaterServiceName -ErrorAction SilentlyContinue
+                        if (-not $checkService) {
+                            $serviceStillExists = $false
+                            Write-Success "  [OK] Updater service fully removed (waited $waited seconds)"
+                        } else {
+                            Write-Info "    Still waiting... ($waited/$maxWait seconds)"
+                        }
+                    }
+                    
+                    if ($serviceStillExists) {
+                        Write-Warning "  [!] Updater service still exists after $maxWait seconds - may be marked for deletion"
+                    } else {
+                        Write-Success "  [OK] Removed existing updater service"
+                    }
                 }
                 catch {
                     Write-Warning "  [!] Could not remove existing updater service: $_"
