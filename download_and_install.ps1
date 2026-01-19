@@ -2446,6 +2446,32 @@ if ($ExePath) {
                 }
             }
             
+            # Build serviceaccount XML section if user account is configured
+            if ($targetServiceAccount -and $targetServiceAccount -notmatch "^(LocalSystem|NT AUTHORITY\\NETWORK SERVICE)$" -and $serviceAccountPassword) {
+                # Normalize account format for XML (WinSW prefers .\user format for local accounts)
+                $xmlAccountName = $targetServiceAccount
+                if ($targetServiceAccount -match "^$([regex]::Escape($env:COMPUTERNAME))\\(.+)$") {
+                    # Convert COMPUTERNAME\user to .\user for local accounts
+                    $xmlAccountName = ".\$($matches[1])"
+                }
+                
+                $serviceAccountXml = @"
+
+  <serviceaccount>
+      <username>$xmlAccountName</username>
+      <password>$serviceAccountPassword</password>
+      <loaduserprofile>true</loaduserprofile>
+  </serviceaccount>
+"@
+                Write-Info "  Service account will be configured in WinSW XML (password stored in XML file)"
+            } elseif ($targetServiceAccount -and $targetServiceAccount -match "^(LocalSystem|NT AUTHORITY\\NETWORK SERVICE)$") {
+                # Built-in accounts don't need serviceaccount section
+                $serviceAccountXml = ""
+            } else {
+                # No service account configured
+                $serviceAccountXml = ""
+            }
+            
             $xmlContent = @"
 <service>
   <id>$ServiceName</id>
