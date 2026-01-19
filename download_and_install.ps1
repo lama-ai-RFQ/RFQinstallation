@@ -2253,12 +2253,16 @@ if ($ExePath) {
     
     # Check for NSSM in common locations
     $nssmPath = $null
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    $currentDir = Get-Location
     $nssmLocations = @(
+        "$scriptDir\nssm.exe",  # Same folder as script
+        "$currentDir\nssm.exe",  # Current working directory
+        "$InstallPath\nssm.exe",  # Installation directory
         "C:\Program Files\nssm\nssm.exe",
         "C:\Program Files (x86)\nssm\nssm.exe",
         "$env:ProgramFiles\nssm\nssm.exe",
-        "$env:ProgramFiles(x86)\nssm\nssm.exe",
-        "$InstallPath\nssm.exe"
+        "$env:ProgramFiles(x86)\nssm\nssm.exe"
     )
     
     # Check if NSSM is in PATH
