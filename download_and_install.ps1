@@ -123,12 +123,44 @@ function Save-ToCredentialManager {
     param(
         [string]$TargetName,
         [string]$UserName,
-        [string]$Password
+        [string]$Password,
+        [string]$ServiceAccount = $null,
+        [string]$ServiceAccountPassword = $null
     )
     
     try {
+        # If service account is provided, save credentials as that user (so service can access them)
+        # Otherwise, save to current user (for manual testing/development)
+        if ($ServiceAccount -and $ServiceAccountPassword) {
+            Write-Verbose "Saving credential $TargetName as service account: $ServiceAccount"
+            
+            # Use PowerShell to run cmdkey as the service user
+            # Create a script block that runs cmdkey as the service user
+            $scriptBlock = {
+                param($Target, $User, $Pass)
+                cmdkey.exe /generic:$Target /user:$User /pass:$Pass
+            }
+            
+            # Create credential object for the service account
+            $securePassword = ConvertTo-SecureString $ServiceAccountPassword -AsPlainText -Force
+            $serviceCredential = New-Object System.Management.Automation.PSCredential($ServiceAccount, $securePassword)
+            
+            # Run cmdkey as the service user
+            $output = Invoke-Command -Credential $serviceCredential -ScriptBlock $scriptBlock -ArgumentList $TargetName, $UserName, $Password -ErrorAction SilentlyContinue 2>&1
+            
+            if ($LASTEXITCODE -eq 0 -or $output -match "successfully") {
+                Write-Verbose "Successfully saved credential: $TargetName (as service account)"
+                return $true
+            } else {
+                Write-Warning "Failed to save credential as service account, trying current user..."
+                # Fall through to current user method
+            }
+        }
+        
+        # Fallback: Save to current user (for development or if service account method fails)
+        Write-Verbose "Saving credential $TargetName to current user's credential store"
+        
         # Check if credential already exists and delete it first
-        # cmdkey.exe will fail if the target already exists
         $checkProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list:$TargetName" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_check.txt" -RedirectStandardError "$env:TEMP\cmdkey_check_err.txt"
         
         if ($checkProcess.ExitCode -eq 0) {
@@ -153,7 +185,11 @@ function Save-ToCredentialManager {
         $exitCode = $LASTEXITCODE
         
         if ($exitCode -eq 0) {
-            Write-Verbose "Successfully saved credential: $TargetName"
+            Write-Verbose "Successfully saved credential: $TargetName (to current user)"
+            if ($ServiceAccount) {
+                Write-Warning "  Note: Credential saved to current user's store. Service account may not be able to access it."
+                Write-Warning "  Consider saving credentials as the service user after service installation."
+            }
             return $true
         } else {
             $errorMsg = $output | Out-String
@@ -166,6 +202,68 @@ function Save-ToCredentialManager {
     }
     catch {
         Write-Warning "Error saving credential to Windows Credential Manager: $_"
+        return $false
+    }
+}
+
+function Save-ToCredentialManagerAsUser {
+    param(
+        [string]$TargetName,
+        [string]$UserName,
+        [string]$Password,
+        [string]$ServiceAccount,
+        [string]$ServiceAccountPassword
+    )
+    
+    try {
+        # Use runas to execute cmdkey as the service user
+        # Create a temporary PowerShell script that runs cmdkey
+        $tempScript = Join-Path $env:TEMP "save_credential_$(Get-Random).ps1"
+        $scriptContent = @"
+`$ErrorActionPreference = 'Stop'
+cmdkey.exe /generic:$TargetName /user:$UserName /pass:$Password
+if (`$LASTEXITCODE -eq 0) {
+    Write-Host "SUCCESS"
+    exit 0
+} else {
+    Write-Host "FAILED"
+    exit 1
+}
+"@
+        Set-Content -Path $tempScript -Value $scriptContent -Force
+        
+        # Use runas to execute as service user
+        # Note: runas requires interactive password entry, so we use Start-Process with credentials instead
+        $securePassword = ConvertTo-SecureString $ServiceAccountPassword -AsPlainText -Force
+        $credential = New-Object System.Management.Automation.PSCredential($ServiceAccount, $securePassword)
+        
+        # Use Start-Process with credentials to run PowerShell as the service user
+        $process = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$tempScript`"" `
+            -Credential $credential `
+            -Wait `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput "$env:TEMP\credential_save_output.txt" `
+            -RedirectStandardError "$env:TEMP\credential_save_error.txt"
+        
+        $success = $false
+        if ($process.ExitCode -eq 0) {
+            $output = Get-Content "$env:TEMP\credential_save_output.txt" -ErrorAction SilentlyContinue
+            if ($output -match "SUCCESS") {
+                $success = $true
+            }
+        }
+        
+        # Cleanup
+        Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\credential_save_output.txt" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\credential_save_error.txt" -ErrorAction SilentlyContinue
+        
+        return $success
+    }
+    catch {
+        Write-Verbose "Error saving credential as service user: $_"
         return $false
     }
 }
@@ -1308,69 +1406,67 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = Get-Content $EnvPath -Raw
     
     # Store passwords in Windows Credential Manager if enabled
+    # Note: Credentials will be saved to the service user's store AFTER the service account is configured
+    # For now, we just store the passwords temporarily so they can be saved later
+    $script:PasswordsToSave = @()
+    
     if ($UseCredentialManagerForPasswords) {
-        Write-Info "  Storing passwords in Windows Credential Manager..."
+        Write-Info "  Passwords will be stored in Windows Credential Manager..."
+        Write-Info "  Note: Credentials will be saved to the service user's credential store after service configuration"
         
-        # Save passwords to Credential Manager (skip if already stored)
-        $credentialSaved = $true
+        # Store passwords temporarily (will be saved as service user after service account is configured)
         $anyPasswordStored = $false
         
         if (!$SuperUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication_SQL_SUPER_USER"
-            if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
-                Write-Success "    [OK] Saved SQL_SUPER_USER as generic credential in Windows Credential Manager"
-                $anyPasswordStored = $true
-            } else {
-                $credentialSaved = $false
+            $script:PasswordsToSave += @{
+                TargetName = "RFQApplication_SQL_SUPER_USER"
+                UserName = "postgres"
+                Password = $SuperUserPassword
             }
+            $anyPasswordStored = $true
         } elseif ($SuperUserPasswordAlreadyStored) {
             Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
             $anyPasswordStored = $true
         }
         
         if (!$RFQUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication_RFQ_USER_PASSWORD"
-            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
-                Write-Success "    [OK] Saved RFQ_USER_PASSWORD as generic credential in Windows Credential Manager"
-                $anyPasswordStored = $true
-            } else {
-                $credentialSaved = $false
+            $script:PasswordsToSave += @{
+                TargetName = "RFQApplication_RFQ_USER_PASSWORD"
+                UserName = "rfq_user"
+                Password = $RFQUserPassword
             }
+            $anyPasswordStored = $true
         } elseif ($RFQUserPasswordAlreadyStored) {
             Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
             $anyPasswordStored = $true
         }
         
         if (!$SettingsPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication_SETTINGS_PASSWORD"
-            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
-                Write-Success "    [OK] Saved SETTINGS_PASSWORD as generic credential in Windows Credential Manager"
-                $anyPasswordStored = $true
-            } else {
-                $credentialSaved = $false
+            $script:PasswordsToSave += @{
+                TargetName = "RFQApplication_SETTINGS_PASSWORD"
+                UserName = "rfq_app"
+                Password = $SettingsPassword
             }
+            $anyPasswordStored = $true
         } elseif ($SettingsPasswordAlreadyStored) {
             Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
             $anyPasswordStored = $true
         }
         
-        if ($credentialSaved -and $anyPasswordStored) {
-            Write-Success "  [OK] Passwords configured in Windows Credential Manager"
-            # Use placeholders in .env file for all passwords (whether newly stored or already stored)
+        if ($anyPasswordStored) {
+            Write-Info "  Passwords will be saved to service user's credential store after service account is configured"
+        }
+        
+        if ($anyPasswordStored) {
+            # Use placeholders in .env file - passwords will be saved to service user's store after service configuration
             $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
             $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
             $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
-        } elseif (!$credentialSaved) {
-            Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
-            $UseCredentialManagerForPasswords = $false
+        } else {
+            # No passwords to save, use defaults
             $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
             $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
             $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
-        } else {
-            # All passwords were already stored, use placeholders
-            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
-            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
-            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
         }
     } else {
         # Store passwords in .env file (traditional method)
@@ -1489,21 +1585,23 @@ else {
     $settingsPasswordValue = $SettingsPassword
     
     if ($UseCredentialManagerForPasswords) {
-        Write-Info "  Storing passwords in Windows Credential Manager..."
+        Write-Info "  Passwords will be stored in Windows Credential Manager..."
+        Write-Info "  Note: Credentials will be saved to the service user's credential store after service configuration"
         
-        # Save passwords to Credential Manager (skip if already stored)
-        $credentialSaved = $true
+        # Store passwords temporarily (will be saved as service user after service account is configured)
         $anyPasswordStored = $false
         
         if (!$SuperUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication_SQL_SUPER_USER"
-            if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
-                Write-Success "    [OK] Saved SQL_SUPER_USER as generic credential in Windows Credential Manager"
-                $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
-                $anyPasswordStored = $true
-            } else {
-                $credentialSaved = $false
+            if (-not $script:PasswordsToSave) {
+                $script:PasswordsToSave = @()
             }
+            $script:PasswordsToSave += @{
+                TargetName = "RFQApplication_SQL_SUPER_USER"
+                UserName = "postgres"
+                Password = $SuperUserPassword
+            }
+            $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
         } elseif ($SuperUserPasswordAlreadyStored) {
             Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
             $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
@@ -1511,14 +1609,16 @@ else {
         }
         
         if (!$RFQUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication_RFQ_USER_PASSWORD"
-            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
-                Write-Success "    [OK] Saved RFQ_USER_PASSWORD as generic credential in Windows Credential Manager"
-                $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
-                $anyPasswordStored = $true
-            } else {
-                $credentialSaved = $false
+            if (-not $script:PasswordsToSave) {
+                $script:PasswordsToSave = @()
             }
+            $script:PasswordsToSave += @{
+                TargetName = "RFQApplication_RFQ_USER_PASSWORD"
+                UserName = "rfq_user"
+                Password = $RFQUserPassword
+            }
+            $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
         } elseif ($RFQUserPasswordAlreadyStored) {
             Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
             $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
@@ -1526,31 +1626,29 @@ else {
         }
         
         if (!$SettingsPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
-            $targetName = "RFQApplication_SETTINGS_PASSWORD"
-            if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
-                Write-Success "    [OK] Saved SETTINGS_PASSWORD as generic credential in Windows Credential Manager"
-                $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
-                $anyPasswordStored = $true
-            } else {
-                $credentialSaved = $false
+            if (-not $script:PasswordsToSave) {
+                $script:PasswordsToSave = @()
             }
+            $script:PasswordsToSave += @{
+                TargetName = "RFQApplication_SETTINGS_PASSWORD"
+                UserName = "rfq_app"
+                Password = $SettingsPassword
+            }
+            $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
         } elseif ($SettingsPasswordAlreadyStored) {
             Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
             $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
             $anyPasswordStored = $true
         }
         
-        if ($credentialSaved -and $anyPasswordStored) {
-            Write-Success "  [OK] Passwords configured in Windows Credential Manager"
-        } elseif (!$credentialSaved) {
-            Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
-            $UseCredentialManagerForPasswords = $false
+        if ($anyPasswordStored) {
+            Write-Info "  Passwords will be saved to service user's credential store after service account is configured"
+        } else {
+            # No passwords to save, use defaults
             $sqlSuperUserValue = $SuperUserPassword
             $rfqUserPasswordValue = $RFQUserPassword
             $settingsPasswordValue = $SettingsPassword
-        } else {
-            # All passwords were already stored
-            Write-Success "  [OK] Passwords already configured in Windows Credential Manager"
         }
     }
     
@@ -2532,6 +2630,34 @@ Revision=1
                         
                         if ($LASTEXITCODE -eq 0) {
                             Write-Success "  [OK] Service account configured successfully (password stored securely)"
+                            
+                            # Save credentials to service user's credential store (so service can access them)
+                            if ($UseCredentialManagerForPasswords -and $script:PasswordsToSave -and $script:PasswordsToSave.Count -gt 0) {
+                                Write-Info "  Saving credentials to service user's credential store..."
+                                
+                                # Save each password as the service user
+                                foreach ($credInfo in $script:PasswordsToSave) {
+                                    $saveResult = Save-ToCredentialManagerAsUser `
+                                        -TargetName $credInfo.TargetName `
+                                        -UserName $credInfo.UserName `
+                                        -Password $credInfo.Password `
+                                        -ServiceAccount $nssmAccountName `
+                                        -ServiceAccountPassword $serviceAccountPassword
+                                    
+                                    if ($saveResult) {
+                                        Write-Success "    [OK] Saved $($credInfo.TargetName) to service user's credential store"
+                                    } else {
+                                        Write-Warning "    [!] Failed to save $($credInfo.TargetName) to service user's credential store"
+                                        Write-Warning "        Will try saving to current user's store as fallback..."
+                                        # Fallback: save to current user (better than nothing)
+                                        $fallbackResult = Save-ToCredentialManager -TargetName $credInfo.TargetName -UserName $credInfo.UserName -Password $credInfo.Password
+                                        if ($fallbackResult) {
+                                            Write-Warning "        Saved to current user's store (service may not be able to access)"
+                                        }
+                                    }
+                                }
+                            }
+                            
                             if ($UseCredentialManager) {
                                 Write-Info "  Service will now be able to access Windows Credential Manager credentials"
                             }
