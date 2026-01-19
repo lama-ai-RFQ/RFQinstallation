@@ -50,9 +50,9 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "env.template"; DestDir: "{app}"; DestName: ".env.template"; Flags: ignoreversion
 Source: "setup_database_auto.ps1"; DestDir: "{app}"; Flags: ignoreversion
-; Include WinSW for service creation
-Source: "WinSW.exe"; DestDir: "{pf}\WinSW"; Flags: ignoreversion
-Source: "WinSW.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Include NSSM for service creation
+Source: "nssm.exe"; DestDir: "{pf}\nssm"; Flags: ignoreversion
+Source: "nssm.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -77,7 +77,7 @@ var
   PostgreSQLLabel: TLabel;
   OpenSSLLabel: TLabel;
   PythonLabel: TLabel;
-  WinSWLabel: TLabel;
+  NSSMLabel: TLabel;
   ServiceInfoPage: TWizardPage;
   ServiceInfoLabel: TLabel;
   CleanReinstallPage: TInputOptionWizardPage;
@@ -359,15 +359,15 @@ begin
   end;
 end;
 
-function CheckWinSWInstalled(): Boolean;
+function CheckNSSMInstalled(): Boolean;
 var
   ResultCode: Integer;
-  WinSWPath: String;
+  NSSMPath: String;
 begin
   Result := False;
   
-  // Check if WinSW.exe is in PATH using 'where' command
-  if Exec('cmd.exe', '/c where WinSW >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  // Check if nssm.exe is in PATH using 'where' command
+  if Exec('cmd.exe', '/c where nssm >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     if ResultCode = 0 then
     begin
@@ -376,16 +376,16 @@ begin
     end;
   end;
   
-  // Check common WinSW installation locations
-  WinSWPath := ExpandConstant('{pf}\WinSW\WinSW.exe');
-  if FileExists(WinSWPath) then
+  // Check common NSSM installation locations
+  NSSMPath := ExpandConstant('{pf}\nssm\nssm.exe');
+  if FileExists(NSSMPath) then
   begin
     Result := True;
     Exit;
   end;
   
-  WinSWPath := ExpandConstant('{pf32}\WinSW\WinSW.exe');
-  if FileExists(WinSWPath) then
+  NSSMPath := ExpandConstant('{pf32}\nssm\nssm.exe');
+  if FileExists(NSSMPath) then
   begin
     Result := True;
     Exit;
@@ -581,81 +581,86 @@ begin
   end;
 end;
 
-function DownloadWinSW(): Boolean;
+function DownloadNSSM(): Boolean;
 var
-  WinSWUrl: String;
-  WinSWExe: String;
-  WinSWTargetDir: String;
+  NSSMUrl: String;
+  NSSMExe: String;
+  NSSMTargetDir: String;
   ResultCode: Integer;
   PowerShellScript: String;
 begin
   Result := False;
   
-  // WinSW download URL (latest stable release - x64)
-  // Check https://github.com/winsw/winsw/releases/latest for the latest version
-  WinSWUrl := 'https://github.com/winsw/winsw/releases/download/v3.0.0-alpha.11/WinSW-x64.exe';
-  WinSWExe := ExpandConstant('{tmp}\WinSW.exe');
-  WinSWTargetDir := ExpandConstant('{pf}\WinSW');
+  // NSSM download URL (latest stable release - x64)
+  // Check https://nssm.cc/download for the latest version
+  NSSMUrl := 'https://nssm.cc/release/nssm-2.24.zip';
+  NSSMExe := ExpandConstant('{tmp}\nssm.exe');
+  NSSMTargetDir := ExpandConstant('{pf}\nssm');
   
   try
-    Log('Downloading WinSW from ' + WinSWUrl);
+    Log('Downloading NSSM from ' + NSSMUrl);
     
-    // Use PowerShell to download WinSW
+    // Use PowerShell to download NSSM
+    // NSSM is distributed as a ZIP file, we need to extract nssm.exe from win64 folder
     PowerShellScript := '-NoProfile -ExecutionPolicy Bypass -Command "' +
       'try { ' +
       '  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; ' +
-      '  Invoke-WebRequest -Uri ''' + WinSWUrl + ''' -OutFile ''' + WinSWExe + ''' -UseBasicParsing; ' +
-      '  if (Test-Path ''' + WinSWExe + ''') { Write-Host ''DOWNLOADED'' } else { Write-Host ''FAILED''; exit 1 } ' +
+      '  $zipPath = ''' + ExpandConstant('{tmp}\nssm.zip') + '''; ' +
+      '  Invoke-WebRequest -Uri ''' + NSSMUrl + ''' -OutFile $zipPath -UseBasicParsing; ' +
+      '  Expand-Archive -Path $zipPath -DestinationPath ''' + ExpandConstant('{tmp}\nssm') + ''' -Force; ' +
+      '  $nssmExe = Get-ChildItem -Path ''' + ExpandConstant('{tmp}\nssm') + ''' -Recurse -Filter ''nssm.exe'' | Select-Object -First 1; ' +
+      '  if ($nssmExe) { Copy-Item $nssmExe.FullName ''' + NSSMExe + ''' -Force; Write-Host ''DOWNLOADED'' } else { Write-Host ''FAILED''; exit 1 } ' +
       '} catch { Write-Host ''FAILED''; exit 1 }"';
     
     if Exec('powershell.exe', PowerShellScript, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
       if ResultCode <> 0 then
       begin
-        Log('Failed to download WinSW: PowerShell returned error code ' + IntToStr(ResultCode));
+        Log('Failed to download NSSM: PowerShell returned error code ' + IntToStr(ResultCode));
         Exit;
       end;
     end
     else
     begin
-      Log('Failed to download WinSW: Could not execute PowerShell');
+      Log('Failed to download NSSM: Could not execute PowerShell');
       Exit;
     end;
     
-    if not FileExists(WinSWExe) then
+    if not FileExists(NSSMExe) then
     begin
-      Log('WinSW exe file not found after download');
+      Log('NSSM exe file not found after download');
       Exit;
     end;
     
-    Log('Downloaded WinSW successfully');
+    Log('Downloaded NSSM successfully');
     
     // Create target directory
-    if not DirExists(WinSWTargetDir) then
+    if not DirExists(NSSMTargetDir) then
     begin
-      if not CreateDir(WinSWTargetDir) then
+      if not CreateDir(NSSMTargetDir) then
       begin
-        Log('Failed to create WinSW directory: ' + WinSWTargetDir);
+        Log('Failed to create NSSM directory: ' + NSSMTargetDir);
         Exit;
       end;
     end;
     
-    // Copy WinSW.exe to Program Files
-    if FileCopy(WinSWExe, WinSWTargetDir + '\WinSW.exe', False) then
+    // Copy nssm.exe to Program Files
+    if FileCopy(NSSMExe, NSSMTargetDir + '\nssm.exe', False) then
     begin
       Result := True;
-      Log('WinSW downloaded and installed successfully to ' + WinSWTargetDir);
+      Log('NSSM downloaded and installed successfully to ' + NSSMTargetDir);
     end
     else
     begin
-      Log('Failed to copy WinSW.exe to ' + WinSWTargetDir);
+      Log('Failed to copy nssm.exe to ' + NSSMTargetDir);
     end;
     
     // Cleanup
-    DeleteFile(WinSWExe);
+    DeleteFile(NSSMExe);
+    DeleteFile(ExpandConstant('{tmp}\nssm.zip'));
     
   except
-    Log('Exception while downloading WinSW: ' + GetExceptionMessage);
+    Log('Exception while downloading NSSM: ' + GetExceptionMessage);
     Result := False;
   end;
 end;
@@ -748,36 +753,36 @@ begin
     PythonLabel.Font.Color := clRed;
   end;
   
-  WinSWLabel := TLabel.Create(DependencyCheckPage);
-  WinSWLabel.Parent := DependencyCheckPage.Surface;
-  WinSWLabel.Left := 0;
-  WinSWLabel.Top := 90;
-  WinSWLabel.Width := DependencyCheckPage.SurfaceWidth;
-  WinSWLabel.Height := 20;
-  WinSWLabel.AutoSize := False;
-  WinSWLabel.Font.Size := 9;
-  if CheckWinSWInstalled() then
+  NSSMLabel := TLabel.Create(DependencyCheckPage);
+  NSSMLabel.Parent := DependencyCheckPage.Surface;
+  NSSMLabel.Left := 0;
+  NSSMLabel.Top := 90;
+  NSSMLabel.Width := DependencyCheckPage.SurfaceWidth;
+  NSSMLabel.Height := 20;
+  NSSMLabel.AutoSize := False;
+  NSSMLabel.Font.Size := 9;
+  if CheckNSSMInstalled() then
   begin
-    WinSWLabel.Caption := '✓ WinSW: Installed';
-    WinSWLabel.Font.Color := clGreen;
+    NSSMLabel.Caption := '✓ NSSM: Installed';
+    NSSMLabel.Font.Color := clGreen;
   end
   else
   begin
-    WinSWLabel.Caption := '⚠ WinSW: Not found (will be installed automatically)';
-    WinSWLabel.Font.Color := clWindowText;
+    NSSMLabel.Caption := '⚠ NSSM: Not found (will be installed automatically)';
+    NSSMLabel.Font.Color := clWindowText;
   end;
   
   // Build footer text with only missing dependencies
-  // Note: WinSW is bundled with the installer, so it's not required to be pre-installed
+  // Note: NSSM is bundled with the installer, so it's not required to be pre-installed
   StatusText := '';
   if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() then
   begin
     StatusText := StatusText + #13#10 + 'All required dependencies are installed.' + #13#10;
     StatusText := StatusText + 'You can proceed with the installation.';
-    if not CheckWinSWInstalled() then
+    if not CheckNSSMInstalled() then
     begin
       StatusText := StatusText + #13#10 + #13#10;
-      StatusText := StatusText + 'Note: WinSW is bundled with this installer and will be installed automatically.';
+      StatusText := StatusText + 'Note: NSSM is bundled with this installer and will be installed automatically.';
     end;
   end
   else
@@ -792,7 +797,7 @@ begin
     if not CheckPythonInstalled() then
       StatusText := StatusText + 'Python: https://www.python.org/downloads/' + #13#10;
     StatusText := StatusText + #13#10;
-    StatusText := StatusText + 'Note: WinSW is bundled with this installer and will be installed automatically.' + #13#10;
+    StatusText := StatusText + 'Note: NSSM is bundled with this installer and will be installed automatically.' + #13#10;
     StatusText := StatusText + #13#10;
     StatusText := StatusText + 'After installing the missing components, please restart this installer.';
   end;
@@ -825,7 +830,7 @@ begin
   StatusText := StatusText + '  • Command Line: sc start/stop RFQapplication' + #13#10;
   StatusText := StatusText + '  • GUI: Open Services.msc and look for "RFQ Application Service"' + #13#10 + #13#10;
   StatusText := StatusText + 'Note: If the service fails to start automatically, you may need to' + #13#10;
-  StatusText := StatusText + 'install WinSW (Windows Service Wrapper) for better compatibility.' + #13#10;
+  StatusText := StatusText + 'install NSSM (Non-Sucking Service Manager) for better compatibility.' + #13#10;
   
   ServiceInfoLabel.Font.Color := clNavy;
   ServiceInfoLabel.Caption := StatusText;
@@ -1182,8 +1187,8 @@ begin
       Exit;
     end;
     
-    // WinSW is bundled with the installer, so this check is informational only
-    // The Files section will install WinSW.exe to {pf}\WinSW automatically
+    // NSSM is bundled with the installer, so this check is informational only
+    // The Files section will install nssm.exe to {pf}\nssm automatically
   end;
   
   // Store Clean Reinstall setting when leaving the page
