@@ -216,51 +216,66 @@ function Save-ToCredentialManagerAsUser {
     )
     
     try {
-        # Use runas to execute cmdkey as the service user
-        # Create a temporary PowerShell script that runs cmdkey
-        $tempScript = Join-Path $env:TEMP "save_credential_$(Get-Random).ps1"
-        $scriptContent = @"
-`$ErrorActionPreference = 'Stop'
-cmdkey.exe /generic:$TargetName /user:$UserName /pass:$Password
-if (`$LASTEXITCODE -eq 0) {
-    Write-Host "SUCCESS"
-    exit 0
-} else {
-    Write-Host "FAILED"
-    exit 1
-}
-"@
-        Set-Content -Path $tempScript -Value $scriptContent -Force
-        
-        # Use runas to execute as service user
-        # Note: runas requires interactive password entry, so we use Start-Process with credentials instead
+        # Check if credential already exists and delete it first (as service user)
         $securePassword = ConvertTo-SecureString $ServiceAccountPassword -AsPlainText -Force
         $credential = New-Object System.Management.Automation.PSCredential($ServiceAccount, $securePassword)
         
-        # Use Start-Process with credentials to run PowerShell as the service user
-        $process = Start-Process -FilePath "powershell.exe" `
-            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$tempScript`"" `
+        # Check if credential exists (as service user)
+        $checkProcess = Start-Process -FilePath "cmdkey.exe" `
+            -ArgumentList "/list:$TargetName" `
             -Credential $credential `
             -Wait `
             -PassThru `
             -WindowStyle Hidden `
-            -RedirectStandardOutput "$env:TEMP\credential_save_output.txt" `
-            -RedirectStandardError "$env:TEMP\credential_save_error.txt"
+            -RedirectStandardOutput "$env:TEMP\cmdkey_check_service.txt" `
+            -RedirectStandardError "$env:TEMP\cmdkey_check_service_err.txt"
         
-        $success = $false
-        if ($process.ExitCode -eq 0) {
-            $output = Get-Content "$env:TEMP\credential_save_output.txt" -ErrorAction SilentlyContinue
-            if ($output -match "SUCCESS") {
-                $success = $true
+        if ($checkProcess.ExitCode -eq 0) {
+            # Credential exists, delete it first
+            Write-Verbose "Credential $TargetName already exists for service user, deleting first..."
+            $deleteProcess = Start-Process -FilePath "cmdkey.exe" `
+                -ArgumentList "/delete:$TargetName" `
+                -Credential $credential `
+                -Wait `
+                -PassThru `
+                -WindowStyle Hidden
+            if ($deleteProcess.ExitCode -ne 0) {
+                Write-Warning "Warning: Could not delete existing credential $TargetName for service user, but continuing..."
             }
+            Start-Sleep -Milliseconds 500  # Brief pause to ensure deletion completes
         }
         
-        # Cleanup
-        Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
-        Remove-Item "$env:TEMP\credential_save_output.txt" -ErrorAction SilentlyContinue
-        Remove-Item "$env:TEMP\credential_save_error.txt" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\cmdkey_check_service.txt" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\cmdkey_check_service_err.txt" -ErrorAction SilentlyContinue
         
-        return $success
+        # Use cmdkey.exe to store credentials as the service user (same as original, just with -Credential)
+        # This saves to the service user's credential store
+        $output = Start-Process -FilePath "cmdkey.exe" `
+            -ArgumentList "/generic:$TargetName", "/user:$UserName", "/pass:$Password" `
+            -Credential $credential `
+            -Wait `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput "$env:TEMP\cmdkey_save_service.txt" `
+            -RedirectStandardError "$env:TEMP\cmdkey_save_service_err.txt"
+        
+        $exitCode = $output.ExitCode
+        
+        if ($exitCode -eq 0) {
+            Write-Verbose "Successfully saved credential: $TargetName (to service user's store)"
+            Remove-Item "$env:TEMP\cmdkey_save_service.txt" -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\cmdkey_save_service_err.txt" -ErrorAction SilentlyContinue
+            return $true
+        } else {
+            $errorMsg = Get-Content "$env:TEMP\cmdkey_save_service_err.txt" -ErrorAction SilentlyContinue | Out-String
+            Write-Verbose "Failed to save credential $TargetName as service user (exit code: $exitCode)"
+            if ($errorMsg -and $errorMsg.Trim() -ne "") {
+                Write-Verbose "Error details: $errorMsg"
+            }
+            Remove-Item "$env:TEMP\cmdkey_save_service.txt" -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\cmdkey_save_service_err.txt" -ErrorAction SilentlyContinue
+            return $false
+        }
     }
     catch {
         Write-Verbose "Error saving credential as service user: $_"
