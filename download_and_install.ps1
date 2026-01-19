@@ -2683,10 +2683,24 @@ Revision=1
             Write-Info "  The application is now running as a Windows service"
         }
         catch {
-            Write-Warning "[!] Could not start service: $_"
+            $errorMessage = $_.Exception.Message
+            Write-Warning "[!] Could not start service: $errorMessage"
+            
+            # Get more details from sc.exe start
+            try {
+                $scStartOutput = sc.exe start $ServiceName 2>&1
+                if ($scStartOutput) {
+                    $scOutputString = $scStartOutput | Out-String
+                    Write-Info "  Details: $scOutputString"
+                }
+            } catch {
+                # Ignore if sc.exe also fails
+            }
+            
             Write-Info "  You can start it manually later:"
             Write-Info "    - Command: sc start $ServiceName"
             Write-Info "    - GUI: Services.msc"
+            Write-Info "  Check logs: $InstallPath\logs\"
         }
     }
     
