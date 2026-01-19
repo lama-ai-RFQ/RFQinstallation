@@ -22,7 +22,10 @@ param(
     [switch]$CleanupAfterInstall,
     [string]$UpdateChannel = "customer",
     [switch]$UseCredentialManager,
-    [string]$ServiceAccount = "CurrentUser"
+    [string]$ServiceAccount = "CurrentUser",
+    [switch]$SettingsPasswordAlreadyStored,
+    [switch]$SuperUserPasswordAlreadyStored,
+    [switch]$RFQUserPasswordAlreadyStored
 )
 
 # Set error action preference to continue so we can handle errors gracefully
@@ -1308,47 +1311,66 @@ if (Test-Path $EnvTemplatePath) {
     if ($UseCredentialManagerForPasswords) {
         Write-Info "  Storing passwords in Windows Credential Manager..."
         
-        # Save passwords to Credential Manager
+        # Save passwords to Credential Manager (skip if already stored)
         $credentialSaved = $true
-        if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
+        $anyPasswordStored = $false
+        
+        if (!$SuperUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
             $targetName = "RFQApplication_SQL_SUPER_USER"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
                 Write-Success "    [OK] Saved SQL_SUPER_USER as generic credential in Windows Credential Manager"
+                $anyPasswordStored = $true
             } else {
                 $credentialSaved = $false
             }
+        } elseif ($SuperUserPasswordAlreadyStored) {
+            Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
+            $anyPasswordStored = $true
         }
         
-        if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
+        if (!$RFQUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
             $targetName = "RFQApplication_RFQ_USER_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
                 Write-Success "    [OK] Saved RFQ_USER_PASSWORD as generic credential in Windows Credential Manager"
+                $anyPasswordStored = $true
             } else {
                 $credentialSaved = $false
             }
+        } elseif ($RFQUserPasswordAlreadyStored) {
+            Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
+            $anyPasswordStored = $true
         }
         
-        if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
+        if (!$SettingsPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
             $targetName = "RFQApplication_SETTINGS_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
                 Write-Success "    [OK] Saved SETTINGS_PASSWORD as generic credential in Windows Credential Manager"
+                $anyPasswordStored = $true
             } else {
                 $credentialSaved = $false
             }
+        } elseif ($SettingsPasswordAlreadyStored) {
+            Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
+            $anyPasswordStored = $true
         }
         
-        if ($credentialSaved) {
-            Write-Success "  [OK] All passwords stored as generic credentials in Windows Credential Manager"
-            # Use placeholders in .env file
+        if ($credentialSaved -and $anyPasswordStored) {
+            Write-Success "  [OK] Passwords configured in Windows Credential Manager"
+            # Use placeholders in .env file for all passwords (whether newly stored or already stored)
             $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
             $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
             $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
-        } else {
+        } elseif (!$credentialSaved) {
             Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
             $UseCredentialManagerForPasswords = $false
             $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
             $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
             $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+        } else {
+            # All passwords were already stored, use placeholders
+            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
+            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
+            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
         }
     } else {
         # Store passwords in .env file (traditional method)
@@ -1460,46 +1482,66 @@ else {
     if ($UseCredentialManagerForPasswords) {
         Write-Info "  Storing passwords in Windows Credential Manager..."
         
-        # Save passwords to Credential Manager
+        # Save passwords to Credential Manager (skip if already stored)
         $credentialSaved = $true
-        if (![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
+        $anyPasswordStored = $false
+        
+        if (!$SuperUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
             $targetName = "RFQApplication_SQL_SUPER_USER"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "postgres" -Password $SuperUserPassword) {
                 Write-Success "    [OK] Saved SQL_SUPER_USER as generic credential in Windows Credential Manager"
                 $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
+                $anyPasswordStored = $true
             } else {
                 $credentialSaved = $false
             }
+        } elseif ($SuperUserPasswordAlreadyStored) {
+            Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
+            $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
         }
         
-        if (![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
+        if (!$RFQUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
             $targetName = "RFQApplication_RFQ_USER_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_user" -Password $RFQUserPassword) {
                 Write-Success "    [OK] Saved RFQ_USER_PASSWORD as generic credential in Windows Credential Manager"
                 $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
+                $anyPasswordStored = $true
             } else {
                 $credentialSaved = $false
             }
+        } elseif ($RFQUserPasswordAlreadyStored) {
+            Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
+            $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
         }
         
-        if (![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
+        if (!$SettingsPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
             $targetName = "RFQApplication_SETTINGS_PASSWORD"
             if (Save-ToCredentialManager -TargetName $targetName -UserName "rfq_app" -Password $SettingsPassword) {
                 Write-Success "    [OK] Saved SETTINGS_PASSWORD as generic credential in Windows Credential Manager"
                 $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
+                $anyPasswordStored = $true
             } else {
                 $credentialSaved = $false
             }
+        } elseif ($SettingsPasswordAlreadyStored) {
+            Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
+            $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
         }
         
-        if ($credentialSaved) {
-            Write-Success "  [OK] All passwords stored as generic credentials in Windows Credential Manager"
-        } else {
+        if ($credentialSaved -and $anyPasswordStored) {
+            Write-Success "  [OK] Passwords configured in Windows Credential Manager"
+        } elseif (!$credentialSaved) {
             Write-Warning "  [!] Some passwords failed to save to Credential Manager - storing in .env file instead"
             $UseCredentialManagerForPasswords = $false
             $sqlSuperUserValue = $SuperUserPassword
             $rfqUserPasswordValue = $RFQUserPassword
             $settingsPasswordValue = $SettingsPassword
+        } else {
+            # All passwords were already stored
+            Write-Success "  [OK] Passwords already configured in Windows Credential Manager"
         }
     }
     

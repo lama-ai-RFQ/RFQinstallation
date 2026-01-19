@@ -102,6 +102,10 @@ var
   SettingsPasswordShowCheck: TNewCheckBox;
   SuperUserPasswordShowCheck: TNewCheckBox;
   RFQUserPasswordShowCheck: TNewCheckBox;
+  // "Already stored in WCM" checkboxes
+  SettingsPasswordAlreadyStoredCheck: TNewCheckBox;
+  SuperUserPasswordAlreadyStoredCheck: TNewCheckBox;
+  RFQUserPasswordAlreadyStoredCheck: TNewCheckBox;
 
 procedure AWSSecretShowCheckClick(Sender: TObject);
 begin
@@ -915,6 +919,14 @@ begin
   SettingsPasswordShowCheck.Caption := '&Show password';
   SettingsPasswordShowCheck.OnClick := @SettingsPasswordShowCheckClick;
   
+  // Add "Already stored in Windows Credential Manager" checkbox
+  SettingsPasswordAlreadyStoredCheck := TNewCheckBox.Create(WizardForm);
+  SettingsPasswordAlreadyStoredCheck.Parent := SettingsPasswordPage.Surface;
+  SettingsPasswordAlreadyStoredCheck.Top := SettingsPasswordShowCheck.Top + SettingsPasswordShowCheck.Height + ScaleY(8);
+  SettingsPasswordAlreadyStoredCheck.Left := SettingsPasswordPage.Edits[0].Left;
+  SettingsPasswordAlreadyStoredCheck.Caption := 'Already stored in Windows Credential Manager (skip setting)';
+  SettingsPasswordAlreadyStoredCheck.Width := SettingsPasswordPage.SurfaceWidth;
+  
   SuperUserPasswordPage := CreateInputQueryPage(SettingsPasswordPage.ID,
     'Database Configuration', 'PostgreSQL Super User Password',
     'Enter the PostgreSQL super user password (for database setup).' + #13#10 + #13#10 +
@@ -931,6 +943,14 @@ begin
   SuperUserPasswordShowCheck.Caption := '&Show password';
   SuperUserPasswordShowCheck.OnClick := @SuperUserPasswordShowCheckClick;
   
+  // Add "Already stored in Windows Credential Manager" checkbox
+  SuperUserPasswordAlreadyStoredCheck := TNewCheckBox.Create(WizardForm);
+  SuperUserPasswordAlreadyStoredCheck.Parent := SuperUserPasswordPage.Surface;
+  SuperUserPasswordAlreadyStoredCheck.Top := SuperUserPasswordShowCheck.Top + SuperUserPasswordShowCheck.Height + ScaleY(8);
+  SuperUserPasswordAlreadyStoredCheck.Left := SuperUserPasswordPage.Edits[0].Left;
+  SuperUserPasswordAlreadyStoredCheck.Caption := 'Already stored in Windows Credential Manager (skip setting)';
+  SuperUserPasswordAlreadyStoredCheck.Width := SuperUserPasswordPage.SurfaceWidth;
+  
   RFQUserPasswordPage := CreateInputQueryPage(SuperUserPasswordPage.ID,
     'Database Configuration', 'RFQ User Password',
     'Enter the password for the RFQ database user.' + #13#10 + #13#10 +
@@ -946,6 +966,14 @@ begin
   RFQUserPasswordShowCheck.Left := RFQUserPasswordPage.Edits[0].Left;
   RFQUserPasswordShowCheck.Caption := '&Show password';
   RFQUserPasswordShowCheck.OnClick := @RFQUserPasswordShowCheckClick;
+  
+  // Add "Already stored in Windows Credential Manager" checkbox
+  RFQUserPasswordAlreadyStoredCheck := TNewCheckBox.Create(WizardForm);
+  RFQUserPasswordAlreadyStoredCheck.Parent := RFQUserPasswordPage.Surface;
+  RFQUserPasswordAlreadyStoredCheck.Top := RFQUserPasswordShowCheck.Top + RFQUserPasswordShowCheck.Height + ScaleY(8);
+  RFQUserPasswordAlreadyStoredCheck.Left := RFQUserPasswordPage.Edits[0].Left;
+  RFQUserPasswordAlreadyStoredCheck.Caption := 'Already stored in Windows Credential Manager (skip setting)';
+  RFQUserPasswordAlreadyStoredCheck.Width := RFQUserPasswordPage.SurfaceWidth;
   
   // Create Server URL page
   ServerURLPage := CreateInputQueryPage(RFQUserPasswordPage.ID,
@@ -1264,38 +1292,72 @@ begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
   end;
   
-  // Validate Settings Password
+  // Validate Settings Password (skip if already stored in WCM)
   if CurPageID = SettingsPasswordPage.ID then
   begin
-    if not ValidatePassword(SettingsPasswordPage.Values[0], 'Settings Password') then
+    // Store "already stored" checkbox state
+    if SettingsPasswordAlreadyStoredCheck.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPasswordAlreadyStored', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPasswordAlreadyStored', 'False');
+    
+    // Only validate password if not already stored in WCM
+    if not SettingsPasswordAlreadyStoredCheck.Checked then
     begin
-      Result := False;
-      Exit;
+      if not ValidatePassword(SettingsPasswordPage.Values[0], 'Settings Password') then
+      begin
+        Result := False;
+        Exit;
+      end;
     end;
   end;
   
-  // Validate PostgreSQL Super User Password
+  // Validate PostgreSQL Super User Password (skip if already stored in WCM)
   if CurPageID = SuperUserPasswordPage.ID then
   begin
-    if not ValidatePassword(SuperUserPasswordPage.Values[0], 'PostgreSQL Super User Password') then
+    // Store "already stored" checkbox state
+    if SuperUserPasswordAlreadyStoredCheck.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPasswordAlreadyStored', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPasswordAlreadyStored', 'False');
+    
+    // Only validate password if not already stored in WCM
+    if not SuperUserPasswordAlreadyStoredCheck.Checked then
     begin
-      Result := False;
-      Exit;
+      if not ValidatePassword(SuperUserPasswordPage.Values[0], 'PostgreSQL Super User Password') then
+      begin
+        Result := False;
+        Exit;
+      end;
     end;
   end;
   
-  // Validate RFQ User Password
+  // Validate RFQ User Password (skip if already stored in WCM)
   if CurPageID = RFQUserPasswordPage.ID then
   begin
-    if not ValidatePassword(RFQUserPasswordPage.Values[0], 'RFQ User Password') then
+    // Store "already stored" checkbox state
+    if RFQUserPasswordAlreadyStoredCheck.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPasswordAlreadyStored', 'True')
+    else
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPasswordAlreadyStored', 'False');
+    
+    // Only validate password if not already stored in WCM
+    if not RFQUserPasswordAlreadyStoredCheck.Checked then
     begin
-      Result := False;
-      Exit;
+      if not ValidatePassword(RFQUserPasswordPage.Values[0], 'RFQ User Password') then
+      begin
+        Result := False;
+        Exit;
+      end;
     end;
-    // Store database passwords when on the last password page
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPasswordPage.Values[0]);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
+    
+    // Store database passwords when on the last password page (only if not already stored)
+    if not SettingsPasswordAlreadyStoredCheck.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPasswordPage.Values[0]);
+    if not SuperUserPasswordAlreadyStoredCheck.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
+    if not RFQUserPasswordAlreadyStoredCheck.Checked then
+      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
   end;
   
   // Store Server URL when on Server URL page
@@ -1397,6 +1459,12 @@ var
   CleanReinstallStr: String;
   CleanupAfterInstallStr: String;
   UseCredentialManagerStr: String;
+  SettingsPasswordAlreadyStoredStr: String;
+  SuperUserPasswordAlreadyStoredStr: String;
+  RFQUserPasswordAlreadyStoredStr: String;
+  SettingsPasswordAlreadyStored: Boolean;
+  SuperUserPasswordAlreadyStored: Boolean;
+  RFQUserPasswordAlreadyStored: Boolean;
   Params: String;
 begin
   // Get installation path
@@ -1450,6 +1518,22 @@ begin
   if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', ServiceAccount) then
     ServiceAccount := 'CurrentUser';  // Default to Current User
   
+  // Read "already stored" flags from registry
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPasswordAlreadyStored', SettingsPasswordAlreadyStoredStr) then
+    SettingsPasswordAlreadyStored := (SettingsPasswordAlreadyStoredStr = 'True')
+  else
+    SettingsPasswordAlreadyStored := False;
+  
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPasswordAlreadyStored', SuperUserPasswordAlreadyStoredStr) then
+    SuperUserPasswordAlreadyStored := (SuperUserPasswordAlreadyStoredStr = 'True')
+  else
+    SuperUserPasswordAlreadyStored := False;
+  
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPasswordAlreadyStored', RFQUserPasswordAlreadyStoredStr) then
+    RFQUserPasswordAlreadyStored := (RFQUserPasswordAlreadyStoredStr = 'True')
+  else
+    RFQUserPasswordAlreadyStored := False;
+  
   // If ModelPath is empty, use default
   if ModelPath = '' then
     ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
@@ -1490,13 +1574,21 @@ begin
   // Add Service Account parameter
   Params := Params + ' -ServiceAccount "' + ServiceAccount + '"';
   
-  // Add database passwords
-  if SettingsPassword <> '' then
+  // Add database passwords (only if not already stored in WCM)
+  if not SettingsPasswordAlreadyStored and (SettingsPassword <> '') then
     Params := Params + ' -SettingsPassword "' + SettingsPassword + '"';
-  if SuperUserPassword <> '' then
+  if SettingsPasswordAlreadyStored then
+    Params := Params + ' -SettingsPasswordAlreadyStored';
+  
+  if not SuperUserPasswordAlreadyStored and (SuperUserPassword <> '') then
     Params := Params + ' -SuperUserPassword "' + SuperUserPassword + '"';
-  if RFQUserPassword <> '' then
+  if SuperUserPasswordAlreadyStored then
+    Params := Params + ' -SuperUserPasswordAlreadyStored';
+  
+  if not RFQUserPasswordAlreadyStored and (RFQUserPassword <> '') then
     Params := Params + ' -RFQUserPassword "' + RFQUserPassword + '"';
+  if RFQUserPasswordAlreadyStored then
+    Params := Params + ' -RFQUserPasswordAlreadyStored';
   
   // Add Server URL
   if ServerURL <> '' then
