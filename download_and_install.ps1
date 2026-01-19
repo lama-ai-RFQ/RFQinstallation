@@ -1567,6 +1567,7 @@ MODEL_NAME=Mistral-7B-Instruct-v0-3
 
 # Server Configuration
 SERVER_URL=$ServerURL
+PORT=8000
 
 # Debug Configuration
 DEBUG_THREAD=0
