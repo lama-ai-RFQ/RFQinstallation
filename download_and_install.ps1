@@ -2413,10 +2413,6 @@ if ($ExePath) {
                                 }
                             }
                         }
-                    } else {
-                        Write-Warning "  Cannot determine user account - falling back to SYSTEM"
-                        Write-Warning "  Service will run as SYSTEM and cannot access Windows Credential Manager"
-                        $targetServiceAccount = $null
                     }
                 }
                 "networkservice" {
