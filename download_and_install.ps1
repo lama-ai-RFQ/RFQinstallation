@@ -2311,8 +2311,26 @@ if ($ExePath) {
             }
             
             # Configure service account based on installer selection
-            $currentUser = $env:USERNAME
+            # Get admin user (who's running the installer) and logged-in user (for reference)
+            $adminUser = "$env:USERDOMAIN\$env:USERNAME"  # Admin account running installer
+            $loggedInUser = $null
             $currentDomain = $env:USERDOMAIN
+            
+            # Get the actual logged-in user (not the admin account running the installer)
+            try {
+                $loggedInUserWMI = (Get-WmiObject Win32_ComputerSystem).UserName
+                if ($loggedInUserWMI) {
+                    $loggedInUser = $loggedInUserWMI
+                    # Extract domain from logged-in user if available
+                    if ($loggedInUser.Contains('\')) {
+                        $parts = $loggedInUser.Split('\')
+                        $currentDomain = $parts[0]  # Use logged-in user's domain as default
+                    }
+                }
+            } catch {
+                # If WMI fails, we'll just show admin user
+            }
+            
             $serviceAccountXml = ""
             $serviceAccountPassword = $null
             $configureServiceAccount = $false
@@ -2321,21 +2339,50 @@ if ($ExePath) {
             # Determine target service account based on parameter
             switch ($ServiceAccount.ToLower()) {
                 "currentuser" {
-                    if ($currentUser -and $currentUser -ne "SYSTEM") {
-                        $targetServiceAccount = "$currentDomain\$currentUser"
-                        Write-Info "  Service will be configured to run as: $targetServiceAccount"
-                        
-                        if ($UseCredentialManager) {
-                            Write-Info "  This allows the service to access Windows Credential Manager credentials"
+                    Write-Info "  You selected to run the service as a user account."
+                    Write-Info "  This allows the service to access Windows Credential Manager credentials."
+                    Write-Info ""
+                    
+                    # Show available account information
+                    Write-Info "  Account information:"
+                    Write-Info "    - Admin account (running installer): $adminUser"
+                    if ($loggedInUser) {
+                        Write-Info "    - Logged-in user: $loggedInUser"
+                    }
+                    Write-Info ""
+                    
+                    # Prompt for account name (allow user to type it)
+                    Write-Info "  Enter the account name to run the service as:"
+                    Write-Info "    - Format: DOMAIN\Username (e.g., MYDOMAIN\john)"
+                    Write-Info "    - Or: .\Username for local account (e.g., .\john)"
+                    Write-Info "    - Or: Username (will use current domain: $currentDomain)"
+                    Write-Info ""
+                    
+                    $accountInput = Read-Host "  Account name"
+                    
+                    if ([string]::IsNullOrWhiteSpace($accountInput)) {
+                        Write-Warning "  No account name provided. Service will run as SYSTEM."
+                        $targetServiceAccount = $null
+                    } else {
+                        # Parse the account input
+                        if ($accountInput.Contains('\')) {
+                            # User provided domain\user format
+                            $targetServiceAccount = $accountInput
+                        } elseif ($accountInput.StartsWith('.\')) {
+                            # User provided .\user format (local account)
+                            $targetServiceAccount = "$env:COMPUTERNAME\$($accountInput.Substring(2))"
                         } else {
-                            Write-Warning "  NOTE: Windows Credential Manager is not enabled, but service will run as user account"
+                            # User provided just username, use current domain
+                            $targetServiceAccount = "$currentDomain\$accountInput"
                         }
+                        
+                        Write-Info "  Service will be configured to run as: $targetServiceAccount"
                         Write-Info ""
-                        Write-Info "  WinSW will install the service first, then we'll configure it with your password."
+                        Write-Info "  WinSW will install the service first, then we'll configure it with the password."
                         Write-Info "  Your password will NOT be stored in any files."
                         Write-Info ""
                         
-                        # Prompt for password (we'll use it after service installation)
+                        # Prompt for password
                         $passwordAttempts = 0
                         $maxAttempts = 3
                         
