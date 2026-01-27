@@ -1503,6 +1503,7 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "WINDOWS=.*", "WINDOWS=true"
     $EnvContent = $EnvContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
     $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$UpdateChannel"
+    # REQUESTS_CA_BUNDLE is left empty by default - user will fill it in if needed for GCC High
     # Only update AWS credentials if they are non-empty
     if (![string]::IsNullOrWhiteSpace($AWSKey)) {
         $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
@@ -1572,6 +1573,9 @@ if (Test-Path $EnvTemplatePath) {
     }
     if ($EnvContent -notmatch "RFQ_UPDATE_CHANNEL") {
         $EnvContent += "`nRFQ_UPDATE_CHANNEL=$UpdateChannel"
+    }
+    if ($EnvContent -notmatch "REQUESTS_CA_BUNDLE") {
+        $EnvContent += "`n# SSL Certificate Configuration (for GCC High and government cloud environments)`n# Path to CA bundle file for SSL certificate verification`n# Leave empty if not using GCC High or if using system default certificates`nREQUESTS_CA_BUNDLE="
     }
     # Only add AWS credentials if they are non-empty
     if ($EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
@@ -1710,6 +1714,10 @@ SETTINGS_PASSWORD=$settingsPasswordValue
 # Azure Configuration
 AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
 
+# SSL Certificate Configuration (for GCC High and government cloud environments)
+# Path to CA bundle file for SSL certificate verification
+# Leave empty if not using GCC High or if using system default certificates
+REQUESTS_CA_BUNDLE=
 
 # Update Channel
 RFQ_UPDATE_CHANNEL=$UpdateChannel
