@@ -907,10 +907,10 @@ begin
     '(Default: Documents\RFQ_Models)', False, '');
   ModelPathPage.Add('');
   
-  // Create database password pages
+  // Create password pages
   SettingsPasswordPage := CreateInputQueryPage(ModelPathPage.ID,
-    'Database Configuration', 'Settings Password',
-    'Enter a password for the application settings database access.' + #13#10 + #13#10 +
+    'Application Settings', 'Settings Password',
+    'Enter a password used by the application to access its settings.' + #13#10 + #13#10 +
     'Password Requirements:' + #13#10 +
     '  - Minimum 8 characters' + #13#10 +
     '  - Must contain at least 3 of: uppercase, lowercase, numbers, special characters');
