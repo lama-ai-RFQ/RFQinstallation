@@ -1746,7 +1746,7 @@ RFQ_UPDATE_CHANNEL=$UpdateChannel
 $VersionPath = Join-Path $InstallPath "version.txt"
 Set-Content -Path $VersionPath -Value $Version -Force
 
-# Download Mistral model (optional)
+# Download LLM model (optional)
 Write-Info "`nModel download..."
 
 # Check if ModelPath was provided via parameter (from installer)
@@ -1767,7 +1767,7 @@ elseif ($ModelPath -and $ModelPath.Trim() -ne "") {
 }
 else {
     # Prompt user for model download
-    Write-Info "The application requires the Mistral-7B-Instruct-v0.3 language model."
+    Write-Info "The application requires the LLM (language model)."
     Write-Info "This is a large download (~30 GB) and may take 30-60 minutes depending on your internet connection."
     Write-Info ""
     Write-Info "Options:"
@@ -1816,7 +1816,7 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
         $modelPath = $modelDir  # MODEL_PATH should point to the model directory
         
         Write-Info ""
-        Write-Info "Downloading Mistral-7B-Instruct-v0.3 model from AWS S3..."
+        Write-Info "Downloading LLM model from AWS S3..."
         Write-Info "  Bucket: rfq-models"
         Write-Info "  Destination: $modelDir"
         Write-Info "  This is a large download (~30 GB) and may take 30-60 minutes depending on your internet connection..."
@@ -1926,7 +1926,7 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
         }
         else {
             # Create a temporary Python script to download the model from S3
-            $downloadScript = Join-Path $env:TEMP "download_mistral_model_s3.py"
+            $downloadScript = Join-Path $env:TEMP "download_llm_model_s3.py"
             $scriptContent = @"
 import os
 import sys
@@ -2099,7 +2099,7 @@ try:
                 print("")
                 print("Required AWS IAM permissions:")
                 print("  - s3:ListBucket on arn:aws:s3:::rfq-models")
-                print("  - s3:GetObject on arn:aws:s3:::rfq-models/Mistral-7B-Instruct-v0-3/*")
+                print("  - s3:GetObject on arn:aws:s3:::rfq-models/<model-prefix>/*")
                 print("")
                 print("Please contact your AWS administrator to grant these permissions.")
                 sys.exit(1)
@@ -2196,7 +2196,7 @@ except Exception as e:
     Write-Log "WARNING: Model download skipped" "Yellow"
     Write-Log "=================================" "Yellow"
     Write-Log "" "Yellow"
-    Write-Log "The application requires the Mistral-7B-Instruct-v0.3 model to function." "Yellow"
+    Write-Log "The application requires the LLM model to function." "Yellow"
     Write-Log "Without the model, language processing features will not work." "Yellow"
     Write-Log "" "Yellow"
     Write-Log "To download the model later:" "Cyan"
@@ -2204,7 +2204,7 @@ except Exception as e:
     Write-Log "  2. Run the model download script or use model_downloader.py" "Cyan"
     Write-Log "  3. Configure MODEL_PATH in .env to point to the model directory" "Cyan"
     Write-Log "" "Cyan"
-    Write-Log "Model location: AWS S3 bucket 'rfq-models' (prefix: Mistral-7B-Instruct-v0-3/)" "Cyan"
+    Write-Log "Model location: AWS S3 bucket 'rfq-models' (see model prefix in documentation)" "Cyan"
     Write-Log "" "Cyan"
     # Only add to skipped steps if not already added (to avoid duplicates)
     if ($script:SkippedSteps -notcontains "Model download (skipped by installer)" -and 

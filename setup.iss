@@ -897,7 +897,7 @@ begin
   // Create model download option page
   ModelDownloadPage := CreateInputOptionPage(AWSRegionPage.ID,
     'Model Download', 'Download Language Model',
-    'The application requires the Mistral-7B-Instruct-v0.3 language model.' + #13#10 +
+    'The application requires the LLM (language model).' + #13#10 +
     'This is a LARGE download (~30 GB) and may take 30-60 minutes depending on your internet connection.',
     True, False);
   ModelDownloadPage.Add('Download model now (recommended)');

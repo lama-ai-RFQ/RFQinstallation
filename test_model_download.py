@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for downloading Mistral model from AWS S3
+Test script for downloading LLM model from AWS S3
 This script can be run independently to test the download functionality
 """
 
@@ -239,7 +239,7 @@ def download_model(model_dir, aws_key, aws_secret, aws_region):
                 print("")
                 print("Required AWS IAM permissions:")
                 print("  - s3:ListBucket on arn:aws:s3:::rfq-models")
-                print("  - s3:GetObject on arn:aws:s3:::rfq-models/Mistral-7B-Instruct-v0-3/*")
+                print("  - s3:GetObject on arn:aws:s3:::rfq-models/<model-prefix>/*")
                 print("")
                 print("Please contact your AWS administrator to grant these permissions.")
                 sys.exit(1)
@@ -263,10 +263,10 @@ def main():
     """Main function"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Test script for downloading Mistral model from AWS S3')
+    parser = argparse.ArgumentParser(description='Test script for downloading LLM model from AWS S3')
     parser.add_argument('--model-dir', type=str, 
                        default=os.path.join(os.path.expanduser('~'), 'Documents', 'RFQ_Models', 'Mistral-7B-Instruct-v0-3'),
-                       help='Directory to download model to (default: ~/Documents/RFQ_Models/Mistral-7B-Instruct-v0-3)')
+                       help='Directory to download model to (default: ~/Documents/RFQ_Models/<model-name>)')
     parser.add_argument('--aws-key', type=str, help='AWS Access Key ID')
     parser.add_argument('--aws-secret', type=str, help='AWS Secret Access Key')
     parser.add_argument('--aws-region', type=str, default='us-east-1', help='AWS Region (default: us-east-1)')
