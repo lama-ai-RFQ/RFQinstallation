@@ -856,7 +856,7 @@ begin
   CleanupCheckbox.Left := 0;
   CleanupCheckbox.Top := ScaleY(200);
   CleanupCheckbox.Width := CleanReinstallPage.SurfaceWidth;
-  CleanupCheckbox.Height := ScaleY(17);
+  CleanupCheckbox.Height := ScaleY(24);
   CleanupCheckbox.Caption := 'Cleanup download directory after extraction (recommended - saves disk space)';
   CleanupCheckbox.Checked := True;  // Default to cleanup enabled
   
@@ -885,6 +885,7 @@ begin
   AWSSecretShowCheck.Parent := AWSSecretPage.Surface;
   AWSSecretShowCheck.Top := AWSSecretPage.Edits[0].Top + AWSSecretPage.Edits[0].Height + ScaleY(8);
   AWSSecretShowCheck.Left := AWSSecretPage.Edits[0].Left;
+  AWSSecretShowCheck.Height := ScaleY(24);
   AWSSecretShowCheck.Caption := '&Show password';
   AWSSecretShowCheck.OnClick := @AWSSecretShowCheckClick;
   
@@ -925,6 +926,7 @@ begin
   SettingsPasswordShowCheck.Parent := SettingsPasswordPage.Surface;
   SettingsPasswordShowCheck.Top := SettingsPasswordPage.Edits[0].Top + SettingsPasswordPage.Edits[0].Height + ScaleY(8);
   SettingsPasswordShowCheck.Left := SettingsPasswordPage.Edits[0].Left;
+  SettingsPasswordShowCheck.Height := ScaleY(24);
   SettingsPasswordShowCheck.Caption := '&Show password';
   SettingsPasswordShowCheck.OnClick := @SettingsPasswordShowCheckClick;
   
@@ -933,6 +935,7 @@ begin
   SettingsPasswordAlreadyStoredCheck.Parent := SettingsPasswordPage.Surface;
   SettingsPasswordAlreadyStoredCheck.Top := SettingsPasswordShowCheck.Top + SettingsPasswordShowCheck.Height + ScaleY(8);
   SettingsPasswordAlreadyStoredCheck.Left := SettingsPasswordPage.Edits[0].Left;
+  SettingsPasswordAlreadyStoredCheck.Height := ScaleY(24);
   SettingsPasswordAlreadyStoredCheck.Caption := 'Already stored in Windows Credential Manager (skip setting)';
   SettingsPasswordAlreadyStoredCheck.Width := SettingsPasswordPage.SurfaceWidth;
   
@@ -949,6 +952,7 @@ begin
   SuperUserPasswordShowCheck.Parent := SuperUserPasswordPage.Surface;
   SuperUserPasswordShowCheck.Top := SuperUserPasswordPage.Edits[0].Top + SuperUserPasswordPage.Edits[0].Height + ScaleY(8);
   SuperUserPasswordShowCheck.Left := SuperUserPasswordPage.Edits[0].Left;
+  SuperUserPasswordShowCheck.Height := ScaleY(24);
   SuperUserPasswordShowCheck.Caption := '&Show password';
   SuperUserPasswordShowCheck.OnClick := @SuperUserPasswordShowCheckClick;
   
@@ -957,6 +961,7 @@ begin
   SuperUserPasswordAlreadyStoredCheck.Parent := SuperUserPasswordPage.Surface;
   SuperUserPasswordAlreadyStoredCheck.Top := SuperUserPasswordShowCheck.Top + SuperUserPasswordShowCheck.Height + ScaleY(8);
   SuperUserPasswordAlreadyStoredCheck.Left := SuperUserPasswordPage.Edits[0].Left;
+  SuperUserPasswordAlreadyStoredCheck.Height := ScaleY(24);
   SuperUserPasswordAlreadyStoredCheck.Caption := 'Already stored in Windows Credential Manager (skip setting)';
   SuperUserPasswordAlreadyStoredCheck.Width := SuperUserPasswordPage.SurfaceWidth;
   
@@ -973,6 +978,7 @@ begin
   RFQUserPasswordShowCheck.Parent := RFQUserPasswordPage.Surface;
   RFQUserPasswordShowCheck.Top := RFQUserPasswordPage.Edits[0].Top + RFQUserPasswordPage.Edits[0].Height + ScaleY(8);
   RFQUserPasswordShowCheck.Left := RFQUserPasswordPage.Edits[0].Left;
+  RFQUserPasswordShowCheck.Height := ScaleY(24);
   RFQUserPasswordShowCheck.Caption := '&Show password';
   RFQUserPasswordShowCheck.OnClick := @RFQUserPasswordShowCheckClick;
   
@@ -981,6 +987,7 @@ begin
   RFQUserPasswordAlreadyStoredCheck.Parent := RFQUserPasswordPage.Surface;
   RFQUserPasswordAlreadyStoredCheck.Top := RFQUserPasswordShowCheck.Top + RFQUserPasswordShowCheck.Height + ScaleY(8);
   RFQUserPasswordAlreadyStoredCheck.Left := RFQUserPasswordPage.Edits[0].Left;
+  RFQUserPasswordAlreadyStoredCheck.Height := ScaleY(24);
   RFQUserPasswordAlreadyStoredCheck.Caption := 'Already stored in Windows Credential Manager (skip setting)';
   RFQUserPasswordAlreadyStoredCheck.Width := RFQUserPasswordPage.SurfaceWidth;
   
