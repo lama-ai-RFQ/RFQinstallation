@@ -32,6 +32,10 @@ SetupIconFile=
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+; Slightly larger wizard (130%) so custom pages have enough room on Windows 11 high-DPI/scaled displays
+WizardSizePercent=130,130
+; Allow user to resize if content is still tight
+WizardResizable=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
 
@@ -689,7 +693,7 @@ begin
   DependencyCheckLabel.Left := 0;
   DependencyCheckLabel.Top := 0;
   DependencyCheckLabel.Width := DependencyCheckPage.SurfaceWidth;
-  DependencyCheckLabel.Height := 30;
+  DependencyCheckLabel.Height := ScaleY(30);
   DependencyCheckLabel.AutoSize := False;
   DependencyCheckLabel.WordWrap := True;
   DependencyCheckLabel.Font.Size := 9;
@@ -699,9 +703,9 @@ begin
   PostgreSQLLabel := TLabel.Create(DependencyCheckPage);
   PostgreSQLLabel.Parent := DependencyCheckPage.Surface;
   PostgreSQLLabel.Left := 0;
-  PostgreSQLLabel.Top := 30;
+  PostgreSQLLabel.Top := ScaleY(30);
   PostgreSQLLabel.Width := DependencyCheckPage.SurfaceWidth;
-  PostgreSQLLabel.Height := 20;
+  PostgreSQLLabel.Height := ScaleY(20);
   PostgreSQLLabel.AutoSize := False;
   PostgreSQLLabel.Font.Size := 9;
   if CheckPostgreSQLInstalled() then
@@ -718,9 +722,9 @@ begin
   OpenSSLLabel := TLabel.Create(DependencyCheckPage);
   OpenSSLLabel.Parent := DependencyCheckPage.Surface;
   OpenSSLLabel.Left := 0;
-  OpenSSLLabel.Top := 50;
+  OpenSSLLabel.Top := ScaleY(50);
   OpenSSLLabel.Width := DependencyCheckPage.SurfaceWidth;
-  OpenSSLLabel.Height := 20;
+  OpenSSLLabel.Height := ScaleY(20);
   OpenSSLLabel.AutoSize := False;
   OpenSSLLabel.Font.Size := 9;
   if CheckOpenSSLInstalled() then
@@ -737,9 +741,9 @@ begin
   PythonLabel := TLabel.Create(DependencyCheckPage);
   PythonLabel.Parent := DependencyCheckPage.Surface;
   PythonLabel.Left := 0;
-  PythonLabel.Top := 70;
+  PythonLabel.Top := ScaleY(70);
   PythonLabel.Width := DependencyCheckPage.SurfaceWidth;
-  PythonLabel.Height := 20;
+  PythonLabel.Height := ScaleY(20);
   PythonLabel.AutoSize := False;
   PythonLabel.Font.Size := 9;
   if CheckPythonInstalled() then
@@ -756,9 +760,9 @@ begin
   NSSMLabel := TLabel.Create(DependencyCheckPage);
   NSSMLabel.Parent := DependencyCheckPage.Surface;
   NSSMLabel.Left := 0;
-  NSSMLabel.Top := 90;
+  NSSMLabel.Top := ScaleY(90);
   NSSMLabel.Width := DependencyCheckPage.SurfaceWidth;
-  NSSMLabel.Height := 20;
+  NSSMLabel.Height := ScaleY(20);
   NSSMLabel.AutoSize := False;
   NSSMLabel.Font.Size := 9;
   if CheckNSSMInstalled() then
