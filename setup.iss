@@ -716,7 +716,7 @@ begin
   PostgreSQLLabel.Font.Size := 9;
   if CheckPostgreSQLInPath() then
   begin
-    PostgreSQLLabel.Caption := '✓ PostgreSQL: Found in PATH';
+    PostgreSQLLabel.Caption := '✓ PostgreSQL: Installed (Found in PATH)';
     PostgreSQLLabel.Font.Color := clGreen;
   end
   else if CheckPostgreSQLInstalled() then
@@ -740,7 +740,7 @@ begin
   OpenSSLLabel.Font.Size := 9;
   if CheckOpenSSLInPath() then
   begin
-    OpenSSLLabel.Caption := '✓ OpenSSL: Found in PATH';
+    OpenSSLLabel.Caption := '✓ OpenSSL: Installed (Found in PATH)';
     OpenSSLLabel.Font.Color := clGreen;
   end
   else if CheckOpenSSLInstalled() then
