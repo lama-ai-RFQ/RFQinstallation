@@ -223,24 +223,27 @@ begin
   Result := True;
 end;
 
-function CheckPostgreSQLInstalled(): Boolean;
+function CheckPostgreSQLInPath(): Boolean;
 var
   ResultCode: Integer;
-  PsqlPath: String;
-  RegPath: String;
-  RegValue: String;
 begin
   Result := False;
   
   // Check if psql.exe is in PATH using 'where' command
   if Exec('cmd.exe', '/c where psql >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
-    if ResultCode = 0 then
-    begin
-      Result := True;
-      Exit;
-    end;
+    Result := (ResultCode = 0);
+    Exit;
   end;
+end;
+
+function CheckPostgreSQLInstalled(): Boolean;
+var
+  PsqlPath: String;
+  RegPath: String;
+  RegValue: String;
+begin
+  Result := False;
   
   // Check PostgreSQL registry keys for installation path
   // PostgreSQL typically stores installation info in registry
@@ -301,22 +304,25 @@ begin
   end;
 end;
 
-function CheckOpenSSLInstalled(): Boolean;
+function CheckOpenSSLInPath(): Boolean;
 var
   ResultCode: Integer;
-  OpensslPath: String;
 begin
   Result := False;
   
   // Check if openssl.exe is in PATH using 'where' command
   if Exec('cmd.exe', '/c where openssl >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
-    if ResultCode = 0 then
-    begin
-      Result := True;
-      Exit;
-    end;
+    Result := (ResultCode = 0);
+    Exit;
   end;
+end;
+
+function CheckOpenSSLInstalled(): Boolean;
+var
+  OpensslPath: String;
+begin
+  Result := False;
   
   // Check common OpenSSL installation locations
   // OpenSSL is often installed in Program Files
@@ -708,10 +714,15 @@ begin
   PostgreSQLLabel.Height := ScaleY(20);
   PostgreSQLLabel.AutoSize := False;
   PostgreSQLLabel.Font.Size := 9;
-  if CheckPostgreSQLInstalled() then
+  if CheckPostgreSQLInPath() then
   begin
-    PostgreSQLLabel.Caption := '✓ PostgreSQL: Installed';
+    PostgreSQLLabel.Caption := '✓ PostgreSQL: Found in PATH';
     PostgreSQLLabel.Font.Color := clGreen;
+  end
+  else if CheckPostgreSQLInstalled() then
+  begin
+    PostgreSQLLabel.Caption := '⚠ PostgreSQL: Installed but NOT in PATH (psql not found)';
+    PostgreSQLLabel.Font.Color := clRed;
   end
   else
   begin
@@ -727,10 +738,15 @@ begin
   OpenSSLLabel.Height := ScaleY(20);
   OpenSSLLabel.AutoSize := False;
   OpenSSLLabel.Font.Size := 9;
-  if CheckOpenSSLInstalled() then
+  if CheckOpenSSLInPath() then
   begin
-    OpenSSLLabel.Caption := '✓ OpenSSL: Installed';
+    OpenSSLLabel.Caption := '✓ OpenSSL: Found in PATH';
     OpenSSLLabel.Font.Color := clGreen;
+  end
+  else if CheckOpenSSLInstalled() then
+  begin
+    OpenSSLLabel.Caption := '⚠ OpenSSL: Installed but NOT in PATH (openssl not found)';
+    OpenSSLLabel.Font.Color := clRed;
   end
   else
   begin
@@ -779,7 +795,7 @@ begin
   // Build footer text with only missing dependencies
   // Note: NSSM is bundled with the installer, so it's not required to be pre-installed
   StatusText := '';
-  if CheckPostgreSQLInstalled() and CheckOpenSSLInstalled() and CheckPythonInstalled() then
+  if CheckPostgreSQLInPath() and CheckOpenSSLInPath() and CheckPythonInstalled() then
   begin
     StatusText := StatusText + #13#10 + 'All required dependencies are installed.' + #13#10;
     StatusText := StatusText + 'You can proceed with the installation.';
@@ -791,19 +807,25 @@ begin
   end
   else
   begin
-    StatusText := StatusText + #13#10 + 'Some required dependencies are missing.' + #13#10;
-    StatusText := StatusText + 'Please install the missing components before continuing.' + #13#10 + #13#10;
-    StatusText := StatusText + 'Download links:' + #13#10;
+    StatusText := StatusText + #13#10 + 'Some required dependencies are missing or not available in PATH.' + #13#10;
+    StatusText := StatusText + 'You cannot proceed until these commands work in Command Prompt:' + #13#10;
+    StatusText := StatusText + '  where psql' + #13#10;
+    StatusText := StatusText + '  where openssl' + #13#10 + #13#10;
+    StatusText := StatusText + 'Fix instructions:' + #13#10;
+    if CheckPostgreSQLInstalled() and (not CheckPostgreSQLInPath()) then
+      StatusText := StatusText + 'PostgreSQL is installed but psql.exe is not in PATH. Add PostgreSQL bin (e.g. C:\Program Files\PostgreSQL\16\bin) to PATH.' + #13#10;
     if not CheckPostgreSQLInstalled() then
-      StatusText := StatusText + 'PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
+      StatusText := StatusText + 'Install PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
+    if CheckOpenSSLInstalled() and (not CheckOpenSSLInPath()) then
+      StatusText := StatusText + 'OpenSSL is installed but openssl.exe is not in PATH. Add OpenSSL bin (e.g. C:\Program Files\OpenSSL-Win64\bin) to PATH.' + #13#10;
     if not CheckOpenSSLInstalled() then
-      StatusText := StatusText + 'OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
+      StatusText := StatusText + 'Install OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
     if not CheckPythonInstalled() then
-      StatusText := StatusText + 'Python: https://www.python.org/downloads/' + #13#10;
+      StatusText := StatusText + 'Install Python: https://www.python.org/downloads/' + #13#10;
     StatusText := StatusText + #13#10;
     StatusText := StatusText + 'Note: NSSM is bundled with this installer and will be installed automatically.' + #13#10;
     StatusText := StatusText + #13#10;
-    StatusText := StatusText + 'After installing the missing components, please restart this installer.';
+    StatusText := StatusText + 'After fixing PATH, restart this installer (new processes are required to pick up PATH changes).';
   end;
   
   DependencyCheckLabel.Caption := DependencyCheckLabel.Caption + StatusText;
@@ -1189,10 +1211,13 @@ begin
   // Prevent proceeding from dependency check page if dependencies are missing
   if CurPageID = DependencyCheckPage.ID then
   begin
-    if not CheckPostgreSQLInstalled() or not CheckOpenSSLInstalled() or not CheckPythonInstalled() then
+    if (not CheckPostgreSQLInPath()) or (not CheckOpenSSLInPath()) or (not CheckPythonInstalled()) then
     begin
-      MsgBox('Please install the missing dependencies before continuing.' + #13#10 + #13#10 +
-             'You can cancel this installer, install the missing components, and restart.',
+      MsgBox('Cannot proceed until PostgreSQL and OpenSSL are available in PATH.' + #13#10 + #13#10 +
+             'Open Command Prompt and confirm these work:' + #13#10 +
+             '  where psql' + #13#10 +
+             '  where openssl' + #13#10 + #13#10 +
+             'If you just updated PATH, close/re-open Command Prompt, then restart this installer.',
              mbError, MB_OK);
       Result := False;
       Exit;
