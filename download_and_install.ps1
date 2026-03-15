@@ -12,6 +12,8 @@ param(
     [string]$AWSKey = "",
     [string]$AWSSecret = "",
     [string]$AWSRegion = "us-east-1",
+    [string]$S3ReleaseBucket = "",
+    [string]$S3ReleaseRegion = "",
     [string]$SettingsPassword = "",
     [string]$SuperUserPassword = "",
     [string]$RFQUserPassword = "",
@@ -425,106 +427,186 @@ if (Test-Path $InstallPath) {
     }
 }
 
-# Setup GitHub authentication
+# ── Resolve release source: S3 first, GitHub fallback ──────────────────────
+$script:ReleaseSource = "github"   # track where release came from
+$S3LatestPayload = $null
+
+# Read S3 config from params, env, or .env file
+$s3Bucket = $S3ReleaseBucket
+$s3Region = $S3ReleaseRegion
+$s3AwsKey = $AWSKey
+$s3AwsSecret = $AWSSecret
+if ([string]::IsNullOrWhiteSpace($s3Bucket) -and (Test-Path (Join-Path $InstallPath ".env"))) {
+    $envContent = Get-Content (Join-Path $InstallPath ".env") -Raw -ErrorAction SilentlyContinue
+    if ($envContent -match "S3_RELEASE_BUCKET\s*=\s*([^\r\n]+)") { $s3Bucket = $matches[1].Trim() }
+    if ([string]::IsNullOrWhiteSpace($s3Region) -and $envContent -match "S3_RELEASE_REGION\s*=\s*([^\r\n]+)") { $s3Region = $matches[1].Trim() }
+    if ([string]::IsNullOrWhiteSpace($s3AwsKey) -and $envContent -match "AWS_KEY\s*=\s*([^\r\n]+)") { $s3AwsKey = $matches[1].Trim() }
+    if ([string]::IsNullOrWhiteSpace($s3AwsSecret) -and $envContent -match "AWS_SECRET\s*=\s*([^\r\n]+)") { $s3AwsSecret = $matches[1].Trim() }
+}
+if ([string]::IsNullOrWhiteSpace($s3Region)) { $s3Region = if (![string]::IsNullOrWhiteSpace($AWSRegion)) { $AWSRegion } else { "us-east-1" } }
+
 Write-Info "`n[4/8] Checking authentication..."
 
-if (!$GitHubToken) {
-    Write-Log "" "Yellow"
-    Write-Log "GitHub Personal Access Token Required" "Yellow"
-    Write-Log "=====================================" "Yellow"
-    Write-Log "" "Yellow"
-    Write-Log "The installation package is in a private repository and requires authentication." "White"
-    Write-Log "" "White"
-    Write-Log "If you don't have a token yet:" "Cyan"
-    Write-Log "  1. Go to: https://github.com/settings/tokens" "White"
-    Write-Log "  2. Click 'Generate new token (classic)'" "White"
-    Write-Log "  3. Select scope: repo (Full control of private repositories)" "White"
-    Write-Log "  4. Generate and copy the token" "White"
-    Write-Log "" "White"
-    
-    $GitHubToken = Read-Host "Please enter your GitHub Personal Access Token (ghp_...)"
-    Write-Log "GitHub token entered by user" "Cyan"
-    
-    if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
-        Write-Error-Custom "`nERROR: GitHub token is required to continue"
+if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace($s3AwsKey) -and ![string]::IsNullOrWhiteSpace($s3AwsSecret)) {
+    Write-Info "  S3 release bucket configured: $s3Bucket (region: $s3Region)"
+    Write-Info "  Attempting to fetch latest release from S3..."
+
+    try {
+        $s3Channel = $UpdateChannel.ToLower()
+        $s3Key = "$s3Channel/windows/latest.json"
+        $s3TempFile = Join-Path $env:TEMP "rfq_s3_latest.json"
+
+        $env:AWS_ACCESS_KEY_ID = $s3AwsKey
+        $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+
+        & aws s3api get-object --bucket $s3Bucket --key $s3Key --region $s3Region $s3TempFile *>&1 | Out-Null
+
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $s3TempFile)) {
+            $S3LatestPayload = Get-Content $s3TempFile -Raw | ConvertFrom-Json
+            Remove-Item $s3TempFile -Force -ErrorAction SilentlyContinue
+
+            $Version = $S3LatestPayload.version
+            if (![string]::IsNullOrWhiteSpace($Version)) {
+                $script:ReleaseSource = "s3"
+
+                # Build a Release-like object from S3 payload so downstream code works
+                $s3Assets = @()
+                foreach ($asset in $S3LatestPayload.assets) {
+                    $s3Assets += [PSCustomObject]@{
+                        name = $asset.name
+                        url = $asset.url
+                        size = $asset.size
+                        browser_download_url = $asset.url
+                        source = "s3"
+                    }
+                }
+                $Release = [PSCustomObject]@{
+                    tag_name = $Version
+                    assets = $s3Assets
+                }
+
+                Write-Success "[OK] Found version via S3: $Version"
+            } else {
+                Write-Warning "  S3 latest.json did not contain a version, falling back to GitHub..."
+            }
+        } else {
+            Write-Warning "  Failed to fetch latest.json from S3, falling back to GitHub..."
+        }
+    }
+    catch {
+        Write-Warning "  S3 check failed: $_, falling back to GitHub..."
+    }
+    finally {
+        # Clean up env vars so they don't leak into other processes unexpectedly
+        Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+    }
+}
+
+# GitHub fallback (or primary if no S3 config)
+if ($script:ReleaseSource -ne "s3") {
+    if (!$GitHubToken) {
+        Write-Log "" "Yellow"
+        Write-Log "GitHub Personal Access Token Required" "Yellow"
+        Write-Log "=====================================" "Yellow"
+        Write-Log "" "Yellow"
+        Write-Log "The installation package is in a private repository and requires authentication." "White"
+        Write-Log "" "White"
+        Write-Log "If you don't have a token yet:" "Cyan"
+        Write-Log "  1. Go to: https://github.com/settings/tokens" "White"
+        Write-Log "  2. Click 'Generate new token (classic)'" "White"
+        Write-Log "  3. Select scope: repo (Full control of private repositories)" "White"
+        Write-Log "  4. Generate and copy the token" "White"
+        Write-Log "" "White"
+
+        $GitHubToken = Read-Host "Please enter your GitHub Personal Access Token (ghp_...)"
+        Write-Log "GitHub token entered by user" "Cyan"
+
+        if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
+            Write-Error-Custom "`nERROR: GitHub token is required to continue"
+            Exit-WithError
+        }
+
+        Write-Log "" "White"
+    }
+
+    $Headers = @{
+        "Accept" = "application/vnd.github.v3+json"
+        "Authorization" = "token $GitHubToken"
+    }
+    Write-Success "[OK] Using GitHub token for authentication"
+}
+
+# Get latest release
+Write-Info "`n[5/8] Checking for latest installation package..."
+
+if ($script:ReleaseSource -ne "s3") {
+    $ReleaseUrl = "$GITHUB_API/$GITHUB_REPO/releases/latest"
+
+    try {
+        $Release = Invoke-RestMethod -Uri $ReleaseUrl -Headers $Headers -ErrorAction Stop
+        $Version = $Release.tag_name
+        Write-Success "[OK] Found version: $Version"
+    }
+    catch {
+        $StatusCode = $_.Exception.Response.StatusCode.value__
+
+        Write-Error-Custom "ERROR: Failed to fetch release information"
+        Write-Error-Custom ""
+
+        if ($StatusCode -eq 401) {
+            Write-Error-Custom "  → Authentication Failed (401 Unauthorized)"
+            Write-Error-Custom ""
+            Write-Error-Custom "  Your GitHub Personal Access Token is invalid or expired."
+            Write-Error-Custom ""
+            Write-Error-Custom "  Please check:"
+            Write-Error-Custom "    1. Token is correctly copied (should start with 'ghp_')"
+            Write-Error-Custom "    2. Token hasn't expired (check: https://github.com/settings/tokens)"
+            Write-Error-Custom "    3. Token hasn't been revoked"
+            Write-Error-Custom ""
+            Write-Error-Custom "  To create a new token:"
+            Write-Error-Custom "    → Go to: https://github.com/settings/tokens"
+            Write-Error-Custom "    → Generate new token (classic)"
+            Write-Error-Custom "    → Select scope: repo (Full control of private repositories)"
+        }
+        elseif ($StatusCode -eq 403) {
+            Write-Error-Custom "  → Access Forbidden (403 Forbidden)"
+            Write-Error-Custom ""
+            Write-Error-Custom "  Your token doesn't have permission to access this repository."
+            Write-Error-Custom ""
+            Write-Error-Custom "  Please check:"
+            Write-Error-Custom "    1. Token has 'repo' scope enabled"
+            Write-Error-Custom "    2. You have access to: https://github.com/$GITHUB_REPO"
+            Write-Error-Custom "    3. The repository owner has granted you access"
+            Write-Error-Custom ""
+            Write-Error-Custom "  Contact the repository owner if you need access."
+        }
+        elseif ($StatusCode -eq 404) {
+            Write-Error-Custom "  → Repository Not Found (404 Not Found)"
+            Write-Error-Custom ""
+            Write-Error-Custom "  The repository doesn't exist or you don't have access to it."
+            Write-Error-Custom ""
+            Write-Error-Custom "  Repository: https://github.com/$GITHUB_REPO"
+            Write-Error-Custom ""
+            Write-Error-Custom "  Please verify:"
+            Write-Error-Custom "    1. The repository exists"
+            Write-Error-Custom "    2. The repository name is spelled correctly"
+            Write-Error-Custom "    3. Your token has access to the repository"
+        }
+        else {
+            Write-Error-Custom "  General error occurred:"
+            Write-Error-Custom "  $($_.Exception.Message)"
+            Write-Error-Custom ""
+            Write-Error-Custom "  Please check:"
+            Write-Error-Custom "    1. Internet connection is working"
+            Write-Error-Custom "    2. GitHub is accessible (https://www.githubstatus.com/)"
+            Write-Error-Custom "    3. Repository exists: https://github.com/$GITHUB_REPO"
+        }
+
         Exit-WithError
     }
-    
-    Write-Log "" "White"
-}
-
-$Headers = @{
-    "Accept" = "application/vnd.github.v3+json"
-    "Authorization" = "token $GitHubToken"
-}
-Write-Success "[OK] Using GitHub token for authentication"
-
-# Get latest release from GitHub repo
-Write-Info "`n[5/8] Checking for latest installation package..."
-$ReleaseUrl = "$GITHUB_API/$GITHUB_REPO/releases/latest"
-
-try {
-    $Release = Invoke-RestMethod -Uri $ReleaseUrl -Headers $Headers -ErrorAction Stop
-    $Version = $Release.tag_name
-    Write-Success "[OK] Found version: $Version"
-}
-catch {
-    $StatusCode = $_.Exception.Response.StatusCode.value__
-    
-    Write-Error-Custom "ERROR: Failed to fetch release information"
-    Write-Error-Custom ""
-    
-    # Provide specific error messages based on HTTP status code
-    if ($StatusCode -eq 401) {
-        Write-Error-Custom "  → Authentication Failed (401 Unauthorized)"
-        Write-Error-Custom ""
-        Write-Error-Custom "  Your GitHub Personal Access Token is invalid or expired."
-        Write-Error-Custom ""
-        Write-Error-Custom "  Please check:"
-        Write-Error-Custom "    1. Token is correctly copied (should start with 'ghp_')"
-        Write-Error-Custom "    2. Token hasn't expired (check: https://github.com/settings/tokens)"
-        Write-Error-Custom "    3. Token hasn't been revoked"
-        Write-Error-Custom ""
-        Write-Error-Custom "  To create a new token:"
-        Write-Error-Custom "    → Go to: https://github.com/settings/tokens"
-        Write-Error-Custom "    → Generate new token (classic)"
-        Write-Error-Custom "    → Select scope: repo (Full control of private repositories)"
-    }
-    elseif ($StatusCode -eq 403) {
-        Write-Error-Custom "  → Access Forbidden (403 Forbidden)"
-        Write-Error-Custom ""
-        Write-Error-Custom "  Your token doesn't have permission to access this repository."
-        Write-Error-Custom ""
-        Write-Error-Custom "  Please check:"
-        Write-Error-Custom "    1. Token has 'repo' scope enabled"
-        Write-Error-Custom "    2. You have access to: https://github.com/$GITHUB_REPO"
-        Write-Error-Custom "    3. The repository owner has granted you access"
-        Write-Error-Custom ""
-        Write-Error-Custom "  Contact the repository owner if you need access."
-    }
-    elseif ($StatusCode -eq 404) {
-        Write-Error-Custom "  → Repository Not Found (404 Not Found)"
-        Write-Error-Custom ""
-        Write-Error-Custom "  The repository doesn't exist or you don't have access to it."
-        Write-Error-Custom ""
-        Write-Error-Custom "  Repository: https://github.com/$GITHUB_REPO"
-        Write-Error-Custom ""
-        Write-Error-Custom "  Please verify:"
-        Write-Error-Custom "    1. The repository exists"
-        Write-Error-Custom "    2. The repository name is spelled correctly"
-        Write-Error-Custom "    3. Your token has access to the repository"
-    }
-    else {
-        Write-Error-Custom "  General error occurred:"
-        Write-Error-Custom "  $($_.Exception.Message)"
-        Write-Error-Custom ""
-        Write-Error-Custom "  Please check:"
-        Write-Error-Custom "    1. Internet connection is working"
-        Write-Error-Custom "    2. GitHub is accessible (https://www.githubstatus.com/)"
-        Write-Error-Custom "    3. Repository exists: https://github.com/$GITHUB_REPO"
-    }
-    
-    Exit-WithError
+} else {
+    Write-Success "[OK] Using S3 release: $Version"
 }
 
 # Download component-based installation package
@@ -551,14 +633,29 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     Write-Info "  Downloading manifest..."
     $ManifestPath = Join-Path $env:TEMP "manifest.json"
     try {
-        $DownloadHeaders = $Headers.Clone()
-        $DownloadHeaders["Accept"] = "application/octet-stream"
-        
-        # Show progress for manifest download
-        Write-Info "    Downloading from: $($ManifestAsset.url)"
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
-        
+        if ($script:ReleaseSource -eq "s3") {
+            # Parse S3 URL to get the key, then download with aws cli
+            $manifestUrl = $ManifestAsset.url
+            if ($manifestUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
+                $manifestS3Key = $matches[2]
+            } else {
+                throw "Could not parse S3 URL: $manifestUrl"
+            }
+            Write-Info "    Downloading from S3: s3://$s3Bucket/$manifestS3Key"
+            $env:AWS_ACCESS_KEY_ID = $s3AwsKey
+            $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+            & aws s3api get-object --bucket $s3Bucket --key $manifestS3Key --region $s3Region $ManifestPath *>&1 | Out-Null
+            Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+            Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -ne 0) { throw "aws s3api get-object failed for manifest" }
+        } else {
+            $DownloadHeaders = $Headers.Clone()
+            $DownloadHeaders["Accept"] = "application/octet-stream"
+            Write-Info "    Downloading from: $($ManifestAsset.url)"
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $ManifestAsset.url -OutFile $ManifestPath -Headers $DownloadHeaders -UseBasicParsing
+        }
+
         $Manifest = Get-Content $ManifestPath | ConvertFrom-Json
         Write-Success "[OK] Downloaded manifest"
     }
@@ -673,94 +770,84 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
         $filesDownloaded = 0
         foreach ($FileInfo in $ComponentInfo.files) {
             $Filename = $FileInfo.filename
-            
-            # The manifest tells us which release contains each component via minimum_versions
-            # Check that release first (it may be current or a previous release)
+
             $Asset = $null
             $SourceTag = $Version
-            
-            # First, check the version specified in minimum_versions (this is where the manifest says the files are)
-            if ($Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName) {
-                $ComponentVersion = $Manifest.minimum_versions.$ComponentName
-                
-                if ($ComponentVersion -eq $Version) {
-                    # Component is in current release, check current release
+
+            if ($script:ReleaseSource -eq "s3") {
+                # S3: all assets are already in the Release object
+                $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+                if ($Asset) {
+                    Write-Info "    Found in S3 release: $Version"
+                }
+            } else {
+                # GitHub: check minimum_versions, current release, then search all releases
+                if ($Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName) {
+                    $ComponentVersion = $Manifest.minimum_versions.$ComponentName
+
+                    if ($ComponentVersion -eq $Version) {
+                        $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+                        if ($Asset) {
+                            Write-Info "    Found in current release: $Version"
+                        }
+                    } else {
+                        Write-Info "    Component specified in manifest for release: $ComponentVersion (checking that release first)"
+                        $ComponentRelease = Get-ReleaseByTag -Tag $ComponentVersion
+                        if ($ComponentRelease) {
+                            $Asset = Find-AssetInRelease -ReleaseObj $ComponentRelease -Filename $Filename
+                            if ($Asset) {
+                                $SourceTag = $ComponentVersion
+                                Write-Info "    Found in release specified by manifest: $ComponentVersion"
+                            } else {
+                                Write-Warning "    File not found in release specified by manifest ($ComponentVersion), searching other releases..."
+                            }
+                        } else {
+                            Write-Warning "    Release specified by manifest ($ComponentVersion) not found, searching other releases..."
+                        }
+                    }
+                } else {
                     $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
                     if ($Asset) {
                         Write-Info "    Found in current release: $Version"
                     }
-                } else {
-                    # Component is in a previous release according to manifest
-                    Write-Info "    Component specified in manifest for release: $ComponentVersion (checking that release first)"
-                    $ComponentRelease = Get-ReleaseByTag -Tag $ComponentVersion
-                    if ($ComponentRelease) {
-                        $Asset = Find-AssetInRelease -ReleaseObj $ComponentRelease -Filename $Filename
+                }
+
+                # If still not found, iterate through all previous releases as fallback
+                if (!$Asset) {
+                    Write-Info "    Searching all previous releases..."
+                    $AllReleases = Get-AllReleases
+                    foreach ($PreviousRelease in $AllReleases) {
+                        if ($PreviousRelease.tag_name -eq $Version) { continue }
+                        if ($Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName -and
+                            $PreviousRelease.tag_name -eq $Manifest.minimum_versions.$ComponentName) { continue }
+
+                        $Asset = Find-AssetInRelease -ReleaseObj $PreviousRelease -Filename $Filename
                         if ($Asset) {
-                            $SourceTag = $ComponentVersion
-                            Write-Info "    Found in release specified by manifest: $ComponentVersion"
-                        } else {
-                            Write-Warning "    File not found in release specified by manifest ($ComponentVersion), searching other releases..."
+                            $SourceTag = $PreviousRelease.tag_name
+                            Write-Info "    Found in previous release: $($PreviousRelease.tag_name)"
+                            break
                         }
-                    } else {
-                        Write-Warning "    Release specified by manifest ($ComponentVersion) not found, searching other releases..."
-                    }
-                }
-            } else {
-                # No minimum_versions specified, check current release first
-                $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
-                if ($Asset) {
-                    Write-Info "    Found in current release: $Version"
-                }
-            }
-            
-            # If still not found, iterate through all previous releases as fallback
-            if (!$Asset) {
-                Write-Info "    Searching all previous releases..."
-                $AllReleases = Get-AllReleases
-                foreach ($PreviousRelease in $AllReleases) {
-                    # Skip current release
-                    if ($PreviousRelease.tag_name -eq $Version) {
-                        continue
-                    }
-                    
-                    # Skip the version from minimum_versions if we already checked it
-                    if ($Manifest.minimum_versions -and $Manifest.minimum_versions.$ComponentName -and 
-                        $PreviousRelease.tag_name -eq $Manifest.minimum_versions.$ComponentName) {
-                        continue
-                    }
-                    
-                    $Asset = Find-AssetInRelease -ReleaseObj $PreviousRelease -Filename $Filename
-                    if ($Asset) {
-                        $SourceTag = $PreviousRelease.tag_name
-                        Write-Info "    Found in previous release: $($PreviousRelease.tag_name)"
-                        break
                     }
                 }
             }
-            
+
             if (!$Asset) {
-                Write-Warning "  [!] Asset not found: $Filename (checked current and all previous releases, skipping)"
+                Write-Warning "  [!] Asset not found: $Filename (skipping)"
                 continue
             }
-            
+
             # Download file (check if already exists with correct size first, unless clean reinstall)
             $FilePath = Join-Path $TempDownloadDir $Filename
             $FileSizeMB = [math]::Round($Asset.size / 1MB, 2)
             $ExpectedSize = $Asset.size
-            
+
             # Clean reinstall: delete existing file even if size matches
             if ($CleanReinstall -and (Test-Path $FilePath)) {
                 Write-Info "    Clean reinstall: removing existing file $Filename..."
                 Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
             }
-            
+
             try {
-                # Create fresh headers hashtable for download
-                $DownloadHeaders = @{
-                    "Accept" = "application/octet-stream"
-                    "Authorization" = $Headers["Authorization"]
-                }
-                
                 # Check for existing download - skip if file exists and size matches (only if not clean reinstall)
                 if (!$CleanReinstall -and (Test-Path $FilePath)) {
                     $existingSize = (Get-Item $FilePath).Length
@@ -769,7 +856,6 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                         $filesDownloaded++
                         continue
                     } else {
-                        # File exists but size doesn't match (partial or wrong size) - remove and re-download
                         if ($existingSize -gt 0 -and $existingSize -lt $ExpectedSize) {
                             Write-Info "    Partial file found ($([math]::Round($existingSize / 1MB, 2)) MB), removing and downloading fresh copy..."
                         } elseif ($existingSize -gt $ExpectedSize) {
@@ -779,31 +865,41 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                         Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
                     }
                 }
-                
+
                 # Show file size and progress
-                if ($SourceTag -ne $Version) {
-                    Write-Info "    Downloading: $Filename ($FileSizeMB MB) from release $SourceTag..."
+                Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+
+                if ($script:ReleaseSource -eq "s3") {
+                    # S3 download: parse URL to key and use aws cli
+                    $assetUrl = $Asset.url
+                    if ($assetUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
+                        $assetS3Key = $matches[2]
+                    } else {
+                        throw "Could not parse S3 URL: $assetUrl"
+                    }
+                    $env:AWS_ACCESS_KEY_ID = $s3AwsKey
+                    $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+                    & aws s3api get-object --bucket $s3Bucket --key $assetS3Key --region $s3Region $FilePath *>&1 | Out-Null
+                    Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+                    Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+                    if ($LASTEXITCODE -ne 0) { throw "aws s3api get-object failed for $Filename" }
                 } else {
-                    Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                    # GitHub download
+                    $DownloadHeaders = @{
+                        "Accept" = "application/octet-stream"
+                        "Authorization" = $Headers["Authorization"]
+                    }
+                    $ProgressPreference = 'SilentlyContinue'
+                    Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
                 }
-                
-                # Disable progress bar for faster downloads
-                $ProgressPreference = 'SilentlyContinue'
-                
-                # Full download
-                Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
-                
+
                 # Verify downloaded file size matches expected size
                 $DownloadedFile = Get-Item $FilePath
                 if ($DownloadedFile.Length -ne $ExpectedSize) {
                     Write-Warning "    [!] Downloaded file size mismatch: $($DownloadedFile.Length) vs expected $ExpectedSize bytes"
                     Write-Warning "    [!] File may be corrupted, will be re-downloaded on next run"
                 } else {
-                    if ($SourceTag -ne $Version) {
-                        Write-Success "    [OK] Downloaded: $Filename from release $SourceTag"
-                    } else {
-                        Write-Success "    [OK] Downloaded: $Filename"
-                    }
+                    Write-Success "    [OK] Downloaded: $Filename"
                 }
                 $filesDownloaded++
             }
@@ -812,7 +908,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 continue
             }
         }
-        
+
         if ($filesDownloaded -eq 0) {
             Write-Warning "  [!] No files downloaded for $ComponentName (component may be empty)"
         }
@@ -1587,7 +1683,20 @@ if (Test-Path $EnvTemplatePath) {
     if ($EnvContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
         $EnvContent += "`nAWS_REGION=$AWSRegion"
     }
-    
+    # Only add S3_RELEASE_BUCKET if provided
+    if (![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
+        $EnvContent = $EnvContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
+        if ($EnvContent -notmatch "S3_RELEASE_BUCKET") {
+            $EnvContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
+        }
+    }
+    if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
+        $EnvContent = $EnvContent -replace "# ?S3_RELEASE_REGION=.*", "S3_RELEASE_REGION=$S3ReleaseRegion"
+        if ($EnvContent -notmatch "S3_RELEASE_REGION") {
+            $EnvContent += "`nS3_RELEASE_REGION=$S3ReleaseRegion"
+        }
+    }
+
     # Add generation timestamp as comment
     $EnvContent = "# RFQ Application Configuration`n# Generated by installer on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n" + $EnvContent
     
@@ -1737,7 +1846,16 @@ RFQ_UPDATE_CHANNEL=$UpdateChannel
             $EnvContent += "AWS_REGION=$AWSRegion`n"
         }
     }
-    
+
+    # Add S3 Release Bucket if provided
+    if (![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
+        $EnvContent += "`n# S3 Release Bucket (enables S3-based updates instead of GHCR)`n"
+        $EnvContent += "S3_RELEASE_BUCKET=$S3ReleaseBucket`n"
+        if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
+            $EnvContent += "S3_RELEASE_REGION=$S3ReleaseRegion`n"
+        }
+    }
+
     Set-Content -Path $EnvPath -Value $EnvContent -Force
     Write-Success "[OK] Created .env configuration with all values"
 }
