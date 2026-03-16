@@ -12,7 +12,7 @@ param(
     [string]$AWSKey = "",
     [string]$AWSSecret = "",
     [string]$AWSRegion = "us-east-1",
-    [string]$S3ReleaseBucket = "",
+    [string]$S3ReleaseBucket = "rfq-distribution",
     [string]$S3ReleaseRegion = "",
     [string]$SettingsPassword = "",
     [string]$SuperUserPassword = "",
@@ -1683,12 +1683,10 @@ if (Test-Path $EnvTemplatePath) {
     if ($EnvContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
         $EnvContent += "`nAWS_REGION=$AWSRegion"
     }
-    # Only add S3_RELEASE_BUCKET if provided
-    if (![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
-        $EnvContent = $EnvContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
-        if ($EnvContent -notmatch "S3_RELEASE_BUCKET") {
-            $EnvContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
-        }
+    # Always write S3_RELEASE_BUCKET (defaults to rfq-distribution)
+    $EnvContent = $EnvContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
+    if ($EnvContent -notmatch "S3_RELEASE_BUCKET") {
+        $EnvContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
     }
     if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
         $EnvContent = $EnvContent -replace "# ?S3_RELEASE_REGION=.*", "S3_RELEASE_REGION=$S3ReleaseRegion"
