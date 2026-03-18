@@ -120,6 +120,149 @@ function Exit-WithError {
     exit 1
 }
 
+# ── CloudFront signed-URL support ────────────────────────────────────────────
+# Fetch signing config (key + key-pair-id + distribution domain) from S3 once,
+# then generate short-lived signed URLs so all subsequent downloads go through
+# CloudFront instead of hitting S3 directly.  Falls back gracefully when the
+# config objects are missing or the fetch fails.
+
+$script:CloudFrontConfig = $null  # cached after first successful fetch
+
+function Get-CloudFrontSigningConfig {
+    <#
+    .SYNOPSIS
+        Downloads cloudfront-config.json and cloudfront-key.pem from the S3
+        bucket and caches the result in $script:CloudFrontConfig.
+    .DESCRIPTION
+        Returns a hashtable with keys: Domain, KeyPairId, PrivateKeyPem.
+        Returns $null on any failure (caller should fall back to direct S3).
+    #>
+    param(
+        [string]$Bucket,
+        [string]$Region,
+        [string]$AwsKey,
+        [string]$AwsSecret
+    )
+
+    # Return cached config if we already fetched it
+    if ($null -ne $script:CloudFrontConfig) {
+        return $script:CloudFrontConfig
+    }
+
+    try {
+        $cfgTmp  = Join-Path $env:TEMP "rfq_cf_config.json"
+        $keyTmp  = Join-Path $env:TEMP "rfq_cf_key.pem"
+
+        # Temporarily set AWS credentials
+        $env:AWS_ACCESS_KEY_ID     = $AwsKey
+        $env:AWS_SECRET_ACCESS_KEY = $AwsSecret
+
+        # Fetch config JSON
+        & aws s3api get-object --bucket $Bucket --key "signing/cloudfront-config.json" --region $Region $cfgTmp *>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to fetch cloudfront-config.json" }
+
+        # Fetch private key
+        & aws s3api get-object --bucket $Bucket --key "signing/cloudfront-key.pem" --region $Region $keyTmp *>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to fetch cloudfront-key.pem" }
+
+        # Clean up AWS env vars
+        Remove-Item Env:\AWS_ACCESS_KEY_ID     -ErrorAction SilentlyContinue
+        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+
+        $cfgJson = Get-Content $cfgTmp -Raw | ConvertFrom-Json
+        $pemText = Get-Content $keyTmp -Raw
+
+        Remove-Item $cfgTmp -Force -ErrorAction SilentlyContinue
+        Remove-Item $keyTmp -Force -ErrorAction SilentlyContinue
+
+        if ([string]::IsNullOrWhiteSpace($cfgJson.cloudfront_url) -or
+            [string]::IsNullOrWhiteSpace($cfgJson.key_pair_id) -or
+            [string]::IsNullOrWhiteSpace($pemText)) {
+            throw "Incomplete CloudFront signing config"
+        }
+
+        $script:CloudFrontConfig = @{
+            Domain       = $cfgJson.cloudfront_url.TrimEnd('/')
+            KeyPairId    = $cfgJson.key_pair_id
+            PrivateKeyPem = $pemText
+        }
+        Write-Info "  CloudFront signing config loaded (key-pair: $($cfgJson.key_pair_id))"
+        return $script:CloudFrontConfig
+    }
+    catch {
+        # Clean up env vars on failure too
+        Remove-Item Env:\AWS_ACCESS_KEY_ID     -ErrorAction SilentlyContinue
+        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $env:TEMP "rfq_cf_config.json") -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $env:TEMP "rfq_cf_key.pem")     -Force -ErrorAction SilentlyContinue
+
+        Write-Info "  CloudFront signing config not available: $_ (will use direct S3)"
+        $script:CloudFrontConfig = $null
+        return $null
+    }
+}
+
+function New-CloudFrontSignedUrl {
+    <#
+    .SYNOPSIS
+        Generates a CloudFront signed URL for the given S3 object path.
+    .PARAMETER Path
+        The S3 key / resource path (e.g. "internal/windows/latest.json").
+    .PARAMETER ExpiresInSeconds
+        Lifetime of the signed URL in seconds (default: 900 = 15 min).
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [int]$ExpiresInSeconds = 900
+    )
+
+    $cfg = $script:CloudFrontConfig
+    if ($null -eq $cfg) { return $null }
+
+    $resourceUrl = "$($cfg.Domain)/$Path"
+
+    # Epoch expiry
+    $epoch  = [int][double]::Parse(
+        (Get-Date -Date ((Get-Date).ToUniversalTime().AddSeconds($ExpiresInSeconds)) -UFormat %s)
+    )
+
+    # Canned policy JSON (compact, no extra whitespace — CloudFront is strict)
+    $policy = '{"Statement":[{"Resource":"' + $resourceUrl + '","Condition":{"DateLessThan":{"AWS:EpochTime":' + $epoch + '}}}]}'
+
+    try {
+        # ── RSA-SHA1 signature via openssl ────────────────────────────
+        # .NET Framework 4.x RSACryptoServiceProvider does not support
+        # ImportPkcs8PrivateKey. openssl is already an installer
+        # dependency (used for Azure encryption key generation).
+        $guid    = [guid]::NewGuid().ToString('N')
+        $keyTmp  = Join-Path $env:TEMP "cf_key_$guid.pem"
+        $polTmp  = Join-Path $env:TEMP "cf_pol_$guid.bin"
+        $sigTmp  = Join-Path $env:TEMP "cf_sig_$guid.bin"
+
+        [System.IO.File]::WriteAllText($keyTmp, $cfg.PrivateKeyPem)
+        $policyBytes = [System.Text.Encoding]::UTF8.GetBytes($policy)
+        [System.IO.File]::WriteAllBytes($polTmp, $policyBytes)
+
+        & openssl dgst -sha1 -sign $keyTmp -out $sigTmp $polTmp 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "openssl signing failed (exit code $LASTEXITCODE)" }
+
+        $signatureBytes = [System.IO.File]::ReadAllBytes($sigTmp)
+        Remove-Item $keyTmp, $polTmp, $sigTmp -Force -ErrorAction SilentlyContinue
+
+        # CloudFront-safe Base64: + → -, = → _, / → ~
+        $sig64 = [Convert]::ToBase64String($signatureBytes)
+        $sig64 = $sig64.Replace('+', '-').Replace('=', '_').Replace('/', '~')
+
+        $signedUrl = "$resourceUrl`?Expires=$epoch&Signature=$sig64&Key-Pair-Id=$($cfg.KeyPairId)"
+        return $signedUrl
+    }
+    catch {
+        Write-Warning "  Failed to generate CloudFront signed URL: $_"
+        return $null
+    }
+}
+
 # Windows Credential Manager functions
 function Save-ToCredentialManager {
     param(
@@ -449,6 +592,11 @@ Write-Info "`n[4/8] Checking authentication..."
 
 if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace($s3AwsKey) -and ![string]::IsNullOrWhiteSpace($s3AwsSecret)) {
     Write-Info "  S3 release bucket configured: $s3Bucket (region: $s3Region)"
+
+    # ── Try to load CloudFront signing config from S3 ──
+    Write-Info "  Checking for CloudFront signing configuration..."
+    $cfConfig = Get-CloudFrontSigningConfig -Bucket $s3Bucket -Region $s3Region -AwsKey $s3AwsKey -AwsSecret $s3AwsSecret
+
     Write-Info "  Attempting to fetch latest release from S3..."
 
     try {
@@ -456,12 +604,35 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
         $s3Key = "$s3Channel/windows/latest.json"
         $s3TempFile = Join-Path $env:TEMP "rfq_s3_latest.json"
 
-        $env:AWS_ACCESS_KEY_ID = $s3AwsKey
-        $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+        $s3DownloadOk = $false
 
-        & aws s3api get-object --bucket $s3Bucket --key $s3Key --region $s3Region $s3TempFile *>&1 | Out-Null
+        # ── CloudFront path ──
+        if ($script:CloudFrontConfig) {
+            try {
+                $cfSignedUrl = New-CloudFrontSignedUrl -Path $s3Key
+                if ($cfSignedUrl) {
+                    Write-Info "    Downloading latest.json via CloudFront..."
+                    $ProgressPreference = 'SilentlyContinue'
+                    Invoke-WebRequest -Uri $cfSignedUrl -OutFile $s3TempFile -UseBasicParsing
+                    $s3DownloadOk = $true
+                }
+            }
+            catch {
+                Write-Warning "    CloudFront download failed for latest.json: $_ (falling back to direct S3)"
+            }
+        }
 
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $s3TempFile)) {
+        # ── Direct S3 fallback ──
+        if (-not $s3DownloadOk) {
+            $env:AWS_ACCESS_KEY_ID = $s3AwsKey
+            $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+            & aws s3api get-object --bucket $s3Bucket --key $s3Key --region $s3Region $s3TempFile *>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { $s3DownloadOk = $true }
+            Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+            Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+        }
+
+        if ($s3DownloadOk -and (Test-Path $s3TempFile)) {
             $S3LatestPayload = Get-Content $s3TempFile -Raw | ConvertFrom-Json
             Remove-Item $s3TempFile -Force -ErrorAction SilentlyContinue
 
@@ -634,20 +805,44 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     $ManifestPath = Join-Path $env:TEMP "manifest.json"
     try {
         if ($script:ReleaseSource -eq "s3") {
-            # Parse S3 URL to get the key, then download with aws cli
+            # Parse S3 URL to get the key
             $manifestUrl = $ManifestAsset.url
             if ($manifestUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
                 $manifestS3Key = $matches[2]
             } else {
                 throw "Could not parse S3 URL: $manifestUrl"
             }
-            Write-Info "    Downloading from S3: s3://$s3Bucket/$manifestS3Key"
-            $env:AWS_ACCESS_KEY_ID = $s3AwsKey
-            $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
-            & aws s3api get-object --bucket $s3Bucket --key $manifestS3Key --region $s3Region $ManifestPath *>&1 | Out-Null
-            Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
-            Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
-            if ($LASTEXITCODE -ne 0) { throw "aws s3api get-object failed for manifest" }
+
+            $manifestDownloadOk = $false
+
+            # ── CloudFront path ──
+            if ($script:CloudFrontConfig) {
+                try {
+                    $cfSignedUrl = New-CloudFrontSignedUrl -Path $manifestS3Key
+                    if ($cfSignedUrl) {
+                        Write-Info "    Downloading manifest via CloudFront..."
+                        $ProgressPreference = 'SilentlyContinue'
+                        Invoke-WebRequest -Uri $cfSignedUrl -OutFile $ManifestPath -UseBasicParsing
+                        $manifestDownloadOk = $true
+                    }
+                }
+                catch {
+                    Write-Warning "    CloudFront download failed for manifest: $_ (falling back to direct S3)"
+                }
+            }
+
+            # ── Direct S3 fallback ──
+            if (-not $manifestDownloadOk) {
+                Write-Info "    Downloading from S3: s3://$s3Bucket/$manifestS3Key"
+                $env:AWS_ACCESS_KEY_ID = $s3AwsKey
+                $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+                & aws s3api get-object --bucket $s3Bucket --key $manifestS3Key --region $s3Region $ManifestPath *>&1 | Out-Null
+                Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+                Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+                if ($LASTEXITCODE -eq 0) { $manifestDownloadOk = $true }
+            }
+
+            if (-not $manifestDownloadOk) { throw "Failed to download manifest from S3 (all methods)" }
         } else {
             $DownloadHeaders = $Headers.Clone()
             $DownloadHeaders["Accept"] = "application/octet-stream"
@@ -870,19 +1065,43 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
 
                 if ($script:ReleaseSource -eq "s3") {
-                    # S3 download: parse URL to key and use aws cli
+                    # S3 download: parse URL to key
                     $assetUrl = $Asset.url
                     if ($assetUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
                         $assetS3Key = $matches[2]
                     } else {
                         throw "Could not parse S3 URL: $assetUrl"
                     }
-                    $env:AWS_ACCESS_KEY_ID = $s3AwsKey
-                    $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
-                    & aws s3api get-object --bucket $s3Bucket --key $assetS3Key --region $s3Region $FilePath *>&1 | Out-Null
-                    Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
-                    Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
-                    if ($LASTEXITCODE -ne 0) { throw "aws s3api get-object failed for $Filename" }
+
+                    $assetDownloadOk = $false
+
+                    # ── CloudFront path ──
+                    if ($script:CloudFrontConfig) {
+                        try {
+                            $cfSignedUrl = New-CloudFrontSignedUrl -Path $assetS3Key
+                            if ($cfSignedUrl) {
+                                Write-Info "    Downloading via CloudFront..."
+                                $ProgressPreference = 'SilentlyContinue'
+                                Invoke-WebRequest -Uri $cfSignedUrl -OutFile $FilePath -UseBasicParsing
+                                $assetDownloadOk = $true
+                            }
+                        }
+                        catch {
+                            Write-Warning "    CloudFront download failed for $Filename : $_ (falling back to direct S3)"
+                        }
+                    }
+
+                    # ── Direct S3 fallback ──
+                    if (-not $assetDownloadOk) {
+                        $env:AWS_ACCESS_KEY_ID = $s3AwsKey
+                        $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
+                        & aws s3api get-object --bucket $s3Bucket --key $assetS3Key --region $s3Region $FilePath *>&1 | Out-Null
+                        Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+                        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+                        if ($LASTEXITCODE -eq 0) { $assetDownloadOk = $true }
+                    }
+
+                    if (-not $assetDownloadOk) { throw "Failed to download $Filename from S3 (all methods)" }
                 } else {
                     # GitHub download
                     $DownloadHeaders = @{
