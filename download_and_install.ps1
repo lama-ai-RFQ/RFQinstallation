@@ -5,6 +5,7 @@
 param(
     [string]$InstallPath = "$env:LOCALAPPDATA\RFQApplication",
     [string]$GitHubToken = "",
+    [switch]$NonInteractive,
     [switch]$Help,
     [switch]$OverwriteExisting,
     [string]$ModelPath = "",
@@ -87,7 +88,7 @@ trap {
     Write-Log "Log file saved to: $script:LogFile" "Cyan"
     Write-Host ""
     Write-Host "Press any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    if (-not $NonInteractive) { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") }
     exit 1
 }
 
@@ -122,7 +123,7 @@ function Exit-WithError {
     Write-Log "Installation failed. Log file saved to: $script:LogFile" "Yellow"
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    if (-not $NonInteractive) { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") }
     exit 1
 }
 
@@ -485,7 +486,7 @@ NOTES:
 "@
     Write-Host ""
     Write-Host "Press any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    if (-not $NonInteractive) { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") }
     exit 0
 }
 
@@ -525,7 +526,7 @@ $FreeSpace = (Get-PSDrive ($Drive.TrimEnd(':'))).Free / 1GB
 $FreeSpaceFormatted = "{0:F2}" -f $FreeSpace
 if ($FreeSpace -lt 4) {
     Write-Warning "WARNING: Low disk space - $FreeSpaceFormatted GB free. Need at least 4 GB."
-    $continue = Read-Host "Continue anyway? (y/N)"
+    if ($NonInteractive) { $continue = "y" } else { $continue = Read-Host "Continue anyway? (y/N)" }
     if ($continue -ne 'y') {
         Exit-WithError
     }
@@ -550,7 +551,7 @@ else {
         Write-Info "  Overwriting existing installation (as requested by installer)..."
     }
     else {
-        $overwrite = Read-Host "Overwrite existing installation? (y/N)"
+        if ($NonInteractive) { $overwrite = if ($OverwriteExisting) { "y" } else { "" } } else { $overwrite = Read-Host "Overwrite existing installation? (y/N)" }
         if ($overwrite -ne 'y') {
             Exit-WithError
         }
@@ -701,7 +702,7 @@ if ($script:ReleaseSource -ne "s3") {
         Write-Log "  4. Generate and copy the token" "White"
         Write-Log "" "White"
 
-        $GitHubToken = Read-Host "Please enter your GitHub Personal Access Token (ghp_...)"
+        if ($NonInteractive) { $GitHubToken = "" } else { $GitHubToken = Read-Host "Please enter your GitHub Personal Access Token (ghp_...)" }
         Write-Log "GitHub token entered by user" "Cyan"
 
         if (!$GitHubToken -or $GitHubToken.Trim() -eq "") {
@@ -2159,7 +2160,7 @@ else {
     Write-Info "  [Y] Yes - Download now (recommended)"
     Write-Info "  [n] No - Skip download (you can download later)"
     Write-Info ""
-    $downloadModel = Read-Host "Would you like to download the model now? (Y/n)"
+    if ($NonInteractive) { $downloadModel = "n"; Write-Info "  NonInteractive: skipping model download (use -ModelPath to provide a pre-downloaded model)" } else { $downloadModel = Read-Host "Would you like to download the model now? (Y/n)" }
     
     if ($downloadModel -ne 'n' -and $downloadModel -ne 'N') {
         Write-Info ""
@@ -2169,7 +2170,7 @@ else {
         Write-Info ""
         
         $defaultModelPath = Join-Path $env:USERPROFILE "Documents\RFQ_Models"
-        $modelBasePath = Read-Host "Enter model download directory (press Enter for default: $defaultModelPath)"
+        if ($NonInteractive) { $modelBasePath = "" } else { $modelBasePath = Read-Host "Enter model download directory (press Enter for default: $defaultModelPath)" }
         
         if ([string]::IsNullOrWhiteSpace($modelBasePath)) {
             $modelBasePath = $defaultModelPath
@@ -2266,15 +2267,19 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
             Write-Info ""
             
             if ([string]::IsNullOrWhiteSpace($awsKey)) {
-                $awsKey = Read-Host "Enter AWS Access Key ID"
+                if ($NonInteractive) { $awsKey = "" } else { $awsKey = Read-Host "Enter AWS Access Key ID" }
             }
             if ([string]::IsNullOrWhiteSpace($awsSecret)) {
-                $awsSecret = Read-Host "Enter AWS Secret Access Key" -AsSecureString
-                $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($awsSecret)
-                $awsSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+                if ($NonInteractive) {
+                    $awsSecret = ""
+                } else {
+                    $awsSecret = Read-Host "Enter AWS Secret Access Key" -AsSecureString
+                    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($awsSecret)
+                    $awsSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+                }
             }
-            
-            $regionInput = Read-Host "Enter AWS Region (press Enter for us-east-1)"
+
+            if ($NonInteractive) { $regionInput = "" } else { $regionInput = Read-Host "Enter AWS Region (press Enter for us-east-1)" }
             if (![string]::IsNullOrWhiteSpace($regionInput)) {
                 $awsRegion = $regionInput.Trim()
             }
@@ -2614,7 +2619,7 @@ if (Test-Path $SetupDbScript) {
         Write-Info "  Note: This requires .env file to be configured with SQL_SUPER_USER and RFQ_USER_PASSWORD"
         Write-Info ""
         
-        $setupDb = Read-Host "Set up database now? (y/N)"
+        if ($NonInteractive) { $setupDb = "" } else { $setupDb = Read-Host "Set up database now? (y/N)" }
         
         if ($setupDb -eq 'y') {
             # Check if .env has database passwords configured
@@ -2875,7 +2880,7 @@ if ($ExePath) {
                     Write-Info "    - Or: Username (will use current domain: $currentDomain)"
                     Write-Info ""
                     
-                    $accountInput = Read-Host "  Account name"
+                    if ($NonInteractive) { $accountInput = if ($ServiceAccount -ne "CurrentUser") { $ServiceAccount } else { "" } } else { $accountInput = Read-Host "  Account name" }
                     
                     if ([string]::IsNullOrWhiteSpace($accountInput)) {
                         Write-Warning "  No account name provided. Service will run as SYSTEM."
@@ -2905,7 +2910,7 @@ if ($ExePath) {
                         
                         while ($passwordAttempts -lt $maxAttempts) {
                             try {
-                                $securePassword = Read-Host "  Enter password for $targetServiceAccount" -AsSecureString
+                                if ($NonInteractive) { $securePassword = $null } else { $securePassword = Read-Host "  Enter password for $targetServiceAccount" -AsSecureString }
                                 if ($securePassword -and $securePassword.Length -gt 0) {
                                     # Convert to plain text temporarily (will be cleared after use)
                                     $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
@@ -3522,4 +3527,4 @@ Write-Log "Installation complete!" "Green"
 Write-Log "================================================================================" "Green"
 Write-Log "" "Green"
 Write-Host "Press any key to exit..."
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+if (-not $NonInteractive) { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") }
