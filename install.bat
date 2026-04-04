@@ -2,6 +2,13 @@
 REM RFQ Application - Windows Installation Launcher
 REM Simple wrapper to run the PowerShell installation script
 
+REM Self-elevate to admin if not already running elevated
+net session >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    powershell.exe -Command "Start-Process '%~f0' -ArgumentList '%*' -Verb RunAs"
+    exit /b
+)
+
 set "NONINTERACTIVE="
 for %%A in (%*) do (
     if /I "%%~A"=="-NonInteractive" set "NONINTERACTIVE=1"
