@@ -1061,8 +1061,15 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                     }
                 }
 
-                # Show file size and progress
-                Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
+                # Show file size and estimated time for large downloads
+                $sizeMsg = "$FileSizeMB MB"
+                if ($FileSizeMB -gt 500) {
+                    Write-Info "    Downloading: $Filename ($sizeMsg) - this file is large and may take several minutes. Please wait..."
+                } else {
+                    Write-Info "    Downloading: $Filename ($sizeMsg)..."
+                }
+
+                $downloadStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
                 if ($script:ReleaseSource -eq "s3") {
                     # S3 download: parse URL to key
@@ -1112,13 +1119,17 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                     Invoke-WebRequest -Uri $Asset.url -OutFile $FilePath -Headers $DownloadHeaders -UseBasicParsing
                 }
 
+                $downloadStopwatch.Stop()
+                $downloadSeconds = [math]::Round($downloadStopwatch.Elapsed.TotalSeconds, 1)
+
                 # Verify downloaded file size matches expected size
                 $DownloadedFile = Get-Item $FilePath
                 if ($DownloadedFile.Length -ne $ExpectedSize) {
                     Write-Warning "    [!] Downloaded file size mismatch: $($DownloadedFile.Length) vs expected $ExpectedSize bytes"
                     Write-Warning "    [!] File may be corrupted, will be re-downloaded on next run"
                 } else {
-                    Write-Success "    [OK] Downloaded: $Filename"
+                    $speedMBs = if ($downloadSeconds -gt 0) { [math]::Round($FileSizeMB / $downloadSeconds, 1) } else { 0 }
+                    Write-Success "    [OK] Downloaded: $Filename (${downloadSeconds}s, ${speedMBs} MB/s)"
                 }
                 $filesDownloaded++
             }
