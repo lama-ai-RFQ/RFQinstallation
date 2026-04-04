@@ -23,6 +23,7 @@ param(
     [string]$AzureKeyCustom = "",
     [switch]$CleanReinstall,
     [switch]$CleanupAfterInstall,
+    [string]$Channel = "",
     [string]$UpdateChannel = "customer",
     [switch]$UseCredentialManager,
     [string]$ServiceAccount = "CurrentUser",
@@ -499,8 +500,16 @@ $BannerText = @"
 "@
 Write-Log $BannerText "Cyan"
 
+$script:ResolvedChannel = if (![string]::IsNullOrWhiteSpace($Channel)) {
+    $Channel
+} elseif (![string]::IsNullOrWhiteSpace($UpdateChannel)) {
+    $UpdateChannel
+} else {
+    "customer"
+}
+
 # Configuration - Determine repository based on update channel
-if ($UpdateChannel -eq "internal") {
+if ($script:ResolvedChannel -eq "internal") {
     $GITHUB_REPO = "lama-ai-RFQ/RFQwindowspackages-internal"
     Write-Info "Using INTERNAL update channel: $GITHUB_REPO"
 }
@@ -607,7 +616,7 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
     Write-Info "  Attempting to fetch latest release from S3..."
 
     try {
-        $s3Channel = $UpdateChannel.ToLower()
+        $s3Channel = $script:ResolvedChannel.ToLower()
         $s3Key = "$s3Channel/windows/latest.json"
         $s3TempFile = Join-Path $env:TEMP "rfq_s3_latest.json"
 
@@ -1868,7 +1877,7 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
     $EnvContent = $EnvContent -replace "WINDOWS=.*", "WINDOWS=true"
     $EnvContent = $EnvContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
-    $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$UpdateChannel"
+    $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$script:ResolvedChannel"
     # REQUESTS_CA_BUNDLE is left empty by default - user will fill it in if needed for GCC High
     # Only update AWS credentials if they are non-empty
     if (![string]::IsNullOrWhiteSpace($AWSKey)) {
@@ -1938,7 +1947,7 @@ if (Test-Path $EnvTemplatePath) {
         $EnvContent += "`nAZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
     }
     if ($EnvContent -notmatch "RFQ_UPDATE_CHANNEL") {
-        $EnvContent += "`nRFQ_UPDATE_CHANNEL=$UpdateChannel"
+        $EnvContent += "`nRFQ_UPDATE_CHANNEL=$script:ResolvedChannel"
     }
     if ($EnvContent -notmatch "REQUESTS_CA_BUNDLE") {
         $EnvContent += "`n# SSL Certificate Configuration (for GCC High and government cloud environments)`n# Path to CA bundle file for SSL certificate verification`n# Leave empty if not using GCC High or if using system default certificates`nREQUESTS_CA_BUNDLE="
@@ -2097,7 +2106,7 @@ AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
 REQUESTS_CA_BUNDLE=
 
 # Update Channel
-RFQ_UPDATE_CHANNEL=$UpdateChannel
+RFQ_UPDATE_CHANNEL=$script:ResolvedChannel
 "@
     
     # Add AWS Configuration section only if credentials are provided
