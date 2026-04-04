@@ -674,6 +674,11 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
     }
 }
 
+# Initialize $Headers so downstream code can safely reference it even when
+# S3 is the primary source. Without this, $Headers["Authorization"] throws
+# "Cannot index into a null array" during S3-only installs.
+if (!$Headers) { $Headers = @{} }
+
 # GitHub fallback (or primary if no S3 config)
 if ($script:ReleaseSource -ne "s3") {
     if (!$GitHubToken) {
