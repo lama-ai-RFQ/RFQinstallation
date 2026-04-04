@@ -33,6 +33,12 @@ param(
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
 
+# Enforce TLS 1.2 for all HTTPS connections. Older .NET Framework versions
+# (4.5 and below) default to SSL3/TLS1.0 which CloudFront and GitHub reject.
+# Windows 10 1607+ with .NET 4.6+ defaults to TLS 1.2, but corporate GPOs
+# or hardened systems may override this. Setting it explicitly is cheap insurance.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 # Setup log file - use temp directory initially until installation directory is created
 $LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $TempLogFile = Join-Path $env:TEMP "rfq_installer_$LogTimestamp.log"
