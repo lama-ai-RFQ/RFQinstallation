@@ -1023,6 +1023,27 @@ function Download-ModelIfRequested {
     }
 }
 
+function Install-Certificates {
+    param(
+        [string]$InstallPath,
+        [string]$EnvPath
+    )
+
+    $bundleSource = Join-Path (Split-Path -Parent $PSCommandPath) "cacert.pem"
+    if (!(Test-Path $bundleSource) -or !(Test-Path $EnvPath)) {
+        return
+    }
+
+    $bundleDestination = Join-Path $InstallPath "cacert.pem"
+    Copy-Item -Path $bundleSource -Destination $bundleDestination -Force
+
+    $envContent = Get-Content $EnvPath -Raw
+    $envContent = Set-OrAddEnvValue -Content $envContent -Key "REQUESTS_CA_BUNDLE" -Value $bundleDestination.Replace('\', '/')
+    Set-Content -Path $EnvPath -Value $envContent -Force
+
+    Write-Success "[OK] Installed certificate bundle: $bundleDestination"
+}
+
 # Show help
 if ($Help) {
     Write-Host @"
@@ -2666,6 +2687,8 @@ RFQ_UPDATE_CHANNEL=$script:ResolvedChannel
     Set-Content -Path $EnvPath -Value $EnvContent -Force
     Write-Success "[OK] Created .env configuration with all values"
 }
+
+Install-Certificates -InstallPath $InstallPath -EnvPath $EnvPath
 
 # Create version file
 $VersionPath = Join-Path $InstallPath "version.txt"
