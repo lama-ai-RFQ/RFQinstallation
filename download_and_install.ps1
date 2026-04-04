@@ -1044,6 +1044,298 @@ function Install-Certificates {
     Write-Success "[OK] Installed certificate bundle: $bundleDestination"
 }
 
+function Write-EnvFile {
+    param(
+        [string]$EnvPath,
+        [string]$EnvTemplatePath,
+        [bool]$UseCredentialManagerForPasswords,
+        [string]$SuperUserPassword,
+        [string]$RFQUserPassword,
+        [string]$SettingsPassword,
+        [bool]$SuperUserPasswordAlreadyStored,
+        [bool]$RFQUserPasswordAlreadyStored,
+        [bool]$SettingsPasswordAlreadyStored,
+        [string]$GitHubToken,
+        [string]$ModelPathForEnv,
+        [string]$ServerURL,
+        [string]$AzureKey,
+        [string]$ResolvedChannel,
+        [string]$AWSKey,
+        [string]$AWSSecret,
+        [string]$AWSRegion,
+        [string]$S3ReleaseBucket,
+        [string]$S3ReleaseRegion
+    )
+
+    if (Test-Path $EnvTemplatePath) {
+        Write-Info "  Found .env.template, using as base..."
+        Copy-Item $EnvTemplatePath $EnvPath -Force
+
+        $envContent = Get-Content $EnvPath -Raw
+        if ($UseCredentialManagerForPasswords) {
+            Write-Info "  Passwords will be stored in Windows Credential Manager..."
+            Write-Info "  Note: Credentials will be saved to the service user's credential store after service configuration"
+
+            $anyPasswordStored = $false
+
+            if ($SuperUserPasswordAlreadyStored) {
+                Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
+            }
+            if (Add-PendingCredential -TargetName "RFQApplication_SQL_SUPER_USER" -UserName "postgres" -Password $SuperUserPassword -AlreadyStored:$SuperUserPasswordAlreadyStored) {
+                $anyPasswordStored = $true
+            }
+
+            if ($RFQUserPasswordAlreadyStored) {
+                Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
+            }
+            if (Add-PendingCredential -TargetName "RFQApplication_RFQ_USER_PASSWORD" -UserName "rfq_user" -Password $RFQUserPassword -AlreadyStored:$RFQUserPasswordAlreadyStored) {
+                $anyPasswordStored = $true
+            }
+
+            if ($SettingsPasswordAlreadyStored) {
+                Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
+            }
+            if (Add-PendingCredential -TargetName "RFQApplication_SETTINGS_PASSWORD" -UserName "rfq_app" -Password $SettingsPassword -AlreadyStored:$SettingsPasswordAlreadyStored) {
+                $anyPasswordStored = $true
+            }
+
+            if ($anyPasswordStored) {
+                Write-Info "  Passwords will be saved to service user's credential store after service account is configured"
+                $envContent = $envContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
+                $envContent = $envContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
+                $envContent = $envContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
+            } else {
+                $envContent = $envContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
+                $envContent = $envContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
+                $envContent = $envContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+            }
+        } else {
+            $envContent = $envContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
+            $envContent = $envContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
+            $envContent = $envContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
+        }
+
+        $envContent = $envContent -replace "GITHUB_PAT=.*", "GITHUB_PAT=$GitHubToken"
+        $envContent = $envContent -replace "GITHUB_USERNAME=.*", "GITHUB_USERNAME=RFQdebugging"
+        $envContent = $envContent -replace "CONTAINER=.*", "CONTAINER=0"
+        if (![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
+            $envContent = $envContent -replace "MODEL_PATH=.*", "MODEL_PATH=$ModelPathForEnv"
+        }
+        $envContent = $envContent -replace "MODEL_NAME=.*", "MODEL_NAME=Mistral-7B-Instruct-v0-3"
+        $envContent = $envContent -replace "SERVER_URL=.*", "SERVER_URL=$ServerURL"
+        $envContent = $envContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
+        $envContent = $envContent -replace "WINDOWS=.*", "WINDOWS=true"
+        $envContent = $envContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
+        $envContent = $envContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$ResolvedChannel"
+
+        if (![string]::IsNullOrWhiteSpace($AWSKey)) {
+            $envContent = $envContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
+        }
+        if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
+            $envContent = $envContent -replace "AWS_SECRET=.*", "AWS_SECRET=$AWSSecret"
+        }
+        if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
+            $envContent = $envContent -replace "AWS_REGION=.*", "AWS_REGION=$AWSRegion"
+        }
+
+        if ($envContent -notmatch "GITHUB_USERNAME") {
+            $envContent += "`nGITHUB_USERNAME=RFQdebugging"
+        }
+        if ($envContent -notmatch "SQL_SUPER_USER") {
+            $envContent += $(if ($UseCredentialManagerForPasswords) { "`nSQL_SUPER_USER=__CREDENTIAL_MANAGER__" } else { "`nSQL_SUPER_USER=$SuperUserPassword" })
+        }
+        if ($envContent -notmatch "RFQ_USER_PASSWORD") {
+            $envContent += $(if ($UseCredentialManagerForPasswords) { "`nRFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__" } else { "`nRFQ_USER_PASSWORD=$RFQUserPassword" })
+        }
+        if ($envContent -notmatch "SETTINGS_PASSWORD") {
+            $envContent += $(if ($UseCredentialManagerForPasswords) { "`nSETTINGS_PASSWORD=__CREDENTIAL_MANAGER__" } else { "`nSETTINGS_PASSWORD=$SettingsPassword" })
+        }
+        if ($envContent -notmatch "CONTAINER") {
+            $envContent += "`nCONTAINER=0"
+        }
+        if ($envContent -notmatch "MODEL_PATH" -and ![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
+            $envContent += "`nMODEL_PATH=$ModelPathForEnv"
+        }
+        if ($envContent -notmatch "MODEL_NAME") {
+            $envContent += "`nMODEL_NAME=Mistral-7B-Instruct-v0-3"
+        }
+        if ($envContent -notmatch "SERVER_URL") {
+            $envContent += "`nSERVER_URL=$ServerURL"
+        }
+        if ($envContent -notmatch "PORT") {
+            $envContent += "`nPORT=8000"
+        }
+        if ($envContent -notmatch "OAUTH_PORT_LOGIN") {
+            $envContent += "`nOAUTH_PORT_LOGIN=8502"
+        }
+        if ($envContent -notmatch "OAUTH_PORT_SEND_RECEIVE") {
+            $envContent += "`nOAUTH_PORT_SEND_RECEIVE=8502"
+        }
+        if ($envContent -notmatch "DEBUG_THREAD") {
+            $envContent += "`nDEBUG_THREAD=0"
+        }
+        if ($envContent -notmatch "WINDOWS") {
+            $envContent += "`nWINDOWS=true"
+        }
+        if ($envContent -notmatch "AZURE_CONFIG_ENCRYPTION_KEY") {
+            $envContent += "`nAZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
+        }
+        if ($envContent -notmatch "RFQ_UPDATE_CHANNEL") {
+            $envContent += "`nRFQ_UPDATE_CHANNEL=$ResolvedChannel"
+        }
+        if ($envContent -notmatch "REQUESTS_CA_BUNDLE") {
+            $envContent += "`n# SSL Certificate Configuration (for GCC High and government cloud environments)`n# Path to CA bundle file for SSL certificate verification`n# Leave empty if not using GCC High or if using system default certificates`nREQUESTS_CA_BUNDLE="
+        }
+        if ($envContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
+            $envContent += "`nAWS_KEY=$AWSKey"
+        }
+        if ($envContent -notmatch "AWS_SECRET" -and ![string]::IsNullOrWhiteSpace($AWSSecret)) {
+            $envContent += "`nAWS_SECRET=$AWSSecret"
+        }
+        if ($envContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
+            $envContent += "`nAWS_REGION=$AWSRegion"
+        }
+
+        $envContent = $envContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
+        if ($envContent -notmatch "S3_RELEASE_BUCKET") {
+            $envContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
+        }
+        if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
+            $envContent = $envContent -replace "# ?S3_RELEASE_REGION=.*", "S3_RELEASE_REGION=$S3ReleaseRegion"
+            if ($envContent -notmatch "S3_RELEASE_REGION") {
+                $envContent += "`nS3_RELEASE_REGION=$S3ReleaseRegion"
+            }
+        }
+
+        $envContent = "# RFQ Application Configuration`n# Generated by installer on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n" + $envContent
+        Set-Content -Path $EnvPath -Value $envContent -Force
+        Write-Success "[OK] Created .env from template with all configuration values"
+        return
+    }
+
+    Write-Info "  .env.template not found, creating .env from default..."
+
+    $sqlSuperUserValue = $SuperUserPassword
+    $rfqUserPasswordValue = $RFQUserPassword
+    $settingsPasswordValue = $SettingsPassword
+
+    if ($UseCredentialManagerForPasswords) {
+        Write-Info "  Passwords will be stored in Windows Credential Manager..."
+        Write-Info "  Note: Credentials will be saved to the service user's credential store after service configuration"
+
+        $anyPasswordStored = $false
+
+        if ($SuperUserPasswordAlreadyStored) {
+            Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
+        }
+        if (Add-PendingCredential -TargetName "RFQApplication_SQL_SUPER_USER" -UserName "postgres" -Password $SuperUserPassword -AlreadyStored:$SuperUserPasswordAlreadyStored) {
+            $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
+        }
+
+        if ($RFQUserPasswordAlreadyStored) {
+            Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
+        }
+        if (Add-PendingCredential -TargetName "RFQApplication_RFQ_USER_PASSWORD" -UserName "rfq_user" -Password $RFQUserPassword -AlreadyStored:$RFQUserPasswordAlreadyStored) {
+            $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
+        }
+
+        if ($SettingsPasswordAlreadyStored) {
+            Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
+        }
+        if (Add-PendingCredential -TargetName "RFQApplication_SETTINGS_PASSWORD" -UserName "rfq_app" -Password $SettingsPassword -AlreadyStored:$SettingsPasswordAlreadyStored) {
+            $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
+            $anyPasswordStored = $true
+        }
+
+        if ($anyPasswordStored) {
+            Write-Info "  Passwords will be saved to service user's credential store after service account is configured"
+        } else {
+            $sqlSuperUserValue = $SuperUserPassword
+            $rfqUserPasswordValue = $RFQUserPassword
+            $settingsPasswordValue = $SettingsPassword
+        }
+    }
+
+    $envContent = @"
+# RFQ Application Configuration
+# Generated by installer on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+
+# GitHub Authentication (for updates)
+GITHUB_PAT=$GitHubToken
+GITHUB_USERNAME=RFQdebugging
+
+# Application Mode
+APP_MODE=fastapi
+
+# Windows Specific
+WINDOWS=true
+LOCAL_DATABASE=1
+CONTAINER=0
+
+# Model Configuration
+MODEL_PATH=$ModelPathForEnv
+MODEL_NAME=Mistral-7B-Instruct-v0-3
+
+# Server Configuration
+SERVER_URL=$ServerURL
+PORT=8000
+
+# Debug Configuration
+DEBUG_THREAD=0
+
+# Database Configuration (for setup_database_auto.ps1)
+# SQL super user password (for database setup)
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+SQL_SUPER_USER=$sqlSuperUserValue
+
+# Database password (for rfq_user)
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+RFQ_USER_PASSWORD=$rfqUserPasswordValue
+
+# Settings password
+# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
+SETTINGS_PASSWORD=$settingsPasswordValue
+
+# Azure Configuration
+AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
+
+# SSL Certificate Configuration (for GCC High and government cloud environments)
+# Path to CA bundle file for SSL certificate verification
+# Leave empty if not using GCC High or if using system default certificates
+REQUESTS_CA_BUNDLE=
+
+# Update Channel
+RFQ_UPDATE_CHANNEL=$ResolvedChannel
+"@
+
+    if (![string]::IsNullOrWhiteSpace($AWSKey) -or ![string]::IsNullOrWhiteSpace($AWSSecret) -or ![string]::IsNullOrWhiteSpace($AWSRegion)) {
+        $envContent += "`n"
+        $envContent += "# AWS Configuration (for model download)`n"
+        if (![string]::IsNullOrWhiteSpace($AWSKey)) {
+            $envContent += "AWS_KEY=$AWSKey`n"
+        }
+        if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
+            $envContent += "AWS_SECRET=$AWSSecret`n"
+        }
+        if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
+            $envContent += "AWS_REGION=$AWSRegion`n"
+        }
+    }
+
+    if (![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
+        $envContent += "`n# S3 Release Bucket (enables S3-based updates instead of GHCR)`n"
+        $envContent += "S3_RELEASE_BUCKET=$S3ReleaseBucket`n"
+        if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
+            $envContent += "S3_RELEASE_REGION=$S3ReleaseRegion`n"
+        }
+    }
+
+    Set-Content -Path $EnvPath -Value $envContent -Force
+    Write-Success "[OK] Created .env configuration with all values"
+}
+
 # Show help
 if ($Help) {
     Write-Host @"
@@ -2387,306 +2679,26 @@ elseif ($SkipModelDownload -and (Test-Path $EnvPath)) {
     }
 }
 
-# Check if .env.template exists, if so use it as base
-if (Test-Path $EnvTemplatePath) {
-    Write-Info "  Found .env.template, using as base..."
-    Copy-Item $EnvTemplatePath $EnvPath -Force
-    
-    # Update values in the .env file
-    $EnvContent = Get-Content $EnvPath -Raw
-    
-    if ($UseCredentialManagerForPasswords) {
-        Write-Info "  Passwords will be stored in Windows Credential Manager..."
-        Write-Info "  Note: Credentials will be saved to the service user's credential store after service configuration"
-        
-        $anyPasswordStored = $false
-        
-        if ($SuperUserPasswordAlreadyStored) {
-            Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
-        }
-        if (Add-PendingCredential -TargetName "RFQApplication_SQL_SUPER_USER" -UserName "postgres" -Password $SuperUserPassword -AlreadyStored:$SuperUserPasswordAlreadyStored) {
-            $anyPasswordStored = $true
-        }
-        
-        if ($RFQUserPasswordAlreadyStored) {
-            Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
-        }
-        if (Add-PendingCredential -TargetName "RFQApplication_RFQ_USER_PASSWORD" -UserName "rfq_user" -Password $RFQUserPassword -AlreadyStored:$RFQUserPasswordAlreadyStored) {
-            $anyPasswordStored = $true
-        }
-        
-        if ($SettingsPasswordAlreadyStored) {
-            Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
-        }
-        if (Add-PendingCredential -TargetName "RFQApplication_SETTINGS_PASSWORD" -UserName "rfq_app" -Password $SettingsPassword -AlreadyStored:$SettingsPasswordAlreadyStored) {
-            $anyPasswordStored = $true
-        }
-        
-        if ($anyPasswordStored) {
-            Write-Info "  Passwords will be saved to service user's credential store after service account is configured"
-        }
-        
-        if ($anyPasswordStored) {
-            # Use placeholders in .env file - passwords will be saved to service user's store after service configuration
-            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=__CREDENTIAL_MANAGER__"
-            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
-            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
-        } else {
-            # No passwords to save, use defaults
-            $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
-            $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
-            $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
-        }
-    } else {
-        # Store passwords in .env file (traditional method)
-        $EnvContent = $EnvContent -replace "SQL_SUPER_USER=.*", "SQL_SUPER_USER=$SuperUserPassword"
-        $EnvContent = $EnvContent -replace "RFQ_USER_PASSWORD=.*", "RFQ_USER_PASSWORD=$RFQUserPassword"
-        $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
-    }
-    
-    $EnvContent = $EnvContent -replace "GITHUB_PAT=.*", "GITHUB_PAT=$GitHubToken"
-    $EnvContent = $EnvContent -replace "GITHUB_USERNAME=.*", "GITHUB_USERNAME=RFQdebugging"
-    $EnvContent = $EnvContent -replace "CONTAINER=.*", "CONTAINER=0"
-    # Only update MODEL_PATH if we have a value (preserve existing if empty)
-    if (![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
-        $EnvContent = $EnvContent -replace "MODEL_PATH=.*", "MODEL_PATH=$ModelPathForEnv"
-    }
-    $EnvContent = $EnvContent -replace "MODEL_NAME=.*", "MODEL_NAME=Mistral-7B-Instruct-v0-3"
-    $EnvContent = $EnvContent -replace "SERVER_URL=.*", "SERVER_URL=$ServerURL"
-    $EnvContent = $EnvContent -replace "DEBUG_THREAD=.*", "DEBUG_THREAD=0"
-    $EnvContent = $EnvContent -replace "WINDOWS=.*", "WINDOWS=true"
-    $EnvContent = $EnvContent -replace "AZURE_CONFIG_ENCRYPTION_KEY=.*", "AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
-    $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$script:ResolvedChannel"
-    # REQUESTS_CA_BUNDLE is left empty by default - user will fill it in if needed for GCC High
-    # Only update AWS credentials if they are non-empty
-    if (![string]::IsNullOrWhiteSpace($AWSKey)) {
-        $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
-    }
-    if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
-        $EnvContent = $EnvContent -replace "AWS_SECRET=.*", "AWS_SECRET=$AWSSecret"
-    }
-    if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
-        $EnvContent = $EnvContent -replace "AWS_REGION=.*", "AWS_REGION=$AWSRegion"
-    }
-    
-    # Add if they don't exist
-    if ($EnvContent -notmatch "GITHUB_USERNAME") {
-        $EnvContent += "`nGITHUB_USERNAME=RFQdebugging"
-    }
-    if ($EnvContent -notmatch "SQL_SUPER_USER") {
-        if ($UseCredentialManagerForPasswords) {
-            $EnvContent += "`nSQL_SUPER_USER=__CREDENTIAL_MANAGER__"
-        } else {
-            $EnvContent += "`nSQL_SUPER_USER=$SuperUserPassword"
-        }
-    }
-    if ($EnvContent -notmatch "RFQ_USER_PASSWORD") {
-        if ($UseCredentialManagerForPasswords) {
-            $EnvContent += "`nRFQ_USER_PASSWORD=__CREDENTIAL_MANAGER__"
-        } else {
-            $EnvContent += "`nRFQ_USER_PASSWORD=$RFQUserPassword"
-        }
-    }
-    if ($EnvContent -notmatch "SETTINGS_PASSWORD") {
-        if ($UseCredentialManagerForPasswords) {
-            $EnvContent += "`nSETTINGS_PASSWORD=__CREDENTIAL_MANAGER__"
-        } else {
-            $EnvContent += "`nSETTINGS_PASSWORD=$SettingsPassword"
-        }
-    }
-    if ($EnvContent -notmatch "CONTAINER") {
-        $EnvContent += "`nCONTAINER=0"
-    }
-    # Only add MODEL_PATH if we have a value and it doesn't exist
-    if ($EnvContent -notmatch "MODEL_PATH" -and ![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
-        $EnvContent += "`nMODEL_PATH=$ModelPathForEnv"
-    }
-    if ($EnvContent -notmatch "MODEL_NAME") {
-        $EnvContent += "`nMODEL_NAME=Mistral-7B-Instruct-v0-3"
-    }
-    if ($EnvContent -notmatch "SERVER_URL") {
-        $EnvContent += "`nSERVER_URL=$ServerURL"
-    }
-    if ($EnvContent -notmatch "PORT") {
-        $EnvContent += "`nPORT=8000"
-    }
-    if ($EnvContent -notmatch "OAUTH_PORT_LOGIN") {
-        $EnvContent += "`nOAUTH_PORT_LOGIN=8502"
-    }
-    if ($EnvContent -notmatch "OAUTH_PORT_SEND_RECEIVE") {
-        $EnvContent += "`nOAUTH_PORT_SEND_RECEIVE=8502"
-    }
-    if ($EnvContent -notmatch "DEBUG_THREAD") {
-        $EnvContent += "`nDEBUG_THREAD=0"
-    }
-    if ($EnvContent -notmatch "WINDOWS") {
-        $EnvContent += "`nWINDOWS=true"
-    }
-    if ($EnvContent -notmatch "AZURE_CONFIG_ENCRYPTION_KEY") {
-        $EnvContent += "`nAZURE_CONFIG_ENCRYPTION_KEY=$AzureKey"
-    }
-    if ($EnvContent -notmatch "RFQ_UPDATE_CHANNEL") {
-        $EnvContent += "`nRFQ_UPDATE_CHANNEL=$script:ResolvedChannel"
-    }
-    if ($EnvContent -notmatch "REQUESTS_CA_BUNDLE") {
-        $EnvContent += "`n# SSL Certificate Configuration (for GCC High and government cloud environments)`n# Path to CA bundle file for SSL certificate verification`n# Leave empty if not using GCC High or if using system default certificates`nREQUESTS_CA_BUNDLE="
-    }
-    # Only add AWS credentials if they are non-empty
-    if ($EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
-        $EnvContent += "`nAWS_KEY=$AWSKey"
-    }
-    if ($EnvContent -notmatch "AWS_SECRET" -and ![string]::IsNullOrWhiteSpace($AWSSecret)) {
-        $EnvContent += "`nAWS_SECRET=$AWSSecret"
-    }
-    if ($EnvContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
-        $EnvContent += "`nAWS_REGION=$AWSRegion"
-    }
-    # Always write S3_RELEASE_BUCKET (defaults to rfq-distribution-us)
-    $EnvContent = $EnvContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
-    if ($EnvContent -notmatch "S3_RELEASE_BUCKET") {
-        $EnvContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
-    }
-    if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
-        $EnvContent = $EnvContent -replace "# ?S3_RELEASE_REGION=.*", "S3_RELEASE_REGION=$S3ReleaseRegion"
-        if ($EnvContent -notmatch "S3_RELEASE_REGION") {
-            $EnvContent += "`nS3_RELEASE_REGION=$S3ReleaseRegion"
-        }
-    }
-
-    # Add generation timestamp as comment
-    $EnvContent = "# RFQ Application Configuration`n# Generated by installer on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n" + $EnvContent
-    
-    Set-Content -Path $EnvPath -Value $EnvContent -Force
-    Write-Success "[OK] Created .env from template with all configuration values"
-}
-else {
-    # Create .env from scratch if template doesn't exist
-    Write-Info "  .env.template not found, creating .env from default..."
-    
-    # Determine password values based on storage method
-    $sqlSuperUserValue = $SuperUserPassword
-    $rfqUserPasswordValue = $RFQUserPassword
-    $settingsPasswordValue = $SettingsPassword
-    
-    if ($UseCredentialManagerForPasswords) {
-        Write-Info "  Passwords will be stored in Windows Credential Manager..."
-        Write-Info "  Note: Credentials will be saved to the service user's credential store after service configuration"
-        
-        $anyPasswordStored = $false
-        
-        if ($SuperUserPasswordAlreadyStored) {
-            Write-Info "    [SKIP] SQL_SUPER_USER already stored in Windows Credential Manager (skipping)"
-        }
-        if (Add-PendingCredential -TargetName "RFQApplication_SQL_SUPER_USER" -UserName "postgres" -Password $SuperUserPassword -AlreadyStored:$SuperUserPasswordAlreadyStored) {
-            $sqlSuperUserValue = "__CREDENTIAL_MANAGER__"
-            $anyPasswordStored = $true
-        }
-        
-        if ($RFQUserPasswordAlreadyStored) {
-            Write-Info "    [SKIP] RFQ_USER_PASSWORD already stored in Windows Credential Manager (skipping)"
-        }
-        if (Add-PendingCredential -TargetName "RFQApplication_RFQ_USER_PASSWORD" -UserName "rfq_user" -Password $RFQUserPassword -AlreadyStored:$RFQUserPasswordAlreadyStored) {
-            $rfqUserPasswordValue = "__CREDENTIAL_MANAGER__"
-            $anyPasswordStored = $true
-        }
-        
-        if ($SettingsPasswordAlreadyStored) {
-            Write-Info "    [SKIP] SETTINGS_PASSWORD already stored in Windows Credential Manager (skipping)"
-        }
-        if (Add-PendingCredential -TargetName "RFQApplication_SETTINGS_PASSWORD" -UserName "rfq_app" -Password $SettingsPassword -AlreadyStored:$SettingsPasswordAlreadyStored) {
-            $settingsPasswordValue = "__CREDENTIAL_MANAGER__"
-            $anyPasswordStored = $true
-        }
-        
-        if ($anyPasswordStored) {
-            Write-Info "  Passwords will be saved to service user's credential store after service account is configured"
-        } else {
-            # No passwords to save, use defaults
-            $sqlSuperUserValue = $SuperUserPassword
-            $rfqUserPasswordValue = $RFQUserPassword
-            $settingsPasswordValue = $SettingsPassword
-        }
-    }
-    
-    $EnvContent = @"
-# RFQ Application Configuration
-# Generated by installer on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-
-# GitHub Authentication (for updates)
-GITHUB_PAT=$GitHubToken
-GITHUB_USERNAME=RFQdebugging
-
-# Application Mode
-APP_MODE=fastapi
-
-# Windows Specific
-WINDOWS=true
-LOCAL_DATABASE=1
-CONTAINER=0
-
-# Model Configuration
-MODEL_PATH=$ModelPathForEnv
-MODEL_NAME=Mistral-7B-Instruct-v0-3
-
-# Server Configuration
-SERVER_URL=$ServerURL
-PORT=8000
-
-# Debug Configuration
-DEBUG_THREAD=0
-
-# Database Configuration (for setup_database_auto.ps1)
-# SQL super user password (for database setup)
-# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
-SQL_SUPER_USER=$sqlSuperUserValue
-
-# Database password (for rfq_user)
-# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
-RFQ_USER_PASSWORD=$rfqUserPasswordValue
-
-# Settings password
-# Note: If value is __CREDENTIAL_MANAGER__, password is stored in Windows Credential Manager
-SETTINGS_PASSWORD=$settingsPasswordValue
-
-# Azure Configuration
-AZURE_CONFIG_ENCRYPTION_KEY=$AzureKey
-
-# SSL Certificate Configuration (for GCC High and government cloud environments)
-# Path to CA bundle file for SSL certificate verification
-# Leave empty if not using GCC High or if using system default certificates
-REQUESTS_CA_BUNDLE=
-
-# Update Channel
-RFQ_UPDATE_CHANNEL=$script:ResolvedChannel
-"@
-    
-    # Add AWS Configuration section only if credentials are provided
-    if (![string]::IsNullOrWhiteSpace($AWSKey) -or ![string]::IsNullOrWhiteSpace($AWSSecret) -or ![string]::IsNullOrWhiteSpace($AWSRegion)) {
-        $EnvContent += "`n"
-        $EnvContent += "# AWS Configuration (for model download)`n"
-        if (![string]::IsNullOrWhiteSpace($AWSKey)) {
-            $EnvContent += "AWS_KEY=$AWSKey`n"
-        }
-        if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
-            $EnvContent += "AWS_SECRET=$AWSSecret`n"
-        }
-        if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
-            $EnvContent += "AWS_REGION=$AWSRegion`n"
-        }
-    }
-
-    # Add S3 Release Bucket if provided
-    if (![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
-        $EnvContent += "`n# S3 Release Bucket (enables S3-based updates instead of GHCR)`n"
-        $EnvContent += "S3_RELEASE_BUCKET=$S3ReleaseBucket`n"
-        if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
-            $EnvContent += "S3_RELEASE_REGION=$S3ReleaseRegion`n"
-        }
-    }
-
-    Set-Content -Path $EnvPath -Value $EnvContent -Force
-    Write-Success "[OK] Created .env configuration with all values"
-}
+Write-EnvFile `
+    -EnvPath $EnvPath `
+    -EnvTemplatePath $EnvTemplatePath `
+    -UseCredentialManagerForPasswords $UseCredentialManagerForPasswords `
+    -SuperUserPassword $SuperUserPassword `
+    -RFQUserPassword $RFQUserPassword `
+    -SettingsPassword $SettingsPassword `
+    -SuperUserPasswordAlreadyStored $SuperUserPasswordAlreadyStored `
+    -RFQUserPasswordAlreadyStored $RFQUserPasswordAlreadyStored `
+    -SettingsPasswordAlreadyStored $SettingsPasswordAlreadyStored `
+    -GitHubToken $GitHubToken `
+    -ModelPathForEnv $ModelPathForEnv `
+    -ServerURL $ServerURL `
+    -AzureKey $AzureKey `
+    -ResolvedChannel $script:ResolvedChannel `
+    -AWSKey $AWSKey `
+    -AWSSecret $AWSSecret `
+    -AWSRegion $AWSRegion `
+    -S3ReleaseBucket $S3ReleaseBucket `
+    -S3ReleaseRegion $S3ReleaseRegion
 
 Install-Certificates -InstallPath $InstallPath -EnvPath $EnvPath
 
