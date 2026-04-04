@@ -2711,11 +2711,11 @@ if ($ExePath) {
     $ServiceDescription = "RFQ Automation Application Service"
     $ExePathQuoted = "`"$($ExePath.FullName)`""
     
-    # Check if service already exists
+    # Check if service already exists — stop it but do NOT delete (avoids "marked for deletion" state)
     $serviceExists = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    
+
     if ($serviceExists) {
-        Write-Warning "[!] Service '$ServiceName' already exists"
+        Write-Info "  Service '$ServiceName' already exists — will reconfigure in place"
         Write-Info "  Stopping existing service..."
         try {
             Stop-Service -Name $ServiceName -Force -ErrorAction Stop
@@ -2723,39 +2723,6 @@ if ($ExePath) {
         }
         catch {
             Write-Warning "  [!] Could not stop existing service: $_"
-        }
-        
-        Write-Info "  Removing existing service..."
-        try {
-            sc.exe delete $ServiceName | Out-Null
-            
-            # Wait for service to be fully deleted (can take 5-30 seconds)
-            Write-Info "  Waiting for service deletion to complete..."
-            $maxWait = 30  # Maximum wait time in seconds
-            $waited = 0
-            $serviceStillExists = $true
-            
-            while ($serviceStillExists -and $waited -lt $maxWait) {
-                Start-Sleep -Seconds 2
-                $waited += 2
-                $checkService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-                if (-not $checkService) {
-                    $serviceStillExists = $false
-                    Write-Success "  [OK] Service fully removed (waited $waited seconds)"
-                } else {
-                    Write-Info "    Still waiting... ($waited/$maxWait seconds)"
-                }
-            }
-            
-            if ($serviceStillExists) {
-                Write-Warning "  [!] Service still exists after $maxWait seconds - may be marked for deletion"
-                Write-Warning "  [!] You may need to restart the system or wait longer"
-            } else {
-                Write-Success "  [OK] Removed existing service"
-            }
-        }
-        catch {
-            Write-Warning "  [!] Could not remove existing service: $_"
         }
     }
     
@@ -2798,33 +2765,7 @@ if ($ExePath) {
     if ($nssmPath) {
         Write-Info "  Using NSSM to create service (recommended for GUI applications)..."
         try {
-            # Remove service if it exists (with proper wait)
             $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-            if ($existingService) {
-                Write-Info "    Removing existing service first..."
-                try {
-                    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-                } catch {}
-                & $nssmPath remove $ServiceName confirm 2>&1 | Out-Null
-                
-                # Wait for service to be fully deleted
-                $maxWait = 30
-                $waited = 0
-                $serviceStillExists = $true
-                
-                while ($serviceStillExists -and $waited -lt $maxWait) {
-                    Start-Sleep -Seconds 2
-                    $waited += 2
-                    $checkService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-                    if (-not $checkService) {
-                        $serviceStillExists = $false
-                    }
-                }
-                
-                if ($serviceStillExists) {
-                    Write-Warning "    [!] Service still marked for deletion - creation may fail"
-                }
-            }
             
             # Create logs directory
             $logDir = Join-Path $InstallPath "logs"
@@ -2994,12 +2935,17 @@ Revision=1
                 }
             }
             
-            # Install service using NSSM
-            Write-Info "  Installing service with NSSM..."
-            $nssmInstallOutput = & $nssmPath install $ServiceName "$($ExePath.FullName)" 2>&1
-            
+            # Install or reconfigure service using NSSM
+            if ($existingService) {
+                Write-Info "  Reconfiguring existing service with NSSM..."
+                $nssmInstallOutput = & $nssmPath set $ServiceName Application "$($ExePath.FullName)" 2>&1
+            } else {
+                Write-Info "  Installing service with NSSM..."
+                $nssmInstallOutput = & $nssmPath install $ServiceName "$($ExePath.FullName)" 2>&1
+            }
+
             if ($LASTEXITCODE -eq 0) {
-                Write-Success "[OK] Service '$ServiceName' installed successfully using NSSM"
+                Write-Success "[OK] Service '$ServiceName' $(if ($existingService) {'reconfigured'} else {'installed'}) successfully using NSSM"
                 
                 # Configure service settings
                 Write-Info "  Configuring service settings..."
@@ -3259,7 +3205,7 @@ Revision=1
             $updaterServiceExists = Get-Service -Name $UpdaterServiceName -ErrorAction SilentlyContinue
             
             if ($updaterServiceExists) {
-                Write-Warning "[!] Updater service '$UpdaterServiceName' already exists"
+                Write-Info "  Updater service '$UpdaterServiceName' already exists — will reconfigure in place"
                 Write-Info "  Stopping existing updater service..."
                 try {
                     Stop-Service -Name $UpdaterServiceName -Force -ErrorAction Stop
@@ -3267,42 +3213,6 @@ Revision=1
                 }
                 catch {
                     Write-Warning "  [!] Could not stop existing updater service: $_"
-                }
-                
-                Write-Info "  Removing existing updater service..."
-                try {
-                    if ($nssmPath) {
-                        & $nssmPath remove $UpdaterServiceName confirm 2>&1 | Out-Null
-                    } else {
-                        sc.exe delete $UpdaterServiceName | Out-Null
-                    }
-                    
-                    # Wait for service to be fully deleted
-                    Write-Info "  Waiting for updater service deletion to complete..."
-                    $maxWait = 30
-                    $waited = 0
-                    $serviceStillExists = $true
-                    
-                    while ($serviceStillExists -and $waited -lt $maxWait) {
-                        Start-Sleep -Seconds 2
-                        $waited += 2
-                        $checkService = Get-Service -Name $UpdaterServiceName -ErrorAction SilentlyContinue
-                        if (-not $checkService) {
-                            $serviceStillExists = $false
-                            Write-Success "  [OK] Updater service fully removed (waited $waited seconds)"
-                        } else {
-                            Write-Info "    Still waiting... ($waited/$maxWait seconds)"
-                        }
-                    }
-                    
-                    if ($serviceStillExists) {
-                        Write-Warning "  [!] Updater service still exists after $maxWait seconds - may be marked for deletion"
-                    } else {
-                        Write-Success "  [OK] Removed existing updater service"
-                    }
-                }
-                catch {
-                    Write-Warning "  [!] Could not remove existing updater service: $_"
                 }
             }
             
@@ -3312,12 +3222,17 @@ Revision=1
             if ($nssmPath) {
                 Write-Info "  Using NSSM to create updater service..."
                 try {
-                    # Install updater service using NSSM
-                    Write-Info "  Installing updater service..."
-                    $nssmUpdaterOutput = & $nssmPath install $UpdaterServiceName "$updaterExePath" 2>&1
-                    
+                    # Install or reconfigure updater service using NSSM
+                    if ($updaterServiceExists) {
+                        Write-Info "  Reconfiguring existing updater service..."
+                        $nssmUpdaterOutput = & $nssmPath set $UpdaterServiceName Application "$updaterExePath" 2>&1
+                    } else {
+                        Write-Info "  Installing updater service..."
+                        $nssmUpdaterOutput = & $nssmPath install $UpdaterServiceName "$updaterExePath" 2>&1
+                    }
+
                     if ($LASTEXITCODE -eq 0) {
-                        Write-Success "[OK] Updater service '$UpdaterServiceName' installed successfully using NSSM"
+                        Write-Success "[OK] Updater service '$UpdaterServiceName' $(if ($updaterServiceExists) {'reconfigured'} else {'installed'}) successfully using NSSM"
                         
                         # Configure updater service settings
                         & $nssmPath set $UpdaterServiceName DisplayName "$UpdaterServiceDisplayName" 2>&1 | Out-Null
