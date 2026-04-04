@@ -31,6 +31,18 @@ param(
     [switch]$RFQUserPasswordAlreadyStored
 )
 
+# Self-elevate to admin if not already running elevated
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+    foreach ($key in $MyInvocation.BoundParameters.Keys) {
+        $val = $MyInvocation.BoundParameters[$key]
+        if ($val -is [switch]) { if ($val) { $argList += "-$key" } }
+        else { $argList += "-$key"; $argList += "`"$val`"" }
+    }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
+    exit
+}
+
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
 
