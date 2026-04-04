@@ -1342,7 +1342,26 @@ if ($ENABLE_STEP_7_EXTRACT) {
                 }
                 Write-Info "    Rejoined file size: $([math]::Round($fileSize / 1MB, 2)) MB"
             }
-            
+
+            # Verify zip integrity before extraction
+            Write-Info "    Verifying archive integrity..."
+            try {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+                $zipTest = [System.IO.Compression.ZipFile]::OpenRead($ComponentZip)
+                $entryCount = $zipTest.Entries.Count
+                $zipTest.Dispose()
+                if ($entryCount -eq 0) {
+                    Write-Error-Custom "ERROR: Archive is empty or corrupt (0 entries): $ComponentZip"
+                    Exit-WithError
+                }
+                Write-Success "    [OK] Archive valid ($entryCount entries)"
+            }
+            catch {
+                Write-Error-Custom "ERROR: Archive integrity check failed: $_"
+                Write-Error-Custom "  The downloaded file may be corrupt. Delete it and re-run the installer:"
+                Write-Error-Custom "  Remove-Item '$ComponentZip' -Force"
+                Exit-WithError
+            }
 
             # Extract component
             try {
