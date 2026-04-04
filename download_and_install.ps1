@@ -861,6 +861,168 @@ function Install-WindowsService {
     return $result
 }
 
+function Resolve-ModelDownloadRequest {
+    param(
+        [string]$EnvPath,
+        [string]$AWSKey,
+        [string]$AWSSecret,
+        [string]$AWSRegion,
+        [bool]$CredentialsProvidedViaParams = $false,
+        [switch]$NonInteractive
+    )
+
+    $request = [PSCustomObject]@{
+        AwsKey = ""
+        AwsSecret = ""
+        AwsRegion = ""
+        CredentialsProvidedViaParams = $CredentialsProvidedViaParams
+    }
+
+    Write-Info "  Debug: Checking AWS parameters..."
+    Write-Info "    AWSKey parameter provided: $CredentialsProvidedViaParams, Value length: $($AWSKey.Length)"
+    Write-Info "    AWSSecret parameter provided: $CredentialsProvidedViaParams, Value length: $($AWSSecret.Length)"
+    Write-Info "    AWSRegion parameter: '$AWSRegion'"
+    Write-Info "    credentialsProvidedViaParams: $($request.CredentialsProvidedViaParams)"
+
+    if (-not [string]::IsNullOrWhiteSpace($AWSKey)) {
+        $request.AwsKey = $AWSKey
+        Write-Info "    Using AWSKey from parameters"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($AWSSecret)) {
+        $request.AwsSecret = $AWSSecret
+        Write-Info "    Using AWSSecret from parameters"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($AWSRegion)) {
+        $request.AwsRegion = $AWSRegion
+        Write-Info "    Using AWSRegion from parameters"
+    }
+
+    if (([string]::IsNullOrWhiteSpace($request.AwsKey) -or [string]::IsNullOrWhiteSpace($request.AwsSecret)) -and (Test-Path $EnvPath)) {
+        Write-Info "  Reading AWS credentials from .env file..."
+        $envValues = Get-EnvFileValues -Path $EnvPath
+
+        if ([string]::IsNullOrWhiteSpace($request.AwsKey) -and $envValues.ContainsKey("AWS_KEY")) {
+            $request.AwsKey = $envValues["AWS_KEY"]
+            Write-Info "  Found AWS_KEY in .env: $($request.AwsKey.Substring(0, [Math]::Min(10, $request.AwsKey.Length)))..."
+        }
+        if ([string]::IsNullOrWhiteSpace($request.AwsSecret) -and $envValues.ContainsKey("AWS_SECRET")) {
+            $request.AwsSecret = $envValues["AWS_SECRET"]
+            Write-Info "  Found AWS_SECRET in .env: $($request.AwsSecret.Substring(0, [Math]::Min(10, $request.AwsSecret.Length)))..."
+        }
+        if ([string]::IsNullOrWhiteSpace($request.AwsRegion) -and $envValues.ContainsKey("AWS_REGION") -and ![string]::IsNullOrWhiteSpace($envValues["AWS_REGION"])) {
+            $request.AwsRegion = $envValues["AWS_REGION"]
+            Write-Info "  Found AWS_REGION in .env: $($request.AwsRegion)"
+        }
+    }
+
+    if (([string]::IsNullOrWhiteSpace($request.AwsKey) -or [string]::IsNullOrWhiteSpace($request.AwsSecret)) -and -not $request.CredentialsProvidedViaParams) {
+        Write-Info ""
+        Write-Info "AWS credentials required for model download"
+        Write-Info "============================================="
+        Write-Info ""
+        Write-Info "The model is stored in AWS S3 and requires credentials to download."
+        Write-Info ""
+
+        if ([string]::IsNullOrWhiteSpace($request.AwsKey)) {
+            if ($NonInteractive) { $request.AwsKey = "" } else { $request.AwsKey = Read-Host "Enter AWS Access Key ID" }
+        }
+        if ([string]::IsNullOrWhiteSpace($request.AwsSecret)) {
+            if ($NonInteractive) {
+                $request.AwsSecret = ""
+            } else {
+                $secureSecret = Read-Host "Enter AWS Secret Access Key" -AsSecureString
+                $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureSecret)
+                $request.AwsSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+            }
+        }
+
+        if ($NonInteractive) { $regionInput = "" } else { $regionInput = Read-Host "Enter AWS Region (press Enter for us-east-1)" }
+        if (![string]::IsNullOrWhiteSpace($regionInput)) {
+            $request.AwsRegion = $regionInput.Trim()
+        }
+
+        if (Test-Path $EnvPath) {
+            $envContent = Get-Content $EnvPath -Raw
+            $envContent = Set-OrAddEnvValue -Content $envContent -Key "AWS_KEY" -Value $request.AwsKey
+            $envContent = Set-OrAddEnvValue -Content $envContent -Key "AWS_SECRET" -Value $request.AwsSecret
+            $envContent = Set-OrAddEnvValue -Content $envContent -Key "AWS_REGION" -Value $request.AwsRegion
+            Set-Content -Path $EnvPath -Value $envContent -Force
+            Write-Success "[OK] AWS credentials saved to .env file"
+        }
+    }
+
+    $request.AwsRegion = Get-FirstNonEmpty @($request.AwsRegion, "us-east-1")
+
+    return $request
+}
+
+function Download-ModelIfRequested {
+    param(
+        [string]$ModelDir,
+        [string]$EnvPath,
+        [string]$AWSKey,
+        [string]$AWSSecret,
+        [string]$AWSRegion,
+        [bool]$CredentialsProvidedViaParams = $false,
+        [switch]$NonInteractive
+    )
+
+    $request = Resolve-ModelDownloadRequest `
+        -EnvPath $EnvPath `
+        -AWSKey $AWSKey `
+        -AWSSecret $AWSSecret `
+        -AWSRegion $AWSRegion `
+        -CredentialsProvidedViaParams $CredentialsProvidedViaParams `
+        -NonInteractive:$NonInteractive
+
+    if ([string]::IsNullOrWhiteSpace($request.AwsKey) -or [string]::IsNullOrWhiteSpace($request.AwsSecret)) {
+        Write-Error-Custom "ERROR: AWS credentials are required but not provided"
+        Write-Info "  Please provide AWS_KEY and AWS_SECRET in the .env file or when prompted"
+        Write-Info "  Skipping model download"
+        return [PSCustomObject]@{ Success = $false; Reason = "Model download (AWS credentials missing)" }
+    }
+
+    $awsCli = Get-Command aws -ErrorAction SilentlyContinue
+    if (-not $awsCli) {
+        Write-Warning "[!] AWS CLI not found in PATH"
+        Write-Info "  Install AWS CLI and re-run the installer, or run:"
+        Write-Info "    aws s3 sync s3://rfq-models/Mistral-7B-Instruct-v0-3/ `"$ModelDir`""
+        return [PSCustomObject]@{ Success = $false; Reason = "Model download (AWS CLI not found)" }
+    }
+
+    $previousEnvironment = Set-TemporaryEnvironment @{
+        AWS_ACCESS_KEY_ID = $request.AwsKey
+        AWS_SECRET_ACCESS_KEY = $request.AwsSecret
+        AWS_DEFAULT_REGION = $request.AwsRegion
+    }
+
+    try {
+        Write-Info "Running model download with aws s3 sync..."
+        & aws s3 sync "s3://rfq-models/Mistral-7B-Instruct-v0-3/" $ModelDir --region $request.AwsRegion --exclude ".cache/*" --exclude "*/.cache/*" --exclude "*.lock" --exclude "*.metadata"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "[!] Model download failed or was interrupted"
+            Write-Info "  You can download it later using:"
+            Write-Info "    aws s3 sync s3://rfq-models/Mistral-7B-Instruct-v0-3/ `"$ModelDir`" --region $($request.AwsRegion)"
+            return [PSCustomObject]@{ Success = $false; Reason = "Model download (download failed or interrupted)" }
+        }
+
+        Write-Success "[OK] Model downloaded successfully from S3"
+        if (Test-Path $EnvPath) {
+            $modelPathNormalized = $ModelDir.Replace('\', '/')
+            $envContent = Get-Content $EnvPath -Raw
+            $envContent = Set-OrAddEnvValue -Content $envContent -Key "MODEL_PATH" -Value $modelPathNormalized
+            Set-Content -Path $EnvPath -Value $envContent -Force
+            Write-Success "[OK] Updated MODEL_PATH in .env file: $modelPathNormalized"
+        }
+
+        return [PSCustomObject]@{ Success = $true; Reason = "" }
+    }
+    finally {
+        Restore-TemporaryEnvironment -PreviousValues $previousEnvironment
+    }
+}
+
 # Show help
 if ($Help) {
     Write-Host @"
@@ -2585,377 +2747,18 @@ if ($downloadModel -ne 'n' -and $downloadModel -ne 'N' -and $modelBasePath) {
         Write-Info "  This is a large download (~30 GB) and may take 30-60 minutes depending on your internet connection..."
         Write-Info ""
         
-        # Read AWS credentials - first from parameters, then from .env file
-        $awsKey = ""
-        $awsSecret = ""
-        $awsRegion = "us-east-1"  # Default region
-        $credentialsProvidedViaParams = $false
-        
-        # Check if credentials were provided via parameters (even if empty, means installer provided them)
         $credentialsProvidedViaParams = ($PSBoundParameters.ContainsKey('AWSKey') -or $PSBoundParameters.ContainsKey('AWSSecret'))
-        
-        # Debug: Show what parameters were received
-        Write-Info "  Debug: Checking AWS parameters..."
-        Write-Info "    AWSKey parameter provided: $($PSBoundParameters.ContainsKey('AWSKey')), Value length: $($AWSKey.Length)"
-        Write-Info "    AWSSecret parameter provided: $($PSBoundParameters.ContainsKey('AWSSecret')), Value length: $($AWSSecret.Length)"
-        Write-Info "    AWSRegion parameter: '$AWSRegion'"
-        Write-Info "    credentialsProvidedViaParams: $credentialsProvidedViaParams"
-        
-        # Use provided parameters if available and non-empty
-        if ($PSBoundParameters.ContainsKey('AWSKey') -and $AWSKey -and $AWSKey.Trim() -ne "") {
-            $awsKey = $AWSKey
-            Write-Info "    Using AWSKey from parameters"
-        }
-        if ($PSBoundParameters.ContainsKey('AWSSecret') -and $AWSSecret -and $AWSSecret.Trim() -ne "") {
-            $awsSecret = $AWSSecret
-            Write-Info "    Using AWSSecret from parameters"
-        }
-        if ($PSBoundParameters.ContainsKey('AWSRegion') -and $AWSRegion -and $AWSRegion.Trim() -ne "") {
-            $awsRegion = $AWSRegion
-            Write-Info "    Using AWSRegion from parameters"
-        }
-        
-        # If credentials are still empty, try reading from .env file (regardless of whether params were provided)
-        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and (Test-Path $EnvPath)) {
-            Write-Info "  Reading AWS credentials from .env file..."
-            $EnvContent = Get-Content $EnvPath -Raw
-            if ([string]::IsNullOrWhiteSpace($awsKey) -and $EnvContent -match "AWS_KEY\s*=\s*([^\r\n]+)") {
-                $awsKey = $matches[1].Trim()
-                Write-Info "  Found AWS_KEY in .env: $($awsKey.Substring(0, [Math]::Min(10, $awsKey.Length)))..."
-            }
-            if ([string]::IsNullOrWhiteSpace($awsSecret) -and $EnvContent -match "AWS_SECRET\s*=\s*([^\r\n]+)") {
-                $awsSecret = $matches[1].Trim()
-                Write-Info "  Found AWS_SECRET in .env: $($awsSecret.Substring(0, [Math]::Min(10, $awsSecret.Length)))..."
-            }
-            if ([string]::IsNullOrWhiteSpace($awsRegion) -and $EnvContent -match "AWS_REGION\s*=\s*([^\r\n]+)") {
-                $awsRegion = $matches[1].Trim()
-                Write-Info "  Found AWS_REGION in .env: $awsRegion"
-            }
-        }
-        
-        # Only prompt for AWS credentials if not provided via parameters and not found in .env
-        # If credentials were provided via parameters but are empty, that means user didn't enter them in installer
-        if (([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) -and -not $credentialsProvidedViaParams) {
-            Write-Info ""
-            Write-Info "AWS credentials required for model download"
-            Write-Info "============================================="
-            Write-Info ""
-            Write-Info "The model is stored in AWS S3 and requires credentials to download."
-            Write-Info ""
-            
-            if ([string]::IsNullOrWhiteSpace($awsKey)) {
-                if ($NonInteractive) { $awsKey = "" } else { $awsKey = Read-Host "Enter AWS Access Key ID" }
-            }
-            if ([string]::IsNullOrWhiteSpace($awsSecret)) {
-                if ($NonInteractive) {
-                    $awsSecret = ""
-                } else {
-                    $awsSecret = Read-Host "Enter AWS Secret Access Key" -AsSecureString
-                    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($awsSecret)
-                    $awsSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-                }
-            }
+        $modelDownloadResult = Download-ModelIfRequested `
+            -ModelDir $modelDir `
+            -EnvPath $EnvPath `
+            -AWSKey $AWSKey `
+            -AWSSecret $AWSSecret `
+            -AWSRegion $AWSRegion `
+            -CredentialsProvidedViaParams $credentialsProvidedViaParams `
+            -NonInteractive:$NonInteractive
 
-            if ($NonInteractive) { $regionInput = "" } else { $regionInput = Read-Host "Enter AWS Region (press Enter for us-east-1)" }
-            if (![string]::IsNullOrWhiteSpace($regionInput)) {
-                $awsRegion = $regionInput.Trim()
-            }
-            
-            # Save credentials to .env file
-            if (Test-Path $EnvPath) {
-                $EnvContent = Get-Content $EnvPath -Raw
-                $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$awsKey"
-                $EnvContent = $EnvContent -replace "AWS_SECRET=.*", "AWS_SECRET=$awsSecret"
-                $EnvContent = $EnvContent -replace "AWS_REGION=.*", "AWS_REGION=$awsRegion"
-                
-                # Add if they don't exist
-                if ($EnvContent -notmatch "AWS_KEY") {
-                    $EnvContent += "`nAWS_KEY=$awsKey"
-                }
-                if ($EnvContent -notmatch "AWS_SECRET") {
-                    $EnvContent += "`nAWS_SECRET=$awsSecret"
-                }
-                if ($EnvContent -notmatch "AWS_REGION") {
-                    $EnvContent += "`nAWS_REGION=$awsRegion"
-                }
-                
-                Set-Content -Path $EnvPath -Value $EnvContent -Force
-                Write-Success "[OK] AWS credentials saved to .env file"
-            }
-        }
-        
-        # Verify we have credentials before proceeding
-        if ([string]::IsNullOrWhiteSpace($awsKey) -or [string]::IsNullOrWhiteSpace($awsSecret)) {
-            Write-Error-Custom "ERROR: AWS credentials are required but not provided"
-            Write-Info "  Please provide AWS_KEY and AWS_SECRET in the .env file or when prompted"
-            Write-Info "  Skipping model download"
-            $script:SkippedSteps += "Model download (AWS credentials missing)"
-        }
-        else {
-            # Create a temporary Python script to download the model from S3
-            $downloadScript = Join-Path $env:TEMP "download_llm_model_s3.py"
-            $scriptContent = @"
-import os
-import sys
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
-
-try:
-    model_dir = r"$modelDir"
-    aws_key = r"$awsKey"
-    aws_secret = r"$awsSecret"
-    aws_region = r"$awsRegion"
-    
-    print("Starting model download from AWS S3...")
-    print(f"Bucket: rfq-models")
-    print(f"Region: {aws_region}")
-    print(f"Destination: {model_dir}")
-    
-    # Create destination directory
-    os.makedirs(model_dir, exist_ok=True)
-    
-    # Initialize S3 client
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=aws_key,
-        aws_secret_access_key=aws_secret,
-        region_name=aws_region
-    )
-    
-    bucket_name = "rfq-models"
-    model_prefix = "Mistral-7B-Instruct-v0-3/"
-    
-    # List all objects in the model directory
-    print("Listing model files in S3...")
-    files_downloaded = 0
-    total_size = 0
-    
-    try:
-        paginator = s3.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=bucket_name, Prefix=model_prefix)
-        
-        for page in pages:
-            if 'Contents' not in page:
-                continue
-                
-            for obj in page['Contents']:
-                key = obj['Key']
-                size = obj['Size']
-                
-                # Skip directories
-                if key.endswith('/'):
-                    continue
-                
-                # Skip cache files and metadata files
-                if '.cache' in key or key.endswith('.lock') or key.endswith('.metadata'):
-                    continue
-                
-                # Get relative path from model prefix
-                relative_path = key[len(model_prefix):]
-                local_path = os.path.join(model_dir, relative_path)
-                
-                # Create subdirectories if needed
-                local_dir = os.path.dirname(local_path)
-                if local_dir:
-                    os.makedirs(local_dir, exist_ok=True)
-                
-                # Download file
-                print(f"Downloading: {relative_path} ({size / 1024 / 1024:.4f} MB)")
-                s3.download_file(bucket_name, key, local_path)
-                files_downloaded += 1
-                total_size += size
-    except ClientError as list_error:
-        error_code = list_error.response.get('Error', {}).get('Code', '')
-        if error_code == 'AccessDenied':
-            print("")
-            print("WARNING: Access denied when listing bucket contents.")
-            print("Your IAM user may not have s3:ListBucket permission.")
-            print("")
-            print("Attempting to download common model files directly...")
-            print("(This requires s3:GetObject permission)")
-            print("")
-            
-            # First, try to download the model index file to get the list of all files
-            index_file = "model.safetensors.index.json"
-            index_key = model_prefix + index_file
-            index_local_path = os.path.join(model_dir, index_file)
-            model_files_from_index = []
-            
-            try:
-                # Try to get index file metadata first
-                obj_metadata = s3.head_object(Bucket=bucket_name, Key=index_key)
-                index_size = obj_metadata['ContentLength']
-                
-                # Create directory if needed
-                local_dir = os.path.dirname(index_local_path)
-                if local_dir:
-                    os.makedirs(local_dir, exist_ok=True)
-                
-                # Try to download the index file first
-                print(f"Downloading index file: {index_file} ({index_size / 1024 / 1024:.4f} MB)")
-                s3.download_file(bucket_name, index_key, index_local_path)
-                files_downloaded += 1
-                total_size += index_size
-                
-                # Parse the index file to get list of all model files
-                import json
-                with open(index_local_path, 'r') as f:
-                    index_data = json.load(f)
-                    if 'weight_map' in index_data:
-                        # Extract unique filenames from weight_map
-                        model_files_from_index = list(set(index_data['weight_map'].values()))
-                        print(f"Found {len(model_files_from_index)} model files in index")
-            except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code', '')
-                if error_code == 'AccessDenied':
-                    print(f"Access denied for index file, trying common files...")
-                else:
-                    print(f"Index file not available, trying common files...")
-            except Exception as e:
-                print(f"Could not parse index file: {e}")
-            
-            # Try to download common model files directly
-            common_files = [
-                "config.json",
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "special_tokens_map.json",
-                "generation_config.json",
-            ]
-            
-            # Combine files from index with common files
-            all_files = list(set(common_files + model_files_from_index))
-            
-            for filename in all_files:
-                key = model_prefix + filename
-                local_path = os.path.join(model_dir, filename)
-                
-                try:
-                    # Try to get object metadata first to check if it exists
-                    try:
-                        obj_metadata = s3.head_object(Bucket=bucket_name, Key=key)
-                        size = obj_metadata['ContentLength']
-                    except ClientError:
-                        # File doesn't exist, skip
-                        continue
-                    
-                    # Create subdirectories if needed
-                    local_dir = os.path.dirname(local_path)
-                    if local_dir:
-                        os.makedirs(local_dir, exist_ok=True)
-                    
-                    # Download file
-                    print(f"Downloading: {filename} ({size / 1024 / 1024:.4f} MB)")
-                    s3.download_file(bucket_name, key, local_path)
-                    files_downloaded += 1
-                    total_size += size
-                except ClientError as download_error:
-                    error_code = download_error.response.get('Error', {}).get('Code', '')
-                    if error_code == 'AccessDenied':
-                        print(f"  [!] Access denied for: {filename}")
-                    else:
-                        print(f"  [!] Error downloading {filename}: {download_error}")
-                    continue
-                except Exception as e:
-                    print(f"  [!] Error downloading {filename}: {e}")
-                    continue
-            
-            if files_downloaded == 0:
-                print("")
-                print("ERROR: Could not download any files.")
-                print("")
-                print("Required AWS IAM permissions:")
-                print("  - s3:ListBucket on arn:aws:s3:::rfq-models")
-                print("  - s3:GetObject on arn:aws:s3:::rfq-models/<model-prefix>/*")
-                print("")
-                print("Please contact your AWS administrator to grant these permissions.")
-                sys.exit(1)
-        else:
-            # Re-raise if it's not an AccessDenied error
-            raise
-    
-    if files_downloaded == 0:
-        print("")
-        print("WARNING: No files found in S3 bucket. Check bucket name and prefix.")
-        sys.exit(1)
-    
-    print("")
-    print(f"SUCCESS: Model downloaded successfully!")
-    print(f"Files downloaded: {files_downloaded}")
-    print(f"Total size: {total_size / 1024 / 1024 / 1024:.2f} GB")
-    print(f"Model location: {model_dir}")
-    sys.exit(0)
-    
-except NoCredentialsError:
-    print("")
-    print("ERROR: AWS credentials not found or invalid")
-    print("Please check AWS_KEY, AWS_SECRET, and AWS_REGION in .env file")
-    sys.exit(1)
-except ClientError as e:
-    print("")
-    print(f"ERROR: AWS S3 error: {e}")
-    sys.exit(1)
-except Exception as e:
-    print("")
-    print(f"ERROR: Failed to download model: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-"@
-            
-            Set-Content -Path $downloadScript -Value $scriptContent -Encoding UTF8
-            
-            # Check if Python is available
-            $pythonFound = Get-Command python -ErrorAction SilentlyContinue
-            
-            if (!$pythonFound) {
-                Write-Warning "[!] Python not found in PATH"
-                Write-Info "  The model download requires Python and the boto3 package"
-                Write-Info "  Please install Python and run the download manually:"
-                Write-Info "    pip install boto3"
-                Write-Info "    python $downloadScript"
-                $script:SkippedSteps += "Model download (Python not found)"
-            }
-            else {
-                # Check if boto3 is installed
-                $boto3Check = python -c "import boto3; print('OK')" 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Info "Installing boto3 package..."
-                    python -m pip install boto3 --quiet
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Warning "[!] Failed to install boto3"
-                        Write-Info "  Please install it manually: pip install boto3"
-                        Write-Info "  Then run: python $downloadScript"
-                    }
-                }
-                
-                # Run the download script
-                Write-Info "Running model download script..."
-                python $downloadScript
-                
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Success "[OK] Model downloaded successfully from S3"
-                    
-                    # Update MODEL_PATH in .env file
-                    if (Test-Path $EnvPath) {
-                        $EnvContent = Get-Content $EnvPath -Raw
-                        # Update MODEL_PATH - handle both Windows and Unix-style paths
-                        $modelPathNormalized = $modelPath.Replace('\', '/')
-                        $EnvContent = $EnvContent -replace "MODEL_PATH=.*", "MODEL_PATH=$modelPathNormalized"
-                        Set-Content -Path $EnvPath -Value $EnvContent -Force
-                        Write-Success "[OK] Updated MODEL_PATH in .env file: $modelPathNormalized"
-                    }
-                }
-                else {
-                    Write-Warning "[!] Model download failed or was interrupted"
-                    Write-Info "  You can download it later using:"
-                    Write-Info "    python $downloadScript"
-                    $script:SkippedSteps += "Model download (download failed or interrupted)"
-                }
-                
-                # Cleanup
-                Remove-Item $downloadScript -Force -ErrorAction SilentlyContinue
-            }
+        if (-not $modelDownloadResult.Success) {
+            $script:SkippedSteps += $modelDownloadResult.Reason
         }
     }
 } else {
@@ -2968,7 +2771,7 @@ except Exception as e:
     Write-Log "" "Yellow"
     Write-Log "To download the model later:" "Cyan"
     Write-Log "  1. Ensure AWS credentials (AWS_KEY, AWS_SECRET, AWS_REGION) are in .env" "Cyan"
-    Write-Log "  2. Run the model download script or use model_downloader.py" "Cyan"
+    Write-Log "  2. Run aws s3 sync for s3://rfq-models/Mistral-7B-Instruct-v0-3/" "Cyan"
     Write-Log "  3. Configure MODEL_PATH in .env to point to the model directory" "Cyan"
     Write-Log "" "Cyan"
     Write-Log "Model location: AWS S3 bucket 'rfq-models' (see model prefix in documentation)" "Cyan"
@@ -2976,7 +2779,7 @@ except Exception as e:
     # Only add to skipped steps if not already added (to avoid duplicates)
     if ($script:SkippedSteps -notcontains "Model download (skipped by installer)" -and 
         $script:SkippedSteps -notcontains "Model download (AWS credentials missing)" -and
-        $script:SkippedSteps -notcontains "Model download (Python not found)" -and
+        $script:SkippedSteps -notcontains "Model download (AWS CLI not found)" -and
         $script:SkippedSteps -notcontains "Model download (download failed or interrupted)" -and
         $script:SkippedSteps -notcontains "Model download (failed to create directory)") {
         $script:SkippedSteps += "Model download (skipped by user)"
