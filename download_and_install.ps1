@@ -445,6 +445,78 @@ function Test-CredentialManagerAvailable {
     return $false
 }
 
+function Get-FirstNonEmpty {
+    param([string[]]$Values)
+
+    foreach ($value in $Values) {
+        if (![string]::IsNullOrWhiteSpace($value)) {
+            return $value
+        }
+    }
+
+    return ""
+}
+
+function Get-EnvFileValues {
+    param([string]$Path)
+
+    $values = @{}
+    if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path $Path)) {
+        return $values
+    }
+
+    foreach ($line in Get-Content -Path $Path -ErrorAction SilentlyContinue) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$') {
+            $values[$matches[1]] = $matches[2].Trim()
+        }
+    }
+
+    return $values
+}
+
+function Set-OrAddEnvValue {
+    param(
+        [string]$Content,
+        [string]$Key,
+        [string]$Value
+    )
+
+    $pattern = "(?m)^#?\s*$([regex]::Escape($Key))=.*$"
+    $newLine = "$Key=$Value"
+
+    if ($Content -match $pattern) {
+        return [regex]::Replace($Content, $pattern, $newLine)
+    }
+
+    if ([string]::IsNullOrEmpty($Content)) {
+        return $newLine
+    }
+
+    return $Content.TrimEnd("`r", "`n") + "`n$newLine"
+}
+
+function Set-TemporaryEnvironment {
+    param([hashtable]$Values)
+
+    $previousValues = @{}
+    foreach ($entry in $Values.GetEnumerator()) {
+        $name = [string]$entry.Key
+        $currentValue = [Environment]::GetEnvironmentVariable($name, "Process")
+        $previousValues[$name] = $currentValue
+        [Environment]::SetEnvironmentVariable($name, [string]$entry.Value, "Process")
+    }
+
+    return $previousValues
+}
+
+function Restore-TemporaryEnvironment {
+    param([hashtable]$PreviousValues)
+
+    foreach ($entry in $PreviousValues.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, $entry.Value, "Process")
+    }
+}
+
 # Show help
 if ($Help) {
     Write-Host @"
