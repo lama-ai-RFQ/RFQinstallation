@@ -805,10 +805,13 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     $ManifestPath = Join-Path $env:TEMP "manifest.json"
     try {
         if ($script:ReleaseSource -eq "s3") {
-            # Parse S3 URL to get the key
+            # Resolve S3 key — may be a full S3 URL or a relative path from latest.json
             $manifestUrl = $ManifestAsset.url
             if ($manifestUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
                 $manifestS3Key = $matches[2]
+            } elseif ($manifestUrl -notmatch "^https?://") {
+                # Relative path from S3 latest.json (e.g. "customer/windows/.../manifest.json")
+                $manifestS3Key = $manifestUrl
             } else {
                 throw "Could not parse S3 URL: $manifestUrl"
             }
@@ -1065,10 +1068,12 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                 Write-Info "    Downloading: $Filename ($FileSizeMB MB)..."
 
                 if ($script:ReleaseSource -eq "s3") {
-                    # S3 download: parse URL to key
+                    # Resolve S3 key — may be a full S3 URL or a relative path from latest.json
                     $assetUrl = $Asset.url
                     if ($assetUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
                         $assetS3Key = $matches[2]
+                    } elseif ($assetUrl -notmatch "^https?://") {
+                        $assetS3Key = $assetUrl
                     } else {
                         throw "Could not parse S3 URL: $assetUrl"
                     }
@@ -1081,8 +1086,11 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
                             $cfSignedUrl = New-CloudFrontSignedUrl -Path $assetS3Key
                             if ($cfSignedUrl) {
                                 Write-Info "    Downloading via CloudFront..."
-                                $ProgressPreference = 'SilentlyContinue'
-                                Invoke-WebRequest -Uri $cfSignedUrl -OutFile $FilePath -UseBasicParsing
+                                # Use WebClient.DownloadFile instead of Invoke-WebRequest to
+                                # stream directly to disk. Invoke-WebRequest on PS 5.1 buffers
+                                # the entire response into a Byte[] array, which hits the .NET
+                                # Framework 2 GB array size limit on large component files.
+                                (New-Object System.Net.WebClient).DownloadFile($cfSignedUrl, $FilePath)
                                 $assetDownloadOk = $true
                             }
                         }
@@ -1103,7 +1111,8 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
 
                     if (-not $assetDownloadOk) { throw "Failed to download $Filename from S3 (all methods)" }
                 } else {
-                    # GitHub download
+                    # GitHub download — Invoke-WebRequest handles GitHub API redirects
+                    # correctly with the Accept/Authorization headers
                     $DownloadHeaders = @{
                         "Accept" = "application/octet-stream"
                         "Authorization" = $Headers["Authorization"]
