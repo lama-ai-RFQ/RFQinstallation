@@ -1666,6 +1666,13 @@ begin
   Result := Params;
 end;
 
+[UninstallRun]
+; Stop and remove Windows services before uninstalling files
+Filename: "cmd.exe"; Parameters: "/c net stop RFQUpdaterService >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "StopUpdater"
+Filename: "cmd.exe"; Parameters: "/c net stop RFQapplication >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "StopApp"
+Filename: "cmd.exe"; Parameters: "/c sc delete RFQUpdaterService >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteUpdater"
+Filename: "cmd.exe"; Parameters: "/c sc delete RFQapplication >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteApp"
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
