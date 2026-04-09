@@ -2793,6 +2793,7 @@ if ($ExePath) {
     }
     
     $script:serviceCreated = $false
+    $script:serviceCreationMethod = $null
     
     # Try to use NSSM first (recommended for non-service-aware applications)
     if ($nssmPath) {
@@ -3090,6 +3091,7 @@ Revision=1
                 }
                 
                 $script:serviceCreated = $true
+                $script:serviceCreationMethod = "nssm"
                 
                 # Verify the service account configuration
                 Write-Info "  Verifying service account configuration..."
@@ -3197,6 +3199,7 @@ Revision=1
                 Write-Warning "  IMPORTANT: Service created with sc.exe may not start properly."
                 Write-Warning "  If the service fails to start, install NSSM and recreate the service."
                 $script:serviceCreated = $true
+                $script:serviceCreationMethod = "sc"
             }
             else {
                 Write-Warning "[!] Failed to create service (exit code: $LASTEXITCODE)"
@@ -3218,27 +3221,27 @@ Revision=1
     if ($script:serviceCreated) {
         Write-Info "`nStarting service '$ServiceName'..."
         try {
-            Start-Service -Name $ServiceName -ErrorAction Stop
+            if ($script:serviceCreationMethod -eq "nssm") {
+                & $nssmPath start $ServiceName 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "NSSM start failed with exit code: $LASTEXITCODE"
+                }
+            } else {
+                Start-Service -Name $ServiceName -ErrorAction Stop
+            }
             Write-Success "[OK] Service '$ServiceName' started successfully"
             Write-Info "  The application is now running as a Windows service"
         }
         catch {
             $errorMessage = $_.Exception.Message
             Write-Warning "[!] Could not start service: $errorMessage"
-            
-            # Get more details from sc.exe start
-            try {
-                $scStartOutput = sc.exe start $ServiceName 2>&1
-                if ($scStartOutput) {
-                    $scOutputString = $scStartOutput | Out-String
-                    Write-Info "  Details: $scOutputString"
-                }
-            } catch {
-                # Ignore if sc.exe also fails
-            }
-            
+
             Write-Info "  You can start it manually later:"
-            Write-Info "    - Command: sc start $ServiceName"
+            if ($script:serviceCreationMethod -eq "nssm") {
+                Write-Info "    - Command: nssm start $ServiceName"
+            } else {
+                Write-Info "    - Command: sc start $ServiceName"
+            }
             Write-Info "    - GUI: Services.msc"
             Write-Info "  Check logs: $InstallPath\logs\"
         }
@@ -3337,13 +3340,16 @@ Revision=1
                         # Start the updater service
                         Write-Info "  Starting updater service..."
                         try {
-                            Start-Service -Name $UpdaterServiceName -ErrorAction Stop
+                            & $nssmPath start $UpdaterServiceName 2>&1 | Out-Null
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "NSSM start failed with exit code: $LASTEXITCODE"
+                            }
                             Write-Success "  [OK] Updater service started successfully"
                             Write-Info "  The updater service is now polling for update triggers"
                         }
                         catch {
                             Write-Warning "  [!] Could not start updater service: $_"
-                            Write-Info "  You can start it manually: sc start $UpdaterServiceName"
+                            Write-Info "  You can start it manually: nssm start $UpdaterServiceName"
                         }
                     } else {
                         Write-Warning "  [!] NSSM updater service installation failed (exit code: $LASTEXITCODE)"
