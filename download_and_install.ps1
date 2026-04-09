@@ -127,6 +127,14 @@ function Exit-WithError {
     exit 1
 }
 
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+$script:IsElevated = Test-IsAdministrator
+
 # ── CloudFront signed-URL support ────────────────────────────────────────────
 # Fetch signing config (key + key-pair-id + distribution domain) from S3 once,
 # then generate short-lived signed URLs so all subsequent downloads go through
@@ -509,6 +517,14 @@ else {
     Write-Info "Using CUSTOMER update channel: $GITHUB_REPO"
 }
 $GITHUB_API = "https://api.github.com/repos"
+
+if (-not $script:IsElevated) {
+    Write-Warning "WARNING: Script is not running with administrator privileges."
+    Write-Warning "  Download, extraction, and configuration will proceed normally."
+    Write-Warning "  Windows service creation and startup will be SKIPPED."
+    Write-Warning "  To install services, re-run from an elevated PowerShell prompt or use the setup.exe installer."
+    Write-Warning ""
+}
 
 # Check PowerShell version
 Write-Info "`n[1/8] Checking PowerShell version..."
@@ -1192,29 +1208,34 @@ if ($ENABLE_STEP_7_EXTRACT) {
         Write-Info "`n[7/8] Extracting installation files..."
         
         # Stop Windows service if it exists
-        Write-Info "  Checking for Windows service..."
-        try {
-            $ServiceName = "RFQapplication"
-            $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-            
-            if ($service) {
-                if ($service.Status -eq 'Running') {
-                    Write-Info "  Stopping Windows service '$ServiceName'..."
-                    Stop-Service -Name $ServiceName -Force -ErrorAction Stop
-                    Write-Success "  [OK] Stopped Windows service"
-                    Start-Sleep -Seconds 2
+        if ($script:IsElevated) {
+            Write-Info "  Checking for Windows service..."
+            try {
+                $ServiceName = "RFQapplication"
+                $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                
+                if ($service) {
+                    if ($service.Status -eq 'Running') {
+                        Write-Info "  Stopping Windows service '$ServiceName'..."
+                        Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+                        Write-Success "  [OK] Stopped Windows service"
+                        Start-Sleep -Seconds 2
+                    }
+                    else {
+                        Write-Info "  Windows service '$ServiceName' is not running"
+                    }
                 }
                 else {
-                    Write-Info "  Windows service '$ServiceName' is not running"
+                    Write-Info "  Windows service not found (first-time install or not created yet)"
                 }
             }
-            else {
-                Write-Info "  Windows service not found (first-time install or not created yet)"
+            catch {
+                Write-Warning "  [!] Could not stop Windows service: $_"
+                Write-Info "  Continuing with extraction anyway..."
             }
         }
-        catch {
-            Write-Warning "  [!] Could not stop Windows service: $_"
-            Write-Info "  Continuing with extraction anyway..."
+        else {
+            Write-Warning "  Skipping Windows service stop during extraction (requires administrator privileges)"
         }
         
         # Force close any running processes from the installation directory
@@ -2703,8 +2724,9 @@ if (!$ExePath) {
 
 if ($ExePath) {
     Write-Success "[OK] Found executable: $($ExePath.FullName)"
-    
-    # Create Windows service
+
+    if ($script:IsElevated) {
+        # Create Windows service
     Write-Info "`nCreating Windows service 'RFQapplication'..."
     $ServiceName = "RFQapplication"
     $ServiceDisplayName = "RFQ Application Service"
@@ -3225,6 +3247,10 @@ Revision=1
         catch {
             $errorMessage = $_.Exception.Message
             Write-Warning "[!] Could not start service: $errorMessage"
+            if (-not $script:IsElevated) {
+                Write-Warning "  This failure is likely because the script is not running as administrator."
+                Write-Warning "  Re-run from an elevated PowerShell prompt or use the setup.exe installer."
+            }
             
             # Get more details from sc.exe start
             try {
@@ -3243,8 +3269,16 @@ Revision=1
             Write-Info "  Check logs: $InstallPath\logs\"
         }
     }
-    
-    # Create updater service (polls for trigger file to perform updates)
+
+    }
+    else {
+        Write-Warning "Skipping Windows service creation (requires administrator privileges)"
+        Write-Warning "  To create services later, re-run from an elevated PowerShell prompt"
+        $script:SkippedSteps += "Windows service creation (not elevated)"
+    }
+
+    if ($script:IsElevated) {
+        # Create updater service (polls for trigger file to perform updates)
     Write-Info "`nCreating updater service..."
     try {
         # Find windows_updater.exe
@@ -3343,6 +3377,10 @@ Revision=1
                         }
                         catch {
                             Write-Warning "  [!] Could not start updater service: $_"
+                            if (-not $script:IsElevated) {
+                                Write-Warning "  This failure is likely because the script is not running as administrator."
+                                Write-Warning "  Re-run from an elevated PowerShell prompt or use the setup.exe installer."
+                            }
                             Write-Info "  You can start it manually: sc start $UpdaterServiceName"
                         }
                     } else {
@@ -3384,6 +3422,10 @@ Revision=1
                         }
                         catch {
                             Write-Warning "  [!] Could not start updater service: $_"
+                            if (-not $script:IsElevated) {
+                                Write-Warning "  This failure is likely because the script is not running as administrator."
+                                Write-Warning "  Re-run from an elevated PowerShell prompt or use the setup.exe installer."
+                            }
                             Write-Info "  You can start it manually: sc start $UpdaterServiceName"
                         }
                     }
@@ -3412,6 +3454,12 @@ Revision=1
     catch {
         Write-Warning "[!] Error creating updater service: $_"
         $script:SkippedSteps += "Updater service (error during creation)"
+    }
+    }
+    else {
+        Write-Warning "Skipping updater service creation (requires administrator privileges)"
+        Write-Warning "  To create services later, re-run from an elevated PowerShell prompt"
+        $script:SkippedSteps += "Updater service creation (not elevated)"
     }
     
     # Create desktop shortcut (optional)
