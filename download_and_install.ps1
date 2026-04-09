@@ -330,34 +330,31 @@ function New-CloudFrontSignedUrl {
         (Get-Date -Date ((Get-Date).ToUniversalTime().AddSeconds($ExpiresInSeconds)) -UFormat %s)
     )
 
-    # Canned policy JSON (compact, no extra whitespace — CloudFront is strict)
-    $policy = '{"Statement":[{"Resource":"' + $resourceUrl + '","Condition":{"DateLessThan":{"AWS:EpochTime":' + $epoch + '}}}]}'
-
     try {
-        # ── RSA-SHA1 signature via openssl ────────────────────────────
-        # .NET Framework 4.x RSACryptoServiceProvider does not support
-        # ImportPkcs8PrivateKey. openssl is already an installer
-        # dependency (used for Azure encryption key generation).
-        $guid    = [guid]::NewGuid().ToString('N')
-        $keyTmp  = Join-Path $env:TEMP "cf_key_$guid.pem"
-        $polTmp  = Join-Path $env:TEMP "cf_pol_$guid.bin"
-        $sigTmp  = Join-Path $env:TEMP "cf_sig_$guid.bin"
+        $scriptDir = Split-Path -Parent $PSCommandPath
+        $awsHelpersPath = Join-Path $scriptDir "aws_helpers.py"
+        if (-not (Test-Path -LiteralPath $awsHelpersPath)) {
+            Write-Warning "  Failed to generate CloudFront signed URL: aws_helpers.py not found at $awsHelpersPath"
+            return $null
+        }
 
-        [System.IO.File]::WriteAllText($keyTmp, $cfg.PrivateKeyPem)
-        $policyBytes = [System.Text.Encoding]::UTF8.GetBytes($policy)
-        [System.IO.File]::WriteAllBytes($polTmp, $policyBytes)
+        $helperOutput = $cfg.PrivateKeyPem | python $awsHelpersPath generate-cloudfront-signed-url --resource-url $resourceUrl --expires $epoch --key-pair-id $cfg.KeyPairId 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $helperError = (($helperOutput | ForEach-Object { $_.ToString().Trim() }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "; "
+            if ([string]::IsNullOrWhiteSpace($helperError)) {
+                $helperError = "python helper exited with code $LASTEXITCODE"
+            }
 
-        & openssl dgst -sha1 -sign $keyTmp -out $sigTmp $polTmp 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "openssl signing failed (exit code $LASTEXITCODE)" }
+            Write-Warning "  Failed to generate CloudFront signed URL: $helperError"
+            return $null
+        }
 
-        $signatureBytes = [System.IO.File]::ReadAllBytes($sigTmp)
-        Remove-Item $keyTmp, $polTmp, $sigTmp -Force -ErrorAction SilentlyContinue
+        $signedUrl = (($helperOutput | ForEach-Object { $_.ToString().Trim() }) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        if ([string]::IsNullOrWhiteSpace($signedUrl)) {
+            Write-Warning "  Failed to generate CloudFront signed URL: python helper returned no URL"
+            return $null
+        }
 
-        # CloudFront-safe Base64: + → -, = → _, / → ~
-        $sig64 = [Convert]::ToBase64String($signatureBytes)
-        $sig64 = $sig64.Replace('+', '-').Replace('=', '_').Replace('/', '~')
-
-        $signedUrl = "$resourceUrl`?Expires=$epoch&Signature=$sig64&Key-Pair-Id=$($cfg.KeyPairId)"
         return $signedUrl
     }
     catch {
