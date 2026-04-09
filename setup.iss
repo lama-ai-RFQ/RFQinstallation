@@ -80,7 +80,6 @@ var
   DependencyCheckPage: TWizardPage;
   DependencyCheckLabel: TLabel;
   PostgreSQLLabel: TLabel;
-  OpenSSLLabel: TLabel;
   PythonLabel: TLabel;
   NSSMLabel: TLabel;
   ServiceInfoPage: TWizardPage;
@@ -299,71 +298,6 @@ begin
   
   PsqlPath := ExpandConstant('{pf32}\PostgreSQL\15\bin\psql.exe');
   if FileExists(PsqlPath) then
-  begin
-    Result := True;
-    Exit;
-  end;
-end;
-
-function CheckOpenSSLInPath(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  Result := False;
-  
-  // Check if openssl.exe is in PATH using 'where' command
-  if Exec('cmd.exe', '/c where openssl >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-  begin
-    Result := (ResultCode = 0);
-    Exit;
-  end;
-end;
-
-function CheckOpenSSLInstalled(): Boolean;
-var
-  OpensslPath: String;
-begin
-  Result := False;
-  
-  // Check common OpenSSL installation locations
-  // OpenSSL is often installed in Program Files
-  OpensslPath := ExpandConstant('{pf}\OpenSSL-Win64\bin\openssl.exe');
-  if FileExists(OpensslPath) then
-  begin
-    Result := True;
-    Exit;
-  end;
-  
-  OpensslPath := ExpandConstant('{pf}\OpenSSL\bin\openssl.exe');
-  if FileExists(OpensslPath) then
-  begin
-    Result := True;
-    Exit;
-  end;
-  
-  // Check Program Files (x86)
-  OpensslPath := ExpandConstant('{pf32}\OpenSSL-Win32\bin\openssl.exe');
-  if FileExists(OpensslPath) then
-  begin
-    Result := True;
-    Exit;
-  end;
-  
-  OpensslPath := ExpandConstant('{pf32}\OpenSSL\bin\openssl.exe');
-  if FileExists(OpensslPath) then
-  begin
-    Result := True;
-    Exit;
-  end;
-  
-  // Check common alternative locations
-  if FileExists('C:\OpenSSL-Win64\bin\openssl.exe') then
-  begin
-    Result := True;
-    Exit;
-  end;
-  
-  if FileExists('C:\OpenSSL\bin\openssl.exe') then
   begin
     Result := True;
     Exit;
@@ -686,7 +620,6 @@ procedure InitializeWizard;
 var
   StatusText: String;
   PostgreSQLStatus: String;
-  OpenSSLStatus: String;
   PythonStatus: String;
   NSSMStatus: String;
 begin
@@ -731,34 +664,10 @@ begin
     PostgreSQLLabel.Font.Color := clRed;
   end;
   
-  OpenSSLLabel := TLabel.Create(DependencyCheckPage);
-  OpenSSLLabel.Parent := DependencyCheckPage.Surface;
-  OpenSSLLabel.Left := 0;
-  OpenSSLLabel.Top := ScaleY(50);
-  OpenSSLLabel.Width := DependencyCheckPage.SurfaceWidth;
-  OpenSSLLabel.Height := ScaleY(20);
-  OpenSSLLabel.AutoSize := False;
-  OpenSSLLabel.Font.Size := 9;
-  if CheckOpenSSLInPath() then
-  begin
-    OpenSSLLabel.Caption := '✓ OpenSSL: Installed (Found in PATH)';
-    OpenSSLLabel.Font.Color := clGreen;
-  end
-  else if CheckOpenSSLInstalled() then
-  begin
-    OpenSSLLabel.Caption := '⚠ OpenSSL: Installed but NOT in PATH (openssl not found)';
-    OpenSSLLabel.Font.Color := clRed;
-  end
-  else
-  begin
-    OpenSSLLabel.Caption := '✗ OpenSSL: Not found';
-    OpenSSLLabel.Font.Color := clRed;
-  end;
-  
   PythonLabel := TLabel.Create(DependencyCheckPage);
   PythonLabel.Parent := DependencyCheckPage.Surface;
   PythonLabel.Left := 0;
-  PythonLabel.Top := ScaleY(70);
+  PythonLabel.Top := ScaleY(50);
   PythonLabel.Width := DependencyCheckPage.SurfaceWidth;
   PythonLabel.Height := ScaleY(20);
   PythonLabel.AutoSize := False;
@@ -777,7 +686,7 @@ begin
   NSSMLabel := TLabel.Create(DependencyCheckPage);
   NSSMLabel.Parent := DependencyCheckPage.Surface;
   NSSMLabel.Left := 0;
-  NSSMLabel.Top := ScaleY(90);
+  NSSMLabel.Top := ScaleY(70);
   NSSMLabel.Width := DependencyCheckPage.SurfaceWidth;
   NSSMLabel.Height := ScaleY(20);
   NSSMLabel.AutoSize := False;
@@ -1025,10 +934,10 @@ begin
   AzureKeyPage := CreateInputOptionPage(ServerURLPage.ID,
     'Azure Configuration', 'Azure Config Encryption Key',
     'The application uses an encryption key for Azure configuration.' + #13#10 +
-    'You can generate this automatically using OpenSSL, or enter your own key.',
+    'You can generate this automatically or enter your own key manually.',
     True, False);
-  AzureKeyPage.Add('Generate automatically using OpenSSL (recommended)');
-  AzureKeyPage.Add('Enter custom key');
+  AzureKeyPage.Add('Generate automatically (recommended)');
+  AzureKeyPage.Add('Enter custom key manually');
   AzureKeyPage.SelectedValueIndex := 0;
   
   // Create Azure Key Input page (shown only if custom key is selected)
