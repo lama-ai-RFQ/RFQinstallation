@@ -127,6 +127,57 @@ function Exit-WithError {
     exit 1
 }
 
+function Ensure-PythonAwsDependencies {
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonCommand) {
+        Write-Warning "  Python not found in PATH"
+        return $false
+    }
+
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    $awsHelpersPath = Join-Path $scriptDir "aws_helpers.py"
+    if (-not (Test-Path $awsHelpersPath)) {
+        Write-Warning "  aws_helpers.py not found: $awsHelpersPath"
+        return $false
+    }
+
+    $runDependencyCheck = {
+        $checkOutput = & python $awsHelpersPath check-dependencies
+        $checkText = ($checkOutput | Out-String).Trim()
+
+        if ([string]::IsNullOrWhiteSpace($checkText)) {
+            return $null
+        }
+
+        try {
+            return $checkText | ConvertFrom-Json
+        }
+        catch {
+            Write-Warning "  Failed to parse Python dependency check output"
+            return $null
+        }
+    }
+
+    $dependencyStatus = & $runDependencyCheck
+    if ($null -ne $dependencyStatus -and $dependencyStatus.boto3 -and $dependencyStatus.cryptography) {
+        return $true
+    }
+
+    Write-Info "  Installing required Python packages..."
+    & python -m pip install boto3 cryptography --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "  Failed to install boto3 and cryptography with pip"
+    }
+
+    $dependencyStatus = & $runDependencyCheck
+    if ($null -ne $dependencyStatus -and $dependencyStatus.boto3 -and $dependencyStatus.cryptography) {
+        return $true
+    }
+
+    Write-Warning "  Required Python packages could not be installed. Please run: pip install boto3 cryptography"
+    return $false
+}
+
 # ── CloudFront signed-URL support ────────────────────────────────────────────
 # Fetch signing config (key + key-pair-id + distribution domain) from S3 once,
 # then generate short-lived signed URLs so all subsequent downloads go through
@@ -599,6 +650,10 @@ Write-Info "`n[4/8] Checking authentication..."
 
 if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace($s3AwsKey) -and ![string]::IsNullOrWhiteSpace($s3AwsSecret)) {
     Write-Info "  S3 release bucket configured: $s3Bucket (region: $s3Region)"
+
+    if (-not (Ensure-PythonAwsDependencies)) {
+        Write-Warning "  Python AWS helpers are unavailable; continuing with existing AWS CLI/OpenSSL paths"
+    }
 
     # ── Try to load CloudFront signing config from S3 ──
     Write-Info "  Checking for CloudFront signing configuration..."
@@ -2533,23 +2588,15 @@ except Exception as e:
             
             if (!$pythonFound) {
                 Write-Warning "[!] Python not found in PATH"
-                Write-Info "  The model download requires Python and the boto3 package"
+                Write-Info "  The model download requires Python plus the boto3 and cryptography packages"
                 Write-Info "  Please install Python and run the download manually:"
-                Write-Info "    pip install boto3"
+                Write-Info "    pip install boto3 cryptography"
                 Write-Info "    python $downloadScript"
                 $script:SkippedSteps += "Model download (Python not found)"
             }
             else {
-                # Check if boto3 is installed
-                $boto3Check = python -c "import boto3; print('OK')" 2>&1
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Info "Installing boto3 package..."
-                    python -m pip install boto3 --quiet
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Warning "[!] Failed to install boto3"
-                        Write-Info "  Please install it manually: pip install boto3"
-                        Write-Info "  Then run: python $downloadScript"
-                    }
+                if (-not (Ensure-PythonAwsDependencies)) {
+                    Write-Info "  Then run: python $downloadScript"
                 }
                 
                 # Run the download script
