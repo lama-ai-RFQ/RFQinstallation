@@ -190,6 +190,50 @@ function Ensure-PythonAwsDependencies {
     return $false
 }
 
+function Invoke-S3DownloadViaPython {
+    param(
+        [string]$Bucket,
+        [string]$Key,
+        [string]$Region,
+        [string]$AwsKey,
+        [string]$AwsSecret,
+        [string]$DestinationPath
+    )
+
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    $awsHelpersPath = Join-Path $scriptDir "aws_helpers.py"
+    $previousAwsAccessKey = $env:AWS_ACCESS_KEY_ID
+    $previousAwsSecretKey = $env:AWS_SECRET_ACCESS_KEY
+    $hadAwsAccessKey = Test-Path Env:\AWS_ACCESS_KEY_ID
+    $hadAwsSecretKey = Test-Path Env:\AWS_SECRET_ACCESS_KEY
+
+    try {
+        $env:AWS_ACCESS_KEY_ID = $AwsKey
+        $env:AWS_SECRET_ACCESS_KEY = $AwsSecret
+
+        & python $awsHelpersPath download-s3-object --bucket $Bucket --key $Key --region $Region --dest $DestinationPath *>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($hadAwsAccessKey) {
+            $env:AWS_ACCESS_KEY_ID = $previousAwsAccessKey
+        }
+        else {
+            Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
+        }
+
+        if ($hadAwsSecretKey) {
+            $env:AWS_SECRET_ACCESS_KEY = $previousAwsSecretKey
+        }
+        else {
+            Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # ── CloudFront signed-URL support ────────────────────────────────────────────
 # Fetch signing config (key + key-pair-id + distribution domain) from S3 once,
 # then generate short-lived signed URLs so all subsequent downloads go through
@@ -223,21 +267,13 @@ function Get-CloudFrontSigningConfig {
         $cfgTmp  = Join-Path $env:TEMP "rfq_cf_config.json"
         $keyTmp  = Join-Path $env:TEMP "rfq_cf_key.pem"
 
-        # Temporarily set AWS credentials
-        $env:AWS_ACCESS_KEY_ID     = $AwsKey
-        $env:AWS_SECRET_ACCESS_KEY = $AwsSecret
-
         # Fetch config JSON
-        & aws s3api get-object --bucket $Bucket --key "signing/cloudfront-config.json" --region $Region $cfgTmp *>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Failed to fetch cloudfront-config.json" }
+        $cfResult = Invoke-S3DownloadViaPython -Bucket $Bucket -Key "signing/cloudfront-config.json" -Region $Region -AwsKey $AwsKey -AwsSecret $AwsSecret -DestinationPath $cfgTmp
+        if (-not $cfResult) { throw "Failed to fetch cloudfront-config.json" }
 
         # Fetch private key
-        & aws s3api get-object --bucket $Bucket --key "signing/cloudfront-key.pem" --region $Region $keyTmp *>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Failed to fetch cloudfront-key.pem" }
-
-        # Clean up AWS env vars
-        Remove-Item Env:\AWS_ACCESS_KEY_ID     -ErrorAction SilentlyContinue
-        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+        $keyResult = Invoke-S3DownloadViaPython -Bucket $Bucket -Key "signing/cloudfront-key.pem" -Region $Region -AwsKey $AwsKey -AwsSecret $AwsSecret -DestinationPath $keyTmp
+        if (-not $keyResult) { throw "Failed to fetch cloudfront-key.pem" }
 
         $cfgJson = Get-Content $cfgTmp -Raw | ConvertFrom-Json
         $pemText = Get-Content $keyTmp -Raw
@@ -260,9 +296,6 @@ function Get-CloudFrontSigningConfig {
         return $script:CloudFrontConfig
     }
     catch {
-        # Clean up env vars on failure too
-        Remove-Item Env:\AWS_ACCESS_KEY_ID     -ErrorAction SilentlyContinue
-        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
         Remove-Item (Join-Path $env:TEMP "rfq_cf_config.json") -Force -ErrorAction SilentlyContinue
         Remove-Item (Join-Path $env:TEMP "rfq_cf_key.pem")     -Force -ErrorAction SilentlyContinue
 
@@ -698,12 +731,7 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
 
         # ── Direct S3 fallback ──
         if (-not $s3DownloadOk) {
-            $env:AWS_ACCESS_KEY_ID = $s3AwsKey
-            $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
-            & aws s3api get-object --bucket $s3Bucket --key $s3Key --region $s3Region $s3TempFile *>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { $s3DownloadOk = $true }
-            Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
-            Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
+            $s3DownloadOk = Invoke-S3DownloadViaPython -Bucket $s3Bucket -Key $s3Key -Region $s3Region -AwsKey $s3AwsKey -AwsSecret $s3AwsSecret -DestinationPath $s3TempFile
         }
 
         if ($s3DownloadOk -and (Test-Path $s3TempFile)) {
@@ -740,11 +768,6 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
     }
     catch {
         Write-Warning "  S3 check failed: $_, falling back to GitHub..."
-    }
-    finally {
-        # Clean up env vars so they don't leak into other processes unexpectedly
-        Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
-        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
     }
 }
 
@@ -916,12 +939,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
             # ── Direct S3 fallback ──
             if (-not $manifestDownloadOk) {
                 Write-Info "    Downloading from S3: s3://$s3Bucket/$manifestS3Key"
-                $env:AWS_ACCESS_KEY_ID = $s3AwsKey
-                $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
-                & aws s3api get-object --bucket $s3Bucket --key $manifestS3Key --region $s3Region $ManifestPath *>&1 | Out-Null
-                Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
-                Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
-                if ($LASTEXITCODE -eq 0) { $manifestDownloadOk = $true }
+                $manifestDownloadOk = Invoke-S3DownloadViaPython -Bucket $s3Bucket -Key $manifestS3Key -Region $s3Region -AwsKey $s3AwsKey -AwsSecret $s3AwsSecret -DestinationPath $ManifestPath
             }
 
             if (-not $manifestDownloadOk) { throw "Failed to download manifest from S3 (all methods)" }
@@ -1187,12 +1205,7 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
 
                     # ── Direct S3 fallback ──
                     if (-not $assetDownloadOk) {
-                        $env:AWS_ACCESS_KEY_ID = $s3AwsKey
-                        $env:AWS_SECRET_ACCESS_KEY = $s3AwsSecret
-                        & aws s3api get-object --bucket $s3Bucket --key $assetS3Key --region $s3Region $FilePath *>&1 | Out-Null
-                        Remove-Item Env:\AWS_ACCESS_KEY_ID -ErrorAction SilentlyContinue
-                        Remove-Item Env:\AWS_SECRET_ACCESS_KEY -ErrorAction SilentlyContinue
-                        if ($LASTEXITCODE -eq 0) { $assetDownloadOk = $true }
+                        $assetDownloadOk = Invoke-S3DownloadViaPython -Bucket $s3Bucket -Key $assetS3Key -Region $s3Region -AwsKey $s3AwsKey -AwsSecret $s3AwsSecret -DestinationPath $FilePath
                     }
 
                     if (-not $assetDownloadOk) { throw "Failed to download $Filename from S3 (all methods)" }
