@@ -49,6 +49,7 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 [Files]
 ; Include the PowerShell installation script
 Source: "download_and_install.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "aws_helpers.py"; DestDir: "{tmp}"; Flags: ignoreversion
 ; Include any other necessary files
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -1675,4 +1676,3 @@ Filename: "cmd.exe"; Parameters: "/c sc delete RFQapplication >nul 2>&1"; Flags:
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
-
