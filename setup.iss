@@ -1576,12 +1576,66 @@ begin
   Result := Params;
 end;
 
-[UninstallRun]
-; Stop and remove Windows services before uninstalling files
-Filename: "cmd.exe"; Parameters: "/c net stop RFQUpdaterService >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "StopUpdater"
-Filename: "cmd.exe"; Parameters: "/c net stop RFQapplication >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "StopApp"
-Filename: "cmd.exe"; Parameters: "/c sc delete RFQUpdaterService >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteUpdater"
-Filename: "cmd.exe"; Parameters: "/c sc delete RFQapplication >nul 2>&1"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteApp"
+function ServiceExists(const ServiceName: String): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if Exec('cmd.exe', '/c sc query "' + ServiceName + '" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := (ResultCode = 0);
+end;
+
+function StopDeleteAndWaitForServiceRemoval(const ServiceName: String): Boolean;
+var
+  ResultCode: Integer;
+  Waited: Integer;
+begin
+  Result := True;
+
+  if not ServiceExists(ServiceName) then
+  begin
+    Log('Service "' + ServiceName + '" is not present during uninstall.');
+    Exit;
+  end;
+
+  Log('Stopping service "' + ServiceName + '" before uninstall.');
+  if not Exec('cmd.exe', '/c sc stop "' + ServiceName + '" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('Failed to launch stop command for service "' + ServiceName + '".');
+
+  Log('Deleting service "' + ServiceName + '" before uninstall.');
+  if not Exec('cmd.exe', '/c sc delete "' + ServiceName + '" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log('Failed to launch delete command for service "' + ServiceName + '".');
+    Result := False;
+    Exit;
+  end;
+
+  Waited := 0;
+  while Waited < 30 do
+  begin
+    if not ServiceExists(ServiceName) then
+    begin
+      Log('Service "' + ServiceName + '" removed after ' + IntToStr(Waited) + ' seconds.');
+      Exit;
+    end;
+
+    Sleep(1000);
+    Waited := Waited + 1;
+  end;
+
+  Result := not ServiceExists(ServiceName);
+  if not Result then
+    Log('Timed out waiting for service "' + ServiceName + '" to be removed.');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    StopDeleteAndWaitForServiceRemoval('RFQUpdaterService');
+    StopDeleteAndWaitForServiceRemoval('RFQapplication');
+  end;
+end;
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

@@ -110,6 +110,7 @@ $ENABLE_STEP_7_EXTRACT = $true   # Step 7: Extracting installation files
 
 # Track skipped steps for final summary
 $script:SkippedSteps = @()
+$script:serviceCreationFailureReason = $null
 
 # Colors for output - now writes to both console and log file
 function Write-Info { 
@@ -137,6 +138,24 @@ function Exit-WithError {
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     if (-not $NonInteractive) { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") }
     exit 1
+}
+
+function Add-SkippedStepUnique {
+    param([string]$Step)
+
+    if ($Step -and $script:SkippedSteps -notcontains $Step) {
+        $script:SkippedSteps += $Step
+    }
+}
+
+function Set-MainServiceFailure {
+    param(
+        [string]$Reason,
+        [string]$SkippedStep
+    )
+
+    $script:serviceCreationFailureReason = $Reason
+    Add-SkippedStepUnique $SkippedStep
 }
 
 function Ensure-PythonAwsDependencies {
@@ -2784,6 +2803,8 @@ if ($ExePath) {
     $ServiceDescription = "RFQ Automation Application Service"
     $ExePathQuoted = "`"$($ExePath.FullName)`""
     
+    $mainServiceCreationBlocked = $false
+
     # Check if service already exists
     $serviceExists = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     
@@ -2821,8 +2842,13 @@ if ($ExePath) {
             }
             
             if ($serviceStillExists) {
-                Write-Warning "  [!] Service still exists after $maxWait seconds - may be marked for deletion"
-                Write-Warning "  [!] You may need to restart the system or wait longer"
+                Write-Error-Custom "  [!] Service '$ServiceName' still exists after $maxWait seconds and appears to be marked for deletion"
+                Write-Warning "  [!] Close Services.msc, Task Manager, and Event Viewer, then run the installer again"
+                Write-Warning "  [!] Skipping service creation to avoid a half-completed reinstall"
+                Set-MainServiceFailure `
+                    -Reason "Service '$ServiceName' is still marked for deletion after the 30-second wait." `
+                    -SkippedStep "Windows service '$ServiceName' (marked for deletion; close Services.msc, Task Manager, and Event Viewer, then rerun installer)"
+                $mainServiceCreationBlocked = $true
             } else {
                 Write-Success "  [OK] Removed existing service"
             }
@@ -2831,9 +2857,6 @@ if ($ExePath) {
             Write-Warning "  [!] Could not remove existing service: $_"
         }
     }
-    
-    # Create the service using NSSM (preferred) or sc.exe (fallback)
-    Write-Info "  Creating service 'RFQapplication' with executable: $($ExePath.FullName)"
     
     # Check for NSSM in common locations
     $nssmPath = $null
@@ -2867,6 +2890,13 @@ if ($ExePath) {
     
     $script:serviceCreated = $false
     $script:serviceCreationMethod = $null
+    $logDir = Join-Path $InstallPath "logs"
+
+    if ($mainServiceCreationBlocked) {
+        Write-Warning "  [!] Service creation for '$ServiceName' was skipped"
+    } else {
+        # Create the service using NSSM (preferred) or sc.exe (fallback)
+        Write-Info "  Creating service 'RFQapplication' with executable: $($ExePath.FullName)"
     
     # Try to use NSSM first (recommended for non-service-aware applications)
     if ($nssmPath) {
@@ -2896,153 +2926,160 @@ if ($ExePath) {
                 }
                 
                 if ($serviceStillExists) {
-                    Write-Warning "    [!] Service still marked for deletion - creation may fail"
+                    Write-Error-Custom "    [!] Service '$ServiceName' still exists after $maxWait seconds and appears to be marked for deletion"
+                    Write-Warning "    [!] Close Services.msc, Task Manager, and Event Viewer, then run the installer again"
+                    Write-Warning "    [!] Skipping service creation to avoid a half-completed reinstall"
+                    Set-MainServiceFailure `
+                        -Reason "Service '$ServiceName' is still marked for deletion after the 30-second wait." `
+                        -SkippedStep "Windows service '$ServiceName' (marked for deletion; close Services.msc, Task Manager, and Event Viewer, then rerun installer)"
+                    $mainServiceCreationBlocked = $true
                 }
             }
-            
-            # Create logs directory
-            $logDir = Join-Path $InstallPath "logs"
-            if (!(Test-Path $logDir)) {
-                New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-            }
-            
-            # Configure service account based on installer selection
-            # Get admin user (who's running the installer) and logged-in user (for reference)
-            $adminUser = "$env:USERDOMAIN\$env:USERNAME"  # Admin account running installer
-            $loggedInUser = $null
-            $currentDomain = $env:USERDOMAIN
-            
-            # Get the actual logged-in user (not the admin account running the installer)
-            try {
-                $loggedInUserWMI = (Get-WmiObject Win32_ComputerSystem).UserName
-                if ($loggedInUserWMI) {
-                    $loggedInUser = $loggedInUserWMI
-                    # Extract domain from logged-in user if available
-                    if ($loggedInUser.Contains('\')) {
-                        $parts = $loggedInUser.Split('\')
-                        $currentDomain = $parts[0]  # Use logged-in user's domain as default
-                    }
+
+            if (-not $mainServiceCreationBlocked) {
+                # Create logs directory
+                $logDir = Join-Path $InstallPath "logs"
+                if (!(Test-Path $logDir)) {
+                    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
                 }
-            } catch {
-                # If WMI fails, we'll just show admin user
-            }
-            
-            $serviceAccountXml = ""
-            $serviceAccountPassword = $null
-            $configureServiceAccount = $false
-            $targetServiceAccount = $null
-            
-            # Determine target service account based on parameter
-            switch ($ServiceAccount.ToLower()) {
-                "currentuser" {
-                    Write-Info "  You selected to run the service as a user account."
-                    Write-Info "  This allows the service to access Windows Credential Manager credentials."
-                    Write-Info ""
-                    
-                    # Show available account information
-                    Write-Info "  Account information:"
-                    Write-Info "    - Admin account (running installer): $adminUser"
-                    if ($loggedInUser) {
-                        Write-Info "    - Logged-in user: $loggedInUser"
-                    }
-                    Write-Info ""
-                    
-                    # Prompt for account name (allow user to type it)
-                    Write-Info "  Enter the account name to run the service as:"
-                    Write-Info "    - Format: DOMAIN\Username (e.g., MYDOMAIN\john)"
-                    Write-Info "    - Or: .\Username for local account (e.g., .\john)"
-                    Write-Info "    - Or: Username (will use current domain: $currentDomain)"
-                    Write-Info ""
-                    
-                    if ($NonInteractive) { $accountInput = if ($ServiceAccount -ne "CurrentUser") { $ServiceAccount } else { "" } } else { $accountInput = Read-Host "  Account name" }
-                    
-                    if ([string]::IsNullOrWhiteSpace($accountInput)) {
-                        Write-Warning "  No account name provided. Service will run as SYSTEM."
-                        $targetServiceAccount = $null
-                    } else {
-                        # Parse the account input
-                        if ($accountInput.Contains('\')) {
-                            # User provided domain\user format
-                            $targetServiceAccount = $accountInput
-                        } elseif ($accountInput.StartsWith('.\')) {
-                            # User provided .\user format (local account)
-                            $targetServiceAccount = "$env:COMPUTERNAME\$($accountInput.Substring(2))"
-                        } else {
-                            # User provided just username, use current domain
-                            $targetServiceAccount = "$currentDomain\$accountInput"
+                
+                # Configure service account based on installer selection
+                # Get admin user (who's running the installer) and logged-in user (for reference)
+                $adminUser = "$env:USERDOMAIN\$env:USERNAME"  # Admin account running installer
+                $loggedInUser = $null
+                $currentDomain = $env:USERDOMAIN
+                
+                # Get the actual logged-in user (not the admin account running the installer)
+                try {
+                    $loggedInUserWMI = (Get-WmiObject Win32_ComputerSystem).UserName
+                    if ($loggedInUserWMI) {
+                        $loggedInUser = $loggedInUserWMI
+                        # Extract domain from logged-in user if available
+                        if ($loggedInUser.Contains('\')) {
+                            $parts = $loggedInUser.Split('\')
+                            $currentDomain = $parts[0]  # Use logged-in user's domain as default
                         }
-                        
-                        Write-Info "  Service will be configured to run as: $targetServiceAccount"
+                    }
+                } catch {
+                    # If WMI fails, we'll just show admin user
+                }
+
+                $serviceAccountXml = ""
+                $serviceAccountPassword = $null
+                $configureServiceAccount = $false
+                $targetServiceAccount = $null
+                
+                # Determine target service account based on parameter
+                switch ($ServiceAccount.ToLower()) {
+                    "currentuser" {
+                        Write-Info "  You selected to run the service as a user account."
+                        Write-Info "  This allows the service to access Windows Credential Manager credentials."
                         Write-Info ""
-                        Write-Info "  WinSW will install the service first, then we'll configure it with the password."
-                        Write-Info "  Your password will NOT be stored in any files."
+                        
+                        # Show available account information
+                        Write-Info "  Account information:"
+                        Write-Info "    - Admin account (running installer): $adminUser"
+                        if ($loggedInUser) {
+                            Write-Info "    - Logged-in user: $loggedInUser"
+                        }
                         Write-Info ""
                         
-                        # Prompt for password
-                        $passwordAttempts = 0
-                        $maxAttempts = 3
+                        # Prompt for account name (allow user to type it)
+                        Write-Info "  Enter the account name to run the service as:"
+                        Write-Info "    - Format: DOMAIN\Username (e.g., MYDOMAIN\john)"
+                        Write-Info "    - Or: .\Username for local account (e.g., .\john)"
+                        Write-Info "    - Or: Username (will use current domain: $currentDomain)"
+                        Write-Info ""
                         
-                        while ($passwordAttempts -lt $maxAttempts) {
-                            try {
-                                if ($NonInteractive) { $securePassword = $null } else { $securePassword = Read-Host "  Enter password for $targetServiceAccount" -AsSecureString }
-                                if ($securePassword -and $securePassword.Length -gt 0) {
-                                    # Convert to plain text temporarily (will be cleared after use)
-                                    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
-                                    $serviceAccountPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-                                    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
-                                    $securePassword = $null
-                                    $configureServiceAccount = $true
-                                    Write-Info "  Password accepted. Will configure service account after installation."
-                                    break
-                                } else {
-                                    Write-Warning "  Password cannot be empty. Please try again."
+                        if ($NonInteractive) { $accountInput = if ($ServiceAccount -ne "CurrentUser") { $ServiceAccount } else { "" } } else { $accountInput = Read-Host "  Account name" }
+                        
+                        if ([string]::IsNullOrWhiteSpace($accountInput)) {
+                            Write-Warning "  No account name provided. Service will run as SYSTEM."
+                            $targetServiceAccount = $null
+                        } else {
+                            # Parse the account input
+                            if ($accountInput.Contains('\')) {
+                                # User provided domain\user format
+                                $targetServiceAccount = $accountInput
+                            } elseif ($accountInput.StartsWith('.\')) {
+                                # User provided .\user format (local account)
+                                $targetServiceAccount = "$env:COMPUTERNAME\$($accountInput.Substring(2))"
+                            } else {
+                                # User provided just username, use current domain
+                                $targetServiceAccount = "$currentDomain\$accountInput"
+                            }
+                            
+                            Write-Info "  Service will be configured to run as: $targetServiceAccount"
+                            Write-Info ""
+                            Write-Info "  WinSW will install the service first, then we'll configure it with the password."
+                            Write-Info "  Your password will NOT be stored in any files."
+                            Write-Info ""
+                            
+                            # Prompt for password
+                            $passwordAttempts = 0
+                            $maxAttempts = 3
+                            
+                            while ($passwordAttempts -lt $maxAttempts) {
+                                try {
+                                    if ($NonInteractive) { $securePassword = $null } else { $securePassword = Read-Host "  Enter password for $targetServiceAccount" -AsSecureString }
+                                    if ($securePassword -and $securePassword.Length -gt 0) {
+                                        # Convert to plain text temporarily (will be cleared after use)
+                                        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+                                        $serviceAccountPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+                                        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+                                        $securePassword = $null
+                                        $configureServiceAccount = $true
+                                        Write-Info "  Password accepted. Will configure service account after installation."
+                                        break
+                                    } else {
+                                        Write-Warning "  Password cannot be empty. Please try again."
+                                        $passwordAttempts++
+                                    }
+                                } catch {
+                                    Write-Warning "  Error reading password: $_"
                                     $passwordAttempts++
-                                }
-                            } catch {
-                                Write-Warning "  Error reading password: $_"
-                                $passwordAttempts++
-                                if ($passwordAttempts -ge $maxAttempts) {
-                                    Write-Warning "  Maximum attempts reached. Service will run as SYSTEM."
-                                    Write-Warning "  You can manually configure it later using: sc.exe config $ServiceName obj= $targetServiceAccount password= YourPassword"
-                                    $targetServiceAccount = $null
-                                    break
+                                    if ($passwordAttempts -ge $maxAttempts) {
+                                        Write-Warning "  Maximum attempts reached. Service will run as SYSTEM."
+                                        Write-Warning "  You can manually configure it later using: sc.exe config $ServiceName obj= $targetServiceAccount password= YourPassword"
+                                        $targetServiceAccount = $null
+                                        break
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                "networkservice" {
-                    $targetServiceAccount = "NT AUTHORITY\NETWORK SERVICE"
-                    Write-Info "  Service will be configured to run as: $targetServiceAccount"
-                    if ($UseCredentialManager) {
-                        Write-Warning "  WARNING: Network Service cannot access Windows Credential Manager!"
-                        Write-Warning "  If you need Credential Manager, you must change the service account to a user account after installation."
+                    "networkservice" {
+                        $targetServiceAccount = "NT AUTHORITY\NETWORK SERVICE"
+                        Write-Info "  Service will be configured to run as: $targetServiceAccount"
+                        if ($UseCredentialManager) {
+                            Write-Warning "  WARNING: Network Service cannot access Windows Credential Manager!"
+                            Write-Warning "  If you need Credential Manager, you must change the service account to a user account after installation."
+                        }
+                    }
+                    "localsystem" {
+                        $targetServiceAccount = "LocalSystem"
+                        Write-Info "  Service will be configured to run as: $targetServiceAccount (SYSTEM)"
+                        if ($UseCredentialManager) {
+                            Write-Warning "  WARNING: Local System cannot access Windows Credential Manager!"
+                            Write-Warning "  If you need Credential Manager, you must change the service account to a user account after installation."
+                        }
+                    }
+                    default {
+                        Write-Warning "  Unknown service account option: $ServiceAccount. Defaulting to SYSTEM."
+                        $targetServiceAccount = $null
                     }
                 }
-                "localsystem" {
-                    $targetServiceAccount = "LocalSystem"
-                    Write-Info "  Service will be configured to run as: $targetServiceAccount (SYSTEM)"
-                    if ($UseCredentialManager) {
-                        Write-Warning "  WARNING: Local System cannot access Windows Credential Manager!"
-                        Write-Warning "  If you need Credential Manager, you must change the service account to a user account after installation."
-                    }
-                }
-                default {
-                    Write-Warning "  Unknown service account option: $ServiceAccount. Defaulting to SYSTEM."
-                    $targetServiceAccount = $null
-                }
-            }
-            
-            # NSSM stores configuration in Windows registry (more secure than XML files)
-            
-            # Grant "Log on as a service" right to the user if running as user account
-            if ($targetServiceAccount -and $targetServiceAccount -notmatch "^(LocalSystem|NT AUTHORITY\\NETWORK SERVICE)$" -and $configureServiceAccount) {
-                Write-Info "  Granting 'Log on as a service' right to $targetServiceAccount..."
-                try {
-                    # Use NTRights or secedit to grant the right
-                    # Method 1: Try using secedit (built-in Windows tool)
-                    $tempSeceditFile = Join-Path $env:TEMP "secedit_$([System.Guid]::NewGuid().ToString()).inf"
-                    $seceditContent = @"
+
+                # NSSM stores configuration in Windows registry (more secure than XML files)
+                
+                # Grant "Log on as a service" right to the user if running as user account
+                if ($targetServiceAccount -and $targetServiceAccount -notmatch "^(LocalSystem|NT AUTHORITY\\NETWORK SERVICE)$" -and $configureServiceAccount) {
+                    Write-Info "  Granting 'Log on as a service' right to $targetServiceAccount..."
+                    try {
+                        # Use NTRights or secedit to grant the right
+                        # Method 1: Try using secedit (built-in Windows tool)
+                        $tempSeceditFile = Join-Path $env:TEMP "secedit_$([System.Guid]::NewGuid().ToString()).inf"
+                        $seceditContent = @"
 [Unicode]
 Unicode=yes
 [Version]
@@ -3051,28 +3088,28 @@ Revision=1
 [Privilege Rights]
                     SeServiceLogonRight = $targetServiceAccount
 "@
-                    Set-Content -Path $tempSeceditFile -Value $seceditContent -Force
-                    $seceditResult = Start-Process -FilePath "secedit.exe" -ArgumentList "/configure", "/db", "secedit.sdb", "/cfg", $tempSeceditFile -Wait -PassThru -WindowStyle Hidden
-                    Remove-Item $tempSeceditFile -ErrorAction SilentlyContinue
-                    
-                    if ($seceditResult.ExitCode -eq 0) {
-                        Write-Success "  [OK] Granted 'Log on as a service' right"
-                    } else {
-                        Write-Warning "  [!] Could not automatically grant 'Log on as a service' right"
+                        Set-Content -Path $tempSeceditFile -Value $seceditContent -Force
+                        $seceditResult = Start-Process -FilePath "secedit.exe" -ArgumentList "/configure", "/db", "secedit.sdb", "/cfg", $tempSeceditFile -Wait -PassThru -WindowStyle Hidden
+                        Remove-Item $tempSeceditFile -ErrorAction SilentlyContinue
+                        
+                        if ($seceditResult.ExitCode -eq 0) {
+                            Write-Success "  [OK] Granted 'Log on as a service' right"
+                        } else {
+                            Write-Warning "  [!] Could not automatically grant 'Log on as a service' right"
+                            Write-Warning "      You may need to grant it manually via Local Security Policy"
+                            Write-Warning "      Or the service installation may prompt for it"
+                        }
+                    } catch {
+                        Write-Warning "  [!] Could not grant 'Log on as a service' right: $_"
                         Write-Warning "      You may need to grant it manually via Local Security Policy"
-                        Write-Warning "      Or the service installation may prompt for it"
                     }
-                } catch {
-                    Write-Warning "  [!] Could not grant 'Log on as a service' right: $_"
-                    Write-Warning "      You may need to grant it manually via Local Security Policy"
                 }
-            }
-            
-            # Install service using NSSM
-            Write-Info "  Installing service with NSSM..."
-            $nssmInstallOutput = & $nssmPath install $ServiceName "$($ExePath.FullName)" 2>&1
-            
-            if ($LASTEXITCODE -eq 0) {
+
+                # Install service using NSSM
+                Write-Info "  Installing service with NSSM..."
+                $nssmInstallOutput = & $nssmPath install $ServiceName "$($ExePath.FullName)" 2>&1
+                
+                if ($LASTEXITCODE -eq 0) {
                 Write-Success "[OK] Service '$ServiceName' installed successfully using NSSM"
                 
                 # Configure service settings
@@ -3224,13 +3261,17 @@ Revision=1
                 Write-Info "    - Command: sc start/stop $ServiceName"
                 Write-Info "    - GUI: Services.msc (look for '$ServiceDisplayName')"
                 Write-Info "    - NSSM: nssm start/stop/restart $ServiceName"
-            } else {
-                Write-Warning "  [!] NSSM service installation failed (exit code: $LASTEXITCODE)"
-                if ($nssmInstallOutput) {
-                    Write-Warning "    Error: $nssmInstallOutput"
+                } else {
+                    Write-Warning "  [!] NSSM service installation failed (exit code: $LASTEXITCODE)"
+                    if ($nssmInstallOutput) {
+                        Write-Warning "    Error: $nssmInstallOutput"
+                    }
+                    Write-Warning "  [!] Service may be left in 'marked for deletion' state"
+                    Write-Warning "  [!] Solution: Restart the system, or wait 30+ seconds and try again"
+                    Set-MainServiceFailure `
+                        -Reason "NSSM failed to install service '$ServiceName'." `
+                        -SkippedStep "Windows service '$ServiceName' (NSSM install failed)"
                 }
-                Write-Warning "  [!] Service may be left in 'marked for deletion' state"
-                Write-Warning "  [!] Solution: Restart the system, or wait 30+ seconds and try again"
             }
         }
         catch {
@@ -3239,7 +3280,7 @@ Revision=1
     }
     
     # Fallback to sc.exe if NSSM failed or is not available
-    if (-not $script:serviceCreated) {
+    if (-not $script:serviceCreated -and -not $mainServiceCreationBlocked) {
         if (-not $nssmPath) {
             Write-Warning "  NSSM not found, using sc.exe (service may fail if application is not service-aware)..."
             Write-Warning "  NOTE: The installer should have included NSSM. Check C:\Program Files\nssm\nssm.exe"
@@ -3282,12 +3323,19 @@ Revision=1
                 Write-Warning "  Service creation may require administrator privileges"
                 Write-Warning "  If service was deleted but creation failed, it may be 'marked for deletion'"
                 Write-Warning "  Solution: Restart the system, or wait 30+ seconds and run installer again"
+                Set-MainServiceFailure `
+                    -Reason "sc.exe failed to create service '$ServiceName'." `
+                    -SkippedStep "Windows service '$ServiceName' (sc.exe create failed)"
             }
         }
         catch {
             Write-Warning "[!] Could not create service: $_"
             Write-Warning "  Service creation may require administrator privileges"
+            Set-MainServiceFailure `
+                -Reason "sc.exe failed to create service '$ServiceName'." `
+                -SkippedStep "Windows service '$ServiceName' (sc.exe create failed)"
         }
+    }
     }
     
     # Start the service if it was successfully created
@@ -3330,6 +3378,7 @@ Revision=1
             $UpdaterServiceName = "RFQUpdaterService"
             $UpdaterServiceDisplayName = "RFQ Application Updater Service"
             $UpdaterServiceDescription = "Polls for update triggers and applies updates to RFQ Application"
+            $updaterServiceCreationBlocked = $false
             
             # Check if updater service already exists
             $updaterServiceExists = Get-Service -Name $UpdaterServiceName -ErrorAction SilentlyContinue
@@ -3372,7 +3421,11 @@ Revision=1
                     }
                     
                     if ($serviceStillExists) {
-                        Write-Warning "  [!] Updater service still exists after $maxWait seconds - may be marked for deletion"
+                        Write-Error-Custom "  [!] Updater service '$UpdaterServiceName' still exists after $maxWait seconds and appears to be marked for deletion"
+                        Write-Warning "  [!] Close Services.msc, Task Manager, and Event Viewer, then run the installer again"
+                        Write-Warning "  [!] Skipping updater service creation to avoid a half-completed reinstall"
+                        Add-SkippedStepUnique "Updater service (marked for deletion; close Services.msc, Task Manager, and Event Viewer, then rerun installer)"
+                        $updaterServiceCreationBlocked = $true
                     } else {
                         Write-Success "  [OK] Removed existing updater service"
                     }
@@ -3385,7 +3438,9 @@ Revision=1
             # Create updater service using NSSM
             $script:updaterServiceCreated = $false
             
-            if ($nssmPath) {
+            if ($updaterServiceCreationBlocked) {
+                Write-Warning "  [!] Updater service creation for '$UpdaterServiceName' was skipped"
+            } elseif ($nssmPath) {
                 Write-Info "  Using NSSM to create updater service..."
                 try {
                     # Install updater service using NSSM
@@ -3403,6 +3458,9 @@ Revision=1
                         & $nssmPath set $UpdaterServiceName Start SERVICE_AUTO_START 2>&1 | Out-Null
                         
                         # Configure logging
+                        if (!(Test-Path $logDir)) {
+                            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+                        }
                         $updaterStdoutLog = Join-Path $logDir "${UpdaterServiceName}_stdout.log"
                         $updaterStderrLog = Join-Path $logDir "${UpdaterServiceName}_stderr.log"
                         & $nssmPath set $UpdaterServiceName AppStdout "$updaterStdoutLog" 2>&1 | Out-Null
@@ -3429,15 +3487,17 @@ Revision=1
                         if ($nssmUpdaterOutput) {
                             Write-Warning "    Error: $nssmUpdaterOutput"
                         }
+                        Add-SkippedStepUnique "Updater service (NSSM install failed)"
                     }
                 }
                 catch {
                     Write-Warning "  [!] Failed to create updater service with NSSM: $_"
+                    Add-SkippedStepUnique "Updater service (NSSM install failed)"
                 }
             }
             
             # Fallback to sc.exe if NSSM failed or is not available
-            if (-not $script:updaterServiceCreated) {
+            if (-not $script:updaterServiceCreated -and -not $updaterServiceCreationBlocked) {
                 Write-Info "  Using sc.exe to create updater service..."
                 try {
                     $updaterExePathQuoted = "`"$updaterExePath`" --service"
@@ -3468,12 +3528,12 @@ Revision=1
                     }
                     else {
                         Write-Warning "[!] Failed to create updater service (exit code: $LASTEXITCODE)"
-                        $script:SkippedSteps += "Updater service (creation failed)"
+                        Add-SkippedStepUnique "Updater service (creation failed)"
                     }
                 }
                 catch {
                     Write-Warning "[!] Could not create updater service: $_"
-                    $script:SkippedSteps += "Updater service (creation error)"
+                    Add-SkippedStepUnique "Updater service (creation error)"
                 }
             }
             
@@ -3485,12 +3545,12 @@ Revision=1
         } else {
             Write-Warning "[!] windows_updater.exe not found at: $updaterExePath"
             Write-Warning "  Updater service will not be created"
-            $script:SkippedSteps += "Updater service (windows_updater.exe not found)"
+            Add-SkippedStepUnique "Updater service (windows_updater.exe not found)"
         }
     }
     catch {
         Write-Warning "[!] Error creating updater service: $_"
-        $script:SkippedSteps += "Updater service (error during creation)"
+        Add-SkippedStepUnique "Updater service (error during creation)"
     }
     
     # Create desktop shortcut (optional)
@@ -3552,7 +3612,8 @@ if ($script:SkippedSteps.Count -gt 0) {
     $SuccessMessage += "`n"
 }
 
-$SuccessMessage += @"
+if ($script:serviceCreated) {
+    $SuccessMessage += @"
 NEXT STEPS:
   1. The Windows service 'RFQapplication' has been created and started
   2. The application should now be running as a Windows service
@@ -3576,6 +3637,37 @@ SUPPORT:
 
 ================================================================================
 "@
+} else {
+    $serviceFailureReason = $script:serviceCreationFailureReason
+    if ([string]::IsNullOrWhiteSpace($serviceFailureReason)) {
+        $serviceFailureReason = "Windows service creation did not complete successfully. Review the skipped steps above."
+    }
+
+    $SuccessMessage += @"
+NEXT STEPS:
+  1. Windows services were not created during this run
+  2. Reason: $serviceFailureReason
+  3. Close Services.msc, Task Manager, and Event Viewer if they are open, then run the installer again
+  4. You can run the application directly: $($ExePath.FullName)
+  5. For updates, use the built-in updater after the services are successfully created
+
+CONFIGURATION:
+  - Config file: $InstallPath\.env
+  - Database setup: Run setup_database_auto.ps1 if not already done
+  - Logs: $InstallPath\logs\
+
+TROUBLESHOOTING:
+  - If the app doesn't start, check logs in the logs\ folder
+  - Make sure you have required dependencies installed
+  - For database setup, see README_Windows.md
+
+SUPPORT:
+  - Documentation: $InstallPath\README_Windows.md
+  - GitHub: https://github.com/$GITHUB_REPO
+
+================================================================================
+"@
+}
 
 Write-Log $SuccessMessage "Green"
 Write-Log "" "Green"
