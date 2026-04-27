@@ -3478,26 +3478,99 @@ Revision=1
                             Write-Warning "  [!] No GitHub token provided; service-poll trigger will skip private-repo fetches (CLI --self-update --source-file remains available)"
                         }
 
-                        # Plant the v1 updater-logic bundle and the active-version
-                        # pointer file so the new bootstrap can dispatch to v1 logic
-                        # on first start. The bundled artifacts are in the same dir
-                        # as windows_updater.exe (placed there by the Inno installer).
-                        $logicV1Dir = Join-Path $InstallPath "updater-logic\v1"
-                        $stateDir = Join-Path $InstallPath "state"
-                        $bundleZip = Join-Path $InstallPath "updater-logic-v1-bundle.zip"
-                        if (Test-Path $bundleZip) {
-                            try {
+                        # Fetch the MVP updater artifacts from the dedicated release.
+                        # The updater is independent of this installer repo: it lives
+                        # in its own release tags under
+                        # `lama-ai-RFQ/RFQwindowspackages-internal` (or the customer
+                        # equivalent). We download the latest matching release at
+                        # install time, place windows_updater.exe + updater_migration.exe,
+                        # extract the v1 logic bundle into <install>/updater-logic/v1/,
+                        # and plant the active-version pointer so the new bootstrap
+                        # can dispatch to v1 logic on first start.
+                        try {
+                            $updaterReleaseRepo = if ($UpdateChannel -eq "internal") {
+                                "lama-ai-RFQ/RFQwindowspackages-internal"
+                            } else {
+                                "lama-ai-RFQ/RFQwindowspackages"
+                            }
+                            $updaterStaging = Join-Path $env:TEMP "rfq-updater-mvp-$([Guid]::NewGuid().ToString('N'))"
+                            New-Item -ItemType Directory -Path $updaterStaging -Force | Out-Null
+                            Write-Info "  Fetching latest windows-updater-logic-v*-$UpdateChannel from $updaterReleaseRepo..."
+
+                            # List releases via REST and pick the latest non-draft non-prerelease tag matching the channel.
+                            $headers = @{
+                                "Accept" = "application/vnd.github+json"
+                                "User-Agent" = "RFQ-Installer"
+                            }
+                            if (-not [string]::IsNullOrWhiteSpace($GitHubToken)) {
+                                $headers["Authorization"] = "Bearer $GitHubToken"
+                            }
+                            $listUri = "https://api.github.com/repos/$updaterReleaseRepo/releases?per_page=100"
+                            $releases = Invoke-RestMethod -Uri $listUri -Headers $headers
+                            $tagPattern = if ($UpdateChannel -eq "internal") {
+                                '^windows-updater-logic-v\d+\.\d+\.\d+-internal$'
+                            } else {
+                                '^windows-updater-logic-v\d+\.\d+\.\d+(-customer)?$'
+                            }
+                            $latest = $releases | Where-Object {
+                                -not $_.draft -and -not $_.prerelease -and $_.tag_name -match $tagPattern
+                            } | Sort-Object -Property created_at -Descending | Select-Object -First 1
+
+                            if (-not $latest) {
+                                Write-Warning "  [!] No matching windows-updater-logic-v* release found; OLD updater stays in place."
+                            } else {
+                                Write-Info "  Selected updater release: $($latest.tag_name)"
+
+                                function Save-Asset {
+                                    param([string]$Name, [string]$DestPath)
+                                    $asset = $latest.assets | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+                                    if (-not $asset) { throw "asset $Name not found in release $($latest.tag_name)" }
+                                    $assetHeaders = $headers.Clone()
+                                    $assetHeaders["Accept"] = "application/octet-stream"
+                                    Invoke-WebRequest -Uri $asset.url -Headers $assetHeaders -OutFile $DestPath -UseBasicParsing
+                                }
+
+                                $bootstrapDest = Join-Path $InstallPath "windows_updater.exe"
+                                $migrationDest = Join-Path $InstallPath "updater_migration.exe"
+                                $bundleDest = Join-Path $updaterStaging "logic-bundle.zip"
+
+                                Save-Asset "windows_updater.exe" $bootstrapDest
+                                Save-Asset "updater_migration.exe" $migrationDest
+
+                                # Find the bundle asset (name varies by channel/version).
+                                $bundleAsset = $latest.assets | Where-Object {
+                                    $_.name -like "windows_updater_logic-v*.zip" -and $_.name -notlike "*.sha256"
+                                } | Select-Object -First 1
+                                if (-not $bundleAsset) { throw "logic bundle zip not found in release $($latest.tag_name)" }
+                                $bundleHeaders = $headers.Clone()
+                                $bundleHeaders["Accept"] = "application/octet-stream"
+                                Invoke-WebRequest -Uri $bundleAsset.url -Headers $bundleHeaders -OutFile $bundleDest -UseBasicParsing
+
+                                # Verify sha256 sidecar if available.
+                                $shaAsset = $latest.assets | Where-Object {
+                                    $_.name -eq "$($bundleAsset.name).sha256"
+                                } | Select-Object -First 1
+                                if ($shaAsset) {
+                                    $shaText = Invoke-WebRequest -Uri $shaAsset.url -Headers $bundleHeaders -UseBasicParsing
+                                    $expected = ($shaText.Content -split '\s+')[0].Trim().ToLowerInvariant()
+                                    $actual = (Get-FileHash -Path $bundleDest -Algorithm SHA256).Hash.ToLowerInvariant()
+                                    if ($expected -ne $actual) {
+                                        throw "sha256 mismatch for $($bundleAsset.name): expected $expected got $actual"
+                                    }
+                                    Write-Success "  [OK] Bundle sha256 verified"
+                                }
+
+                                $logicV1Dir = Join-Path $InstallPath "updater-logic\v1"
                                 if (-not (Test-Path $logicV1Dir)) {
                                     New-Item -ItemType Directory -Path $logicV1Dir -Force | Out-Null
                                 }
-                                Expand-Archive -Path $bundleZip -DestinationPath $logicV1Dir -Force
+                                Expand-Archive -Path $bundleDest -DestinationPath $logicV1Dir -Force
                                 Write-Success "  [OK] Planted v1 updater-logic at $logicV1Dir"
 
+                                $stateDir = Join-Path $InstallPath "state"
                                 if (-not (Test-Path $stateDir)) {
                                     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
                                 }
-                                # Channel matches the install's $UpdateChannel so the
-                                # bootstrap's channel resolver reads it correctly.
                                 $pointer = @{
                                     schema_version = 1
                                     version = "v1"
@@ -3505,19 +3578,21 @@ Revision=1
                                     activated_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
                                     source = @{ type = "baked-in" }
                                 } | ConvertTo-Json
-                                # No-BOM UTF-8 (Python json.loads handles BOM via utf-8-sig too,
-                                # but writing clean utf-8 keeps the file format predictable).
                                 [System.IO.File]::WriteAllText(
                                     (Join-Path $stateDir "updater-active-version.txt"),
                                     $pointer,
                                     (New-Object System.Text.UTF8Encoding $false)
                                 )
                                 Write-Success "  [OK] Planted active pointer (channel=$UpdateChannel, version=v1)"
-                            } catch {
-                                Write-Warning "  [!] Could not plant v1 logic / state pointer: $_"
                             }
-                        } else {
-                            Write-Warning "  [!] v1 bundle not found at $bundleZip; bootstrap will fall back to in-EXE legacy dispatch"
+                        } catch {
+                            Write-Warning "  [!] Could not fetch/plant MVP updater artifacts: $_"
+                            Write-Warning "  [!] OLD updater (if present) remains in place; new bootstrap not installed."
+                            Add-SkippedStepUnique "MVP updater fetch (network or release issue)"
+                        } finally {
+                            if ($updaterStaging -and (Test-Path $updaterStaging)) {
+                                Remove-Item $updaterStaging -Recurse -Force -ErrorAction SilentlyContinue
+                            }
                         }
 
                         $script:updaterServiceCreated = $true

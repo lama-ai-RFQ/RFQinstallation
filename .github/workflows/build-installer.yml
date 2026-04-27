@@ -1,17 +1,13 @@
 name: Build RFQ Application Installer
 
 # Builds RFQ_Application_Setup.exe via Inno Setup. The installer wraps
-# download_and_install.ps1 plus the bundled MVP bootstrap, migration helper,
-# and v1 logic bundle. The installer does NOT bundle the application itself
-# — that is downloaded at install time from the matching GitHub release.
+# download_and_install.ps1, NSSM, and a few static files. The installer
+# does NOT bundle the application or the updater — both are downloaded at
+# install time from their respective GitHub release tags.
 #
 # Trigger: workflow_dispatch (manual) or push of a `installer-vX.Y.Z[-channel]`
-# tag. Tag form determines whether artifacts are uploaded to the
-# RFQinstallation releases (so customer/internal can both stage installer
-# builds independently).
-#
-# This workflow does NOT promote anything to customer. Promotion requires
-# explicit dispatch on a customer-channel tag.
+# tag. This workflow does NOT promote anything to customer; promotion is
+# explicit via tag form.
 
 on:
   workflow_dispatch:
@@ -27,11 +23,6 @@ on:
         options:
           - windows-latest
           - self-hosted
-      refresh_updater_artifacts:
-        description: 'Re-download the latest internal updater artifacts before bundling'
-        required: false
-        default: true
-        type: boolean
       dry_run:
         description: 'Build but do not upload to release'
         required: false
@@ -41,11 +32,6 @@ on:
     tags:
       - 'installer-v[0-9]+.[0-9]+.[0-9]+'
       - 'installer-v[0-9]+.[0-9]+.[0-9]+-*'
-
-env:
-  CUSTOMER_REPO: lama-ai-RFQ/RFQinstallation
-  INTERNAL_REPO: lama-ai-RFQ/RFQinstallation
-  UPDATER_ARTIFACT_REPO: lama-ai-RFQ/RFQwindowspackages-internal
 
 jobs:
   build:
@@ -84,40 +70,6 @@ jobs:
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "channel=$channel" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "numeric_base=$numericBase" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-      - name: Refresh bundled updater artifacts from internal release
-        if: ${{ github.event.inputs.refresh_updater_artifacts != 'false' }}
-        env:
-          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-        run: |
-          # Pull the latest published windows-updater-logic-v*-internal release
-          # so the installer always bundles the freshest MVP bootstrap + helper
-          # + v1 logic bundle, instead of whatever happens to be checked into
-          # this repo. Failures fall back to the in-tree files (committed
-          # explicitly so manual builds still work without internet).
-          $repo = "${{ env.UPDATER_ARTIFACT_REPO }}"
-          Write-Host "Listing updater-logic-* internal releases in $repo..."
-          $latest = gh release list --repo $repo --limit 30 --json tagName, isDraft, isPrerelease |
-              ConvertFrom-Json |
-              Where-Object { $_.tagName -like 'windows-updater-logic-v*-internal' -and -not $_.isDraft -and -not $_.isPrerelease } |
-              Select-Object -First 1
-          if (-not $latest) {
-              Write-Warning "No matching internal release found in $repo; using in-tree bundled artifacts."
-              exit 0
-          }
-          $tag = $latest.tagName
-          Write-Host "Using $tag as the bundled updater payload"
-          $tmp = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\bundled-updater" -Force
-          gh release download $tag --repo $repo --dir $tmp.FullName --clobber
-          Get-ChildItem $tmp.FullName | Out-Host
-          Copy-Item (Join-Path $tmp.FullName "windows_updater.exe") "windows_updater.exe" -Force
-          Copy-Item (Join-Path $tmp.FullName "updater_migration.exe") "updater_migration.exe" -Force
-          $bundle = Get-ChildItem (Join-Path $tmp.FullName "windows_updater_logic-v*.zip") | Select-Object -First 1
-          if ($bundle) {
-              Copy-Item $bundle.FullName "updater-logic-v1-bundle.zip" -Force
-          }
-          Write-Host "Refreshed bundled artifacts:"
-          Get-Item windows_updater.exe, updater_migration.exe, updater-logic-v1-bundle.zip | Select-Object Name, Length, LastWriteTime | Format-Table | Out-Host
 
       - name: Install Inno Setup 6
         run: |
@@ -170,10 +122,13 @@ jobs:
           RFQ Application installer **$tag**
 
           Channel: ${{ steps.tag.outputs.channel }}
-          Bundles MVP updater bootstrap + v1 logic from
-          \`${{ env.UPDATER_ARTIFACT_REPO }}\`. The installer registers
-          \`RFQUpdaterService\` and \`RFQapplication\`; after the one-time UAC at
-          install time, all subsequent updater operations are unattended.
+          The installer wraps download_and_install.ps1; both the application
+          and the MVP updater (windows_updater.exe + migration helper + v1
+          logic bundle) are downloaded at install time from their respective
+          GitHub release tags. The installer registers
+          \`RFQUpdaterService\` and \`RFQapplication\` as LocalSystem; after
+          the one-time UAC at install, all subsequent updater operations
+          are unattended.
           "@
           $notesFile = New-TemporaryFile
           $notes | Out-File -FilePath $notesFile -Encoding utf8
