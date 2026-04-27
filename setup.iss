@@ -710,7 +710,7 @@ begin
   // Build footer text with only missing dependencies
   // Note: NSSM is bundled with the installer, so it's not required to be pre-installed
   StatusText := '';
-  if CheckPostgreSQLInPath() and CheckOpenSSLInPath() and CheckPythonInstalled() then
+  if CheckPostgreSQLInPath() and CheckPythonInstalled() then
   begin
     StatusText := StatusText + #13#10 + 'All required dependencies are installed.' + #13#10;
     StatusText := StatusText + 'You can proceed with the installation.';
@@ -724,17 +724,12 @@ begin
   begin
     StatusText := StatusText + #13#10 + 'Some required dependencies are missing or not available in PATH.' + #13#10;
     StatusText := StatusText + 'You cannot proceed until these commands work in Command Prompt:' + #13#10;
-    StatusText := StatusText + '  where psql' + #13#10;
-    StatusText := StatusText + '  where openssl' + #13#10 + #13#10;
+    StatusText := StatusText + '  where psql' + #13#10 + #13#10;
     StatusText := StatusText + 'Fix instructions:' + #13#10;
     if CheckPostgreSQLInstalled() and (not CheckPostgreSQLInPath()) then
       StatusText := StatusText + 'PostgreSQL is installed but psql.exe is not in PATH. Add PostgreSQL bin (e.g. C:\Program Files\PostgreSQL\16\bin) to PATH.' + #13#10;
     if not CheckPostgreSQLInstalled() then
       StatusText := StatusText + 'Install PostgreSQL: https://www.postgresql.org/download/windows/' + #13#10;
-    if CheckOpenSSLInstalled() and (not CheckOpenSSLInPath()) then
-      StatusText := StatusText + 'OpenSSL is installed but openssl.exe is not in PATH. Add OpenSSL bin (e.g. C:\Program Files\OpenSSL-Win64\bin) to PATH.' + #13#10;
-    if not CheckOpenSSLInstalled() then
-      StatusText := StatusText + 'Install OpenSSL: https://slproweb.com/products/Win32OpenSSL.html' + #13#10;
     if not CheckPythonInstalled() then
       StatusText := StatusText + 'Install Python: https://www.python.org/downloads/' + #13#10;
     StatusText := StatusText + #13#10;
@@ -1126,12 +1121,12 @@ begin
   // Prevent proceeding from dependency check page if dependencies are missing
   if CurPageID = DependencyCheckPage.ID then
   begin
-    if (not CheckPostgreSQLInPath()) or (not CheckOpenSSLInPath()) or (not CheckPythonInstalled()) then
+    if (not CheckPostgreSQLInPath()) or (not CheckPythonInstalled()) then
     begin
-      MsgBox('Cannot proceed until PostgreSQL and OpenSSL are available in PATH.' + #13#10 + #13#10 +
+      MsgBox('Cannot proceed until PostgreSQL and Python are available in PATH.' + #13#10 + #13#10 +
              'Open Command Prompt and confirm these work:' + #13#10 +
              '  where psql' + #13#10 +
-             '  where openssl' + #13#10 + #13#10 +
+             '  where python' + #13#10 + #13#10 +
              'If you just updated PATH, close/re-open Command Prompt, then restart this installer.',
              mbError, MB_OK);
       Result := False;
