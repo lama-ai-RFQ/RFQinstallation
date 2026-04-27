@@ -32,10 +32,6 @@ on:
     tags:
       - 'installer-v[0-9]+.[0-9]+.[0-9]+'
       - 'installer-v[0-9]+.[0-9]+.[0-9]+-*'
-    # Temporary branch trigger to register this workflow with GitHub Actions
-    # so subsequent tag pushes can fire it. Remove after first run.
-    branches:
-      - feat/mvp-updater-install
 
 jobs:
   build:
