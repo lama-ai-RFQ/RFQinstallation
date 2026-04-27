@@ -48,7 +48,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           fetch-depth: 0
 
       - name: Resolve tag and channel
@@ -113,7 +112,7 @@ jobs:
       - name: Upload installer to GitHub release
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
           $repo = "${{ github.repository }}"
