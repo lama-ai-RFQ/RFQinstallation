@@ -58,6 +58,14 @@ Source: "setup_database_auto.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; Include NSSM for service creation
 Source: "nssm.exe"; DestDir: "{pf}\nssm"; Flags: ignoreversion
 Source: "nssm.exe"; DestDir: "{app}"; Flags: ignoreversion
+; MVP updater bootstrap + v1 logic bundle. The download_and_install.ps1 script
+; extracts the bundle into <install>/updater-logic/v1/ and plants
+; <install>/state/updater-active-version.txt after creating RFQUpdaterService.
+; The migration helper is bundled for future bootstrap-version upgrades
+; triggered by a subsequent installer build.
+Source: "windows_updater.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "updater_migration.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "updater-logic-v1-bundle.zip"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

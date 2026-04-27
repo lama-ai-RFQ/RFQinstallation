@@ -3465,9 +3465,63 @@ Revision=1
                         $updaterStderrLog = Join-Path $logDir "${UpdaterServiceName}_stderr.log"
                         & $nssmPath set $UpdaterServiceName AppStdout "$updaterStdoutLog" 2>&1 | Out-Null
                         & $nssmPath set $UpdaterServiceName AppStderr "$updaterStderrLog" 2>&1 | Out-Null
-                        
+
+                        # MVP bootstrap requires GITHUB_PAT in the service env so the
+                        # service-poll path (every 300s) can authenticate against the
+                        # private internal release repo. The service runs as
+                        # LocalSystem and does not inherit the user's env, so we set
+                        # it explicitly via NSSM AppEnvironmentExtra.
+                        if (-not [string]::IsNullOrWhiteSpace($GitHubToken)) {
+                            & $nssmPath set $UpdaterServiceName AppEnvironmentExtra "GITHUB_PAT=$GitHubToken" 2>&1 | Out-Null
+                            Write-Success "  [OK] GITHUB_PAT planted in $UpdaterServiceName env"
+                        } else {
+                            Write-Warning "  [!] No GitHub token provided; service-poll trigger will skip private-repo fetches (CLI --self-update --source-file remains available)"
+                        }
+
+                        # Plant the v1 updater-logic bundle and the active-version
+                        # pointer file so the new bootstrap can dispatch to v1 logic
+                        # on first start. The bundled artifacts are in the same dir
+                        # as windows_updater.exe (placed there by the Inno installer).
+                        $logicV1Dir = Join-Path $InstallPath "updater-logic\v1"
+                        $stateDir = Join-Path $InstallPath "state"
+                        $bundleZip = Join-Path $InstallPath "updater-logic-v1-bundle.zip"
+                        if (Test-Path $bundleZip) {
+                            try {
+                                if (-not (Test-Path $logicV1Dir)) {
+                                    New-Item -ItemType Directory -Path $logicV1Dir -Force | Out-Null
+                                }
+                                Expand-Archive -Path $bundleZip -DestinationPath $logicV1Dir -Force
+                                Write-Success "  [OK] Planted v1 updater-logic at $logicV1Dir"
+
+                                if (-not (Test-Path $stateDir)) {
+                                    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+                                }
+                                # Channel matches the install's $UpdateChannel so the
+                                # bootstrap's channel resolver reads it correctly.
+                                $pointer = @{
+                                    schema_version = 1
+                                    version = "v1"
+                                    channel = $UpdateChannel
+                                    activated_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                                    source = @{ type = "baked-in" }
+                                } | ConvertTo-Json
+                                # No-BOM UTF-8 (Python json.loads handles BOM via utf-8-sig too,
+                                # but writing clean utf-8 keeps the file format predictable).
+                                [System.IO.File]::WriteAllText(
+                                    (Join-Path $stateDir "updater-active-version.txt"),
+                                    $pointer,
+                                    (New-Object System.Text.UTF8Encoding $false)
+                                )
+                                Write-Success "  [OK] Planted active pointer (channel=$UpdateChannel, version=v1)"
+                            } catch {
+                                Write-Warning "  [!] Could not plant v1 logic / state pointer: $_"
+                            }
+                        } else {
+                            Write-Warning "  [!] v1 bundle not found at $bundleZip; bootstrap will fall back to in-EXE legacy dispatch"
+                        }
+
                         $script:updaterServiceCreated = $true
-                        
+
                         # Start the updater service
                         Write-Info "  Starting updater service..."
                         try {
