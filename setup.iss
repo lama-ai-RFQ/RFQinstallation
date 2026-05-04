@@ -169,6 +169,47 @@ begin
   end;
 end;
 
+function IsUsableEncryptionKeyValue(const Value: String): Boolean;
+var
+  TrimmedValue: String;
+begin
+  TrimmedValue := Trim(Value);
+  Result := False;
+
+  if TrimmedValue = '' then
+    Exit;
+
+  if CompareText(TrimmedValue, 'your_app_encryption_key_here') = 0 then
+    Exit;
+
+  if CompareText(TrimmedValue, 'your_azure_encryption_key_here') = 0 then
+    Exit;
+
+  Result := True;
+end;
+
+function ResolveExistingEncryptionKey(const FilePath: String): String;
+var
+  ExistingRfqKey: String;
+  ExistingAzureKey: String;
+begin
+  ExistingRfqKey := Trim(ReadEnvValue(FilePath, 'RFQ_CONFIG_ENCRYPTION_KEY'));
+  if IsUsableEncryptionKeyValue(ExistingRfqKey) then
+  begin
+    Result := ExistingRfqKey;
+    Exit;
+  end;
+
+  ExistingAzureKey := Trim(ReadEnvValue(FilePath, 'AZURE_CONFIG_ENCRYPTION_KEY'));
+  if IsUsableEncryptionKeyValue(ExistingAzureKey) then
+  begin
+    Result := ExistingAzureKey;
+    Exit;
+  end;
+
+  Result := '';
+end;
+
 function ValidatePassword(Password: String; PasswordName: String): Boolean;
 var
   HasUpper, HasLower, HasDigit, HasSpecial: Boolean;
@@ -1003,7 +1044,7 @@ var
   ExistingSettingsPassword: String;
   ExistingSuperUserPassword: String;
   ExistingRFQUserPassword: String;
-  ExistingAzureKey: String;
+  ResolvedExistingKey: String;
   ExistingUpdateChannel: String;
 begin
   // Get the installation path
@@ -1025,7 +1066,7 @@ begin
   ExistingSettingsPassword := ReadEnvValue(EnvFilePath, 'SETTINGS_PASSWORD');
   ExistingSuperUserPassword := ReadEnvValue(EnvFilePath, 'SQL_SUPER_USER');
   ExistingRFQUserPassword := ReadEnvValue(EnvFilePath, 'RFQ_USER_PASSWORD');
-  ExistingAzureKey := ReadEnvValue(EnvFilePath, 'AZURE_CONFIG_ENCRYPTION_KEY');
+  ResolvedExistingKey := ResolveExistingEncryptionKey(EnvFilePath);
   ExistingUpdateChannel := ReadEnvValue(EnvFilePath, 'RFQ_UPDATE_CHANNEL');
   
   // Store update channel from existing .env if found
@@ -1090,10 +1131,11 @@ begin
     Log('Loaded RFQ User Password from .env');
   end;
   
-  if ExistingAzureKey <> '' then
+  if ResolvedExistingKey <> '' then
   begin
-    AzureKeyInputPage.Values[0] := ExistingAzureKey;
-    Log('Loaded Azure Config Encryption Key from .env');
+    AzureKeyInputPage.Values[0] := ResolvedExistingKey;
+    AzureKeyPage.SelectedValueIndex := 1;
+    Log('Loaded existing encryption key from .env');
   end;
 end;
 
