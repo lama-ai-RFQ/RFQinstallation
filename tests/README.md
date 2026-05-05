@@ -1,0 +1,1 @@
+These tests statically assert the INFA-130 installer contract over `setup.iss`: RFQ-first existing encryption-key prefill behavior, placeholder/empty-value handling, wizard-state preservation, and unchanged legacy handoff surfaces. Run them from the worktree root with `python3 tests/test_setup_iss_encryption_key_prefill.py`.
