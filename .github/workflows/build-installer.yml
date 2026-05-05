@@ -1,0 +1,151 @@
+name: Build RFQ Application Installer
+
+# Builds RFQ_Application_Setup.exe via Inno Setup. The installer wraps
+# download_and_install.ps1, NSSM, and a few static files. The installer
+# does NOT bundle the application or the updater — both are downloaded at
+# install time from their respective GitHub release tags.
+#
+# Trigger: workflow_dispatch (manual) or push of a `installer-vX.Y.Z[-channel]`
+# tag. This workflow does NOT promote anything to customer; promotion is
+# explicit via tag form.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. installer-v0.0.1-internal)'
+        required: true
+      runner_type:
+        description: 'Runner type'
+        required: true
+        default: 'windows-latest'
+        type: choice
+        options:
+          - windows-latest
+          - self-hosted
+      dry_run:
+        description: 'Build but do not upload to release'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'installer-v[0-9]+.[0-9]+.[0-9]+'
+      - 'installer-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ github.event.inputs.runner_type == 'self-hosted' && fromJSON('["self-hosted", "windows", "x64"]') || 'windows-latest' }}
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Configure Git safe directory
+        run: |
+          git config --global --add safe.directory "${{ github.workspace }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag and channel
+        id: tag
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+              $tag = "${{ github.ref_name }}"
+          } else {
+              $tag = "${{ github.event.inputs.tag }}"
+          }
+          if ($tag -notmatch '^installer-v(\d+\.\d+\.\d+)(?:-(customer|internal|e2e))?$') {
+              Write-Host "ERROR: tag '$tag' does not match installer-vX.Y.Z[-channel]" -ForegroundColor Red
+              exit 1
+          }
+          $numericBase = $matches[1]
+          $channel = $matches[2]
+          if (-not $channel) { $channel = 'customer' }
+          Write-Host "tag=$tag channel=$channel numeric_base=$numericBase"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "channel=$channel" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "numeric_base=$numericBase" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Install Inno Setup 6
+        run: |
+          # Inno Setup is needed to compile setup.iss into RFQ_Application_Setup.exe.
+          # Use winget on hosted runners; on self-hosted runners it should already
+          # be installed at the standard path.
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+              Write-Host "Installing Inno Setup 6 via winget..."
+              winget install --id JRSoftware.InnoSetup --accept-package-agreements --accept-source-agreements --silent
+          }
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+              # Hosted runners may install Inno Setup elsewhere; locate it.
+              $found = Get-ChildItem 'C:\Program Files*\Inno Setup*\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($found) {
+                  $iscc = $found.FullName
+              } else {
+                  Write-Host "ERROR: ISCC.exe not found after install" -ForegroundColor Red
+                  exit 1
+              }
+          }
+          Write-Host "ISCC at: $iscc"
+          "ISCC_PATH=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile installer
+        run: |
+          & $env:ISCC_PATH /Q setup.iss
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: ISCC failed with exit code $LASTEXITCODE" -ForegroundColor Red
+              exit 1
+          }
+          $output = "installer_output\RFQ_Application_Setup.exe"
+          if (-not (Test-Path $output)) {
+              Write-Host "ERROR: $output not produced" -ForegroundColor Red
+              exit 1
+          }
+          $size = (Get-Item $output).Length
+          Write-Host "Built $output ($([math]::Round($size/1MB, 2)) MB)"
+
+      - name: Upload installer to GitHub release
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $repo = "${{ github.repository }}"
+          $output = "installer_output\RFQ_Application_Setup.exe"
+          $notes = @"
+          RFQ Application installer **$tag**
+
+          Channel: ${{ steps.tag.outputs.channel }}
+          The installer wraps download_and_install.ps1; both the application
+          and the MVP updater (windows_updater.exe + migration helper + v1
+          logic bundle) are downloaded at install time from their respective
+          GitHub release tags. The installer registers
+          \`RFQUpdaterService\` and \`RFQapplication\` as LocalSystem; after
+          the one-time UAC at install, all subsequent updater operations
+          are unattended.
+          "@
+          $notesFile = New-TemporaryFile
+          $notes | Out-File -FilePath $notesFile -Encoding utf8
+
+          $existing = gh release view $tag --repo $repo --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) {
+              gh release upload $tag --repo $repo --clobber $output
+          } else {
+              gh release create $tag --repo $repo --title $tag --notes-file $notesFile $output
+          }
+
+      - name: Upload artifacts to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfq-installer-${{ steps.tag.outputs.tag }}
+          path: installer_output/RFQ_Application_Setup.exe
+          if-no-files-found: error
+          retention-days: 30
