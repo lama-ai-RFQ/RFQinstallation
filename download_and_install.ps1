@@ -690,8 +690,251 @@ if (Test-Path $InstallPath) {
 }
 
 # ── Resolve release source: S3 first, GitHub fallback ──────────────────────
+function ConvertTo-RfqComparableVersion {
+    param(
+        [AllowNull()][string] $TagName,
+        [string] $UpdateChannel
+    )
+
+    $normalized = $null
+    $parsed = $null
+    $parseable = $false
+
+    if (![string]::IsNullOrWhiteSpace($TagName)) {
+        $normalized = $TagName.Trim()
+        $normalized = $normalized -replace '^windows-v', ''
+
+        if (![string]::IsNullOrWhiteSpace($UpdateChannel)) {
+            $escapedChannel = [regex]::Escape($UpdateChannel.Trim())
+            $normalized = $normalized -replace "-$escapedChannel$", ''
+        }
+
+        $normalized = $normalized -replace '-customer$', ''
+        $normalized = $normalized -replace '-internal$', ''
+
+        if ($normalized -match '^\d+\.\d+(\.\d+)?(\.\d+)?$') {
+            try {
+                $parsed = [version] $normalized
+                $parseable = $true
+            }
+            catch {
+                $parsed = $null
+                $parseable = $false
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Raw        = $TagName
+        Normalized = $normalized
+        Parsed     = $parsed
+        Parseable  = $parseable
+    }
+}
+
+function Compare-RfqVersion {
+    param(
+        [AllowNull()][string] $LeftTag,
+        [AllowNull()][string] $RightTag,
+        [string] $UpdateChannel
+    )
+
+    $left = ConvertTo-RfqComparableVersion $LeftTag $UpdateChannel
+    $right = ConvertTo-RfqComparableVersion $RightTag $UpdateChannel
+    $result = $null
+
+    if ($left.Parseable -and $right.Parseable) {
+        if ($left.Parsed -gt $right.Parsed) {
+            $result = 1
+        }
+        elseif ($left.Parsed -lt $right.Parsed) {
+            $result = -1
+        }
+        else {
+            $result = 0
+        }
+    }
+    elseif ($left.Parseable) {
+        $result = 1
+    }
+    elseif ($right.Parseable) {
+        $result = -1
+    }
+
+    [pscustomobject]@{
+        Result = $result
+        Left   = $left
+        Right  = $right
+    }
+}
+
+function New-S3ReleaseCandidate {
+    param(
+        [AllowNull()] $S3LatestPayload
+    )
+
+    if ($null -eq $S3LatestPayload) {
+        return $null
+    }
+
+    $versionProperty = $S3LatestPayload.PSObject.Properties['version']
+    if ($null -eq $versionProperty -or [string]::IsNullOrWhiteSpace([string] $versionProperty.Value)) {
+        return $null
+    }
+
+    $s3Assets = @()
+    $assetsProperty = $S3LatestPayload.PSObject.Properties['assets']
+    if ($null -ne $assetsProperty) {
+        foreach ($asset in $assetsProperty.Value) {
+            $assetUrl = $asset.url
+            $browserDownloadUrl = $asset.browser_download_url
+            if ([string]::IsNullOrWhiteSpace([string] $browserDownloadUrl)) {
+                $browserDownloadUrl = $assetUrl
+            }
+
+            $s3Assets += [PSCustomObject]@{
+                name                 = $asset.name
+                url                  = $assetUrl
+                size                 = $asset.size
+                browser_download_url = $browserDownloadUrl
+                source               = "s3"
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Source  = "s3"
+        Version = $versionProperty.Value
+        Release = [pscustomobject]@{
+            tag_name = $versionProperty.Value
+            assets   = $s3Assets
+        }
+        Payload = $S3LatestPayload
+    }
+}
+
+function Get-GithubLatestCandidate {
+    param(
+        [string] $GithubApi,
+        [string] $GithubRepo,
+        [AllowNull()][string] $GitHubToken
+    )
+
+    $url = "$GithubApi/$GithubRepo/releases/latest"
+    $localHeaders = @{
+        Accept = "application/vnd.github.v3+json"
+    }
+
+    if (![string]::IsNullOrWhiteSpace($GitHubToken)) {
+        $localHeaders["Authorization"] = "token $GitHubToken"
+    }
+
+    try {
+        $response = Invoke-RestMethod -Uri $url -Headers $localHeaders -ErrorAction Stop
+        $tagProperty = $response.PSObject.Properties['tag_name']
+
+        if ($null -eq $tagProperty -or [string]::IsNullOrWhiteSpace([string] $tagProperty.Value)) {
+            return [pscustomobject]@{
+                Candidate = $null
+                Error     = "missing tag_name"
+            }
+        }
+
+        return [pscustomobject]@{
+            Candidate = [pscustomobject]@{
+                Source  = "github"
+                Version = $tagProperty.Value
+                Release = $response
+                Payload = $response
+            }
+            Error = $null
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Candidate = $null
+            Error     = $_.Exception.Message
+        }
+    }
+}
+
+function Resolve-ReleaseSource {
+    param(
+        [AllowNull()] $S3Candidate,
+        [AllowNull()] $GitHubCandidate,
+        [string] $UpdateChannel
+    )
+
+    if ($null -eq $S3Candidate -and $null -eq $GitHubCandidate) {
+        return $null
+    }
+
+    if ($null -ne $S3Candidate -and $null -eq $GitHubCandidate) {
+        return [pscustomobject]@{
+            Source  = $S3Candidate.Source
+            Version = $S3Candidate.Version
+            Release = $S3Candidate.Release
+            Payload = $S3Candidate.Payload
+            Reason  = "github_absent"
+        }
+    }
+
+    if ($null -eq $S3Candidate -and $null -ne $GitHubCandidate) {
+        return [pscustomobject]@{
+            Source  = $GitHubCandidate.Source
+            Version = $GitHubCandidate.Version
+            Release = $GitHubCandidate.Release
+            Payload = $GitHubCandidate.Payload
+            Reason  = "s3_absent"
+        }
+    }
+
+    $comparison = Compare-RfqVersion $S3Candidate.Version $GitHubCandidate.Version $UpdateChannel
+
+    if ($comparison.Result -eq 1) {
+        return [pscustomobject]@{
+            Source  = $S3Candidate.Source
+            Version = $S3Candidate.Version
+            Release = $S3Candidate.Release
+            Payload = $S3Candidate.Payload
+            Reason  = "s3_newer"
+        }
+    }
+
+    if ($comparison.Result -eq -1) {
+        return [pscustomobject]@{
+            Source  = $GitHubCandidate.Source
+            Version = $GitHubCandidate.Version
+            Release = $GitHubCandidate.Release
+            Payload = $GitHubCandidate.Payload
+            Reason  = "github_newer"
+        }
+    }
+
+    if ($comparison.Result -eq 0) {
+        return [pscustomobject]@{
+            Source  = $S3Candidate.Source
+            Version = $S3Candidate.Version
+            Release = $S3Candidate.Release
+            Payload = $S3Candidate.Payload
+            Reason  = "tie_s3_preferred"
+        }
+    }
+
+    [pscustomobject]@{
+        Source  = $S3Candidate.Source
+        Version = $S3Candidate.Version
+        Release = $S3Candidate.Release
+        Payload = $S3Candidate.Payload
+        Reason  = "both_unparsable_s3_present"
+    }
+}
+
 $script:ReleaseSource = "github"   # track where release came from
 $S3LatestPayload = $null
+$s3Candidate = $null
+$githubCandidate = $null
+$githubError = $null
 
 # Read S3 config from params, env, or .env file
 $s3Bucket = $S3ReleaseBucket
@@ -754,27 +997,9 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
             $S3LatestPayload = Get-Content $s3TempFile -Raw | ConvertFrom-Json
             Remove-Item $s3TempFile -Force -ErrorAction SilentlyContinue
 
-            $Version = $S3LatestPayload.version
-            if (![string]::IsNullOrWhiteSpace($Version)) {
-                $script:ReleaseSource = "s3"
-
-                # Build a Release-like object from S3 payload so downstream code works
-                $s3Assets = @()
-                foreach ($asset in $S3LatestPayload.assets) {
-                    $s3Assets += [PSCustomObject]@{
-                        name = $asset.name
-                        url = $asset.url
-                        size = $asset.size
-                        browser_download_url = $asset.url
-                        source = "s3"
-                    }
-                }
-                $Release = [PSCustomObject]@{
-                    tag_name = $Version
-                    assets = $s3Assets
-                }
-
-                Write-Success "[OK] Found version via S3: $Version"
+            $s3Candidate = New-S3ReleaseCandidate $S3LatestPayload
+            if ($null -ne $s3Candidate) {
+                Write-Info "  Found S3 release candidate: $($s3Candidate.Version)"
             } else {
                 Write-Warning "  S3 latest.json did not contain a version, falling back to GitHub..."
             }
@@ -785,6 +1010,60 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
     catch {
         Write-Warning "  S3 check failed: $_, falling back to GitHub..."
     }
+}
+
+$githubResult = Get-GithubLatestCandidate $GITHUB_API $GITHUB_REPO $GitHubToken
+$githubCandidate = $githubResult.Candidate
+$githubError = $githubResult.Error
+
+if ($null -ne $githubError -and $null -ne $s3Candidate) {
+    Write-Warning "  GitHub latest candidate unavailable ($githubError); continuing with S3 candidate if available"
+}
+
+$selectedRelease = Resolve-ReleaseSource $s3Candidate $githubCandidate $UpdateChannel
+if ($null -ne $selectedRelease) {
+    $script:ReleaseSource = $selectedRelease.Source
+    $Version = $selectedRelease.Version
+    $Release = $selectedRelease.Release
+
+    $s3Version = if ($null -ne $s3Candidate) { $s3Candidate.Version } else { $null }
+    $githubVersion = if ($null -ne $githubCandidate) { $githubCandidate.Version } else { $null }
+
+    switch ($selectedRelease.Reason) {
+        "s3_newer" {
+            $githubParsed = ConvertTo-RfqComparableVersion $githubVersion $UpdateChannel
+            if ($githubParsed.Parseable) {
+                Write-Success "[OK] Selected S3 release: $Version (newer than GitHub $githubVersion)"
+            }
+            else {
+                Write-Warning "  Could not parse github version '$githubVersion'; using parseable s3 version '$Version'"
+            }
+        }
+        "github_newer" {
+            $s3Parsed = ConvertTo-RfqComparableVersion $s3Version $UpdateChannel
+            if ($s3Parsed.Parseable) {
+                Write-Success "[OK] Selected GitHub release: $Version (newer than S3 $s3Version)"
+            }
+            else {
+                Write-Warning "  Could not parse s3 version '$s3Version'; using parseable github version '$Version'"
+            }
+        }
+        "tie_s3_preferred" {
+            Write-Success "[OK] Selected S3 release: $Version (matches GitHub; S3 preferred)"
+        }
+        "s3_absent" {
+            Write-Warning "  S3 release candidate unavailable; using GitHub latest release: $Version"
+        }
+        "github_absent" {
+            Write-Warning "  GitHub latest candidate unavailable; using S3 release: $Version"
+        }
+        "both_unparsable_s3_present" {
+            Write-Warning "  Could not parse either candidate version; using S3 release because freshness is unknown"
+        }
+    }
+}
+else {
+    Write-Warning "  No release candidate resolved from S3 or GitHub; continuing to GitHub fallback authentication path"
 }
 
 # Initialize $Headers so downstream code can safely reference it even when
