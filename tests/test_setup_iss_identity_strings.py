@@ -8,15 +8,37 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SETUP = ROOT / "setup.iss"
 
+IDENTITY_DEFINES = {
+    "RfqAppName": ("RFQ_APP_NAME", "RFQ Application"),
+    "RfqOutputBaseFilename": ("RFQ_OUTPUT_BASE_FILENAME", "RFQ_Application_Setup"),
+    "RfqDefaultDirName": ("RFQ_DEFAULT_DIR_NAME", r"{autopf}\RFQ Application"),
+    "RfqDefaultGroupName": ("RFQ_DEFAULT_GROUP_NAME", "RFQ Application"),
+    "RfqRegistryHandoffKey": ("RFQ_REGISTRY_HANDOFF_KEY", r"Software\RFQApplication\Installer"),
+    "RfqStartMenuShortcutName": ("RFQ_START_MENU_SHORTCUT_NAME", r"{group}\RFQ Application"),
+    "RfqUninstallShortcutName": (
+        "RFQ_UNINSTALL_SHORTCUT_NAME",
+        r"{group}\{cm:UninstallProgram,RFQ Application}",
+    ),
+    "RfqDesktopShortcutName": ("RFQ_DESKTOP_SHORTCUT_NAME", r"{autodesktop}\RFQ Application"),
+    "RfqQuickLaunchShortcutName": (
+        "RFQ_QUICK_LAUNCH_SHORTCUT_NAME",
+        r"{userappdata}\Microsoft\Internet Explorer\Quick Launch\RFQ Application",
+    ),
+}
 
-def require_install_time_identity_surface() -> None:
-    text = SETUP.read_text(encoding="utf-8")
-    assert "AppId={code:GetAppId}" in text, (
-        "setup.iss must route AppId through the install-time identity callback"
-    )
-    assert "AppName={code:ResolveAppName}" in text, (
-        "setup.iss must route AppName through install-time identity resolution"
-    )
+CUSTOM_VALUES = {
+    "RFQ_APP_NAME": "RFQ Application e2e A",
+    "RFQ_OUTPUT_BASE_FILENAME": "RFQ_Application_Setup_e2e_A",
+    "RFQ_DEFAULT_DIR_NAME": r"C:\Program Files\RFQ Application e2e A",
+    "RFQ_DEFAULT_GROUP_NAME": "RFQ Application e2e A",
+    "RFQ_REGISTRY_HANDOFF_KEY": r"Software\RFQApplication-e2e-A\Installer",
+    "RFQ_START_MENU_SHORTCUT_NAME": r"{group}\RFQ Application e2e A",
+    "RFQ_UNINSTALL_SHORTCUT_NAME": r"{group}\Uninstall RFQ Application e2e A",
+    "RFQ_DESKTOP_SHORTCUT_NAME": r"{autodesktop}\RFQ Application e2e A",
+    "RFQ_QUICK_LAUNCH_SHORTCUT_NAME": (
+        r"{userappdata}\Microsoft\Internet Explorer\Quick Launch\RFQ Application e2e A"
+    ),
+}
 
 
 def section(text: str, name: str) -> str:
@@ -38,20 +60,6 @@ def setup_directives(setup_section: str) -> dict[str, str]:
     return directives
 
 
-def defines(text: str) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for match in re.finditer(r'(?im)^\s*#define\s+(\w+)\s+"([^"]*)"\s*$', text):
-        result[match.group(1)] = match.group(2)
-    return result
-
-
-def effective_value(value: str, define_map: dict[str, str]) -> str:
-    define_ref = re.fullmatch(r"\{#(\w+)\}", value)
-    if define_ref:
-        return define_map[define_ref.group(1)]
-    return value
-
-
 def icon_name_fields(icons_section: str) -> list[str]:
     names: list[str] = []
     for line in icons_section.splitlines():
@@ -64,80 +72,67 @@ def icon_name_fields(icons_section: str) -> list[str]:
     return names
 
 
-def routine_body(source: str, name: str) -> str:
-    start = re.search(
-        rf"(?im)^(?:function|procedure)\s+{re.escape(name)}\b.*?;\s*$",
-        source,
+def assert_getenv_define(text: str, macro: str, env_name: str, fallback: str) -> None:
+    escaped_fallback = re.escape(fallback)
+    pattern = (
+        rf'(?ms)^#define\s+{macro}\s+GetEnv\("{env_name}"\)\s*'
+        rf'^#if\s+{macro}\s*==\s*""\s*'
+        rf'^\s*#define\s+{macro}\s+"{escaped_fallback}"\s*'
+        rf'^#endif\s*$'
     )
-    assert start, f"{name} routine must exist"
-    next_routine = re.search(
-        r"(?im)^(?:function|procedure)\s+\w+\b.*?;\s*$",
-        source[start.end() :],
+    assert re.search(pattern, text), (
+        f"{macro} must read {env_name} with fallback {fallback!r}"
     )
-    end = start.end() + next_routine.start() if next_routine else len(source)
-    return source[start.start() : end]
 
 
-def test_setup_identity_directives_are_install_time_resolved() -> None:
-    require_install_time_identity_surface()
+def resolve_macro(macro: str, env: dict[str, str]) -> str:
+    env_name, fallback = IDENTITY_DEFINES[macro]
+    value = env.get(env_name, "")
+    return value if value else fallback
+
+
+def test_identity_defines_read_specific_full_value_env_vars_with_defaults() -> None:
+    text = SETUP.read_text(encoding="utf-8")
+
+    for macro, (env_name, fallback) in IDENTITY_DEFINES.items():
+        assert_getenv_define(text, macro, env_name, fallback)
+
+
+def test_identity_values_resolve_to_defaults_when_env_vars_are_unset() -> None:
+    for macro, (_, fallback) in IDENTITY_DEFINES.items():
+        assert resolve_macro(macro, {}) == fallback
+
+
+def test_identity_values_resolve_to_their_own_env_var_when_set() -> None:
+    for macro, (env_name, _) in IDENTITY_DEFINES.items():
+        env = {env_name: CUSTOM_VALUES[env_name]}
+        assert resolve_macro(macro, env) == CUSTOM_VALUES[env_name]
+
+
+def test_setup_identity_directives_use_preprocessor_macros() -> None:
     text = SETUP.read_text(encoding="utf-8")
     setup = setup_directives(section(text, "Setup"))
-    define_map = defines(text)
 
-    assert effective_value(setup["AppVersion"], define_map) == "1.0.1"
-    assert setup["AppId"] == "{code:GetAppId}"
-    assert setup["AppName"] == "{code:ResolveAppName}"
-    assert setup["DefaultDirName"] == r"{autopf}\{code:ResolveAppName}"
-    assert setup["DefaultGroupName"] == "{code:ResolveAppName}"
+    assert setup["AppVersion"] == "{#MyAppVersion}"
+    assert setup["AppName"] == "{#RfqAppName}"
+    assert setup["OutputBaseFilename"] == "{#RfqOutputBaseFilename}"
+    assert setup["DefaultDirName"] == "{#RfqDefaultDirName}"
+    assert setup["DefaultGroupName"] == "{#RfqDefaultGroupName}"
 
 
-def test_compile_time_defaults_are_preserved() -> None:
+def test_setup_keeps_the_selected_patch_version_bump() -> None:
     text = SETUP.read_text(encoding="utf-8")
-    setup = setup_directives(section(text, "Setup"))
-    define_map = defines(text)
 
-    assert define_map["MyAppName"] == "RFQ Application"
-    assert setup["OutputBaseFilename"] == "RFQ_Application_Setup"
-    require_install_time_identity_surface()
+    assert re.search(r'(?m)^#define\s+MyAppVersion\s+"1\.0\.1"\s*$', text)
 
 
-def test_all_icons_use_install_time_app_name_resolution() -> None:
-    require_install_time_identity_surface()
+def test_shortcut_names_each_use_their_own_full_value_env_macro() -> None:
     text = SETUP.read_text(encoding="utf-8")
     names = icon_name_fields(section(text, "Icons"))
 
-    assert len(names) == 4, "expected the four existing [Icons] rows to remain present"
-    assert all("{code:ResolveAppName}" in name for name in names), (
-        "Start Menu, uninstall, desktop, and Quick Launch icon names must use "
-        "install-time ResolveAppName identity resolution"
-    )
-
-
-def test_resolve_identity_centralizes_suffix_join_for_app_name() -> None:
-    text = SETUP.read_text(encoding="utf-8")
-    code = section(text, "Code")
-    signature = re.search(
-        r"(?im)^function\s+ResolveIdentity\s*\(\s*(?:const\s+)?(?P<param>\w+)\s*:\s*string\s*\)\s*:\s*string\s*;",
-        code,
-    )
-    assert signature, (
-        "setup.iss must expose ResolveIdentity with a single string argument"
-    )
-
-    resolve_identity_body = routine_body(code, "ResolveIdentity")
-    literal_param = re.escape(signature.group("param"))
-    suffix_join = re.search(
-        rf"\b{literal_param}\b\s*\+\s*'-'\s*\+\s*(?:GetRfqInstancePrefix\s*\(\s*\)|\w*(?:Prefix|Cached)\w*)",
-        resolve_identity_body,
-        re.I,
-    )
-    assert suffix_join, (
-        "ResolveIdentity must centralize the non-GUID identity suffix join as "
-        "Literal + '-' + prefix"
-    )
-
-    resolve_app_name_body = routine_body(code, "ResolveAppName")
-    assert re.search(r"\bResolveIdentity\s*\(", resolve_app_name_body), (
-        "ResolveAppName must route through ResolveIdentity instead of duplicating "
-        "the suffix-join logic"
-    )
+    assert names == [
+        "{#RfqStartMenuShortcutName}",
+        "{#RfqUninstallShortcutName}",
+        "{#RfqDesktopShortcutName}",
+        "{#RfqQuickLaunchShortcutName}",
+    ]
