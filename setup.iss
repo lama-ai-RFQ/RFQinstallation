@@ -1,7 +1,6 @@
 ; Inno Setup Script for RFQ Application
 ; This creates a graphical installer that wraps the PowerShell installation script
 
-#define MyAppName "RFQ Application"
 #define MyAppVersion "1.0.1"
 #define MyAppPublisher "LAMAAI Ventures LLC"
 #define MyAppURL "https://github.com/lama-ai-RFQ"
@@ -14,10 +13,55 @@
   #define RfqAppIdSource "{{" + RfqAppId + "}"
 #endif
 
+#define RfqAppName GetEnv("RFQ_APP_NAME")
+#if RfqAppName == ""
+  #define RfqAppName "RFQ Application"
+#endif
+
+#define RfqOutputBaseFilename GetEnv("RFQ_OUTPUT_BASE_FILENAME")
+#if RfqOutputBaseFilename == ""
+  #define RfqOutputBaseFilename "RFQ_Application_Setup"
+#endif
+
+#define RfqDefaultDirName GetEnv("RFQ_DEFAULT_DIR_NAME")
+#if RfqDefaultDirName == ""
+  #define RfqDefaultDirName "{autopf}\RFQ Application"
+#endif
+
+#define RfqDefaultGroupName GetEnv("RFQ_DEFAULT_GROUP_NAME")
+#if RfqDefaultGroupName == ""
+  #define RfqDefaultGroupName "RFQ Application"
+#endif
+
+#define RfqRegistryHandoffKey GetEnv("RFQ_REGISTRY_HANDOFF_KEY")
+#if RfqRegistryHandoffKey == ""
+  #define RfqRegistryHandoffKey "Software\RFQApplication\Installer"
+#endif
+
+#define RfqStartMenuShortcutName GetEnv("RFQ_START_MENU_SHORTCUT_NAME")
+#if RfqStartMenuShortcutName == ""
+  #define RfqStartMenuShortcutName "{group}\RFQ Application"
+#endif
+
+#define RfqUninstallShortcutName GetEnv("RFQ_UNINSTALL_SHORTCUT_NAME")
+#if RfqUninstallShortcutName == ""
+  #define RfqUninstallShortcutName "{group}\{cm:UninstallProgram,RFQ Application}"
+#endif
+
+#define RfqDesktopShortcutName GetEnv("RFQ_DESKTOP_SHORTCUT_NAME")
+#if RfqDesktopShortcutName == ""
+  #define RfqDesktopShortcutName "{autodesktop}\RFQ Application"
+#endif
+
+#define RfqQuickLaunchShortcutName GetEnv("RFQ_QUICK_LAUNCH_SHORTCUT_NAME")
+#if RfqQuickLaunchShortcutName == ""
+  #define RfqQuickLaunchShortcutName "{userappdata}\Microsoft\Internet Explorer\Quick Launch\RFQ Application"
+#endif
+
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 AppId={#RfqAppIdSource}
-AppName={#MyAppName}
+AppName={#RfqAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
@@ -25,8 +69,8 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 ; Default installation directory - user can change on directory selection page
 ; {autopf} expands to "C:\Program Files" on 64-bit systems
-DefaultDirName={autopf}\{#MyAppName}
-DefaultGroupName={#MyAppName}
+DefaultDirName={#RfqDefaultDirName}
+DefaultGroupName={#RfqDefaultGroupName}
 DisableProgramGroupPage=yes
 ; Show directory selection page so user can see and modify install location
 DisableDirPage=no
@@ -34,7 +78,7 @@ LicenseFile=
 InfoBeforeFile=
 InfoAfterFile=
 OutputDir=installer_output
-OutputBaseFilename=RFQ_Application_Setup
+OutputBaseFilename={#RfqOutputBaseFilename}
 SetupIconFile=
 Compression=lzma
 SolidCompression=yes
@@ -67,10 +111,10 @@ Source: "nssm.exe"; DestDir: "{pf}\nssm"; Flags: ignoreversion
 Source: "nssm.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
+Name: "{#RfqStartMenuShortcutName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{#RfqUninstallShortcutName}"; Filename: "{uninstallexe}"
+Name: "{#RfqDesktopShortcutName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{#RfqQuickLaunchShortcutName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
 
 [Run]
 ; Run the PowerShell installation script
@@ -1079,7 +1123,7 @@ begin
   // Store update channel from existing .env if found
   if ExistingUpdateChannel <> '' then
   begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UpdateChannel', ExistingUpdateChannel);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'UpdateChannel', ExistingUpdateChannel);
     Log('Loaded Update Channel from .env: ' + ExistingUpdateChannel);
   end;
   
@@ -1190,15 +1234,15 @@ begin
   if CurPageID = CleanReinstallPage.ID then
   begin
     if CleanReinstallPage.SelectedValueIndex = 0 then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'CleanReinstall', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'CleanReinstall', 'False');
     
     // Store cleanup checkbox state
     if CleanupCheckbox.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'CleanupAfterInstall', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'CleanupAfterInstall', 'False');
   end;
   
   // Validate GitHub token is mandatory
@@ -1216,25 +1260,25 @@ begin
       Exit;
     end;
     // Store GitHub token to registry
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'GitHubToken', GitHubToken);
   end;
   
   // Store AWS Key to registry when leaving AWS Key page
   if CurPageID = AWSKeyPage.ID then
   begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKeyPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSKey', AWSKeyPage.Values[0]);
   end;
   
   // Store AWS Secret to registry when leaving AWS Secret page
   if CurPageID = AWSSecretPage.ID then
   begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecretPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSSecret', AWSSecretPage.Values[0]);
   end;
   
   // Store AWS Region to registry when leaving AWS Region page
   if CurPageID = AWSRegionPage.ID then
   begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegionPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSRegion', AWSRegionPage.Values[0]);
   end;
   
   // Validate AWS credentials if model download is selected
@@ -1244,9 +1288,9 @@ begin
     
     // Store ModelDownload flag to registry
     if ModelDownload then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelDownload', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelDownload', 'False');
     
     if ModelDownload then
     begin
@@ -1280,16 +1324,16 @@ begin
       ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
     
     // Store values in registry for the PowerShell script to read
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'GitHubToken', GitHubToken);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSKey', AWSKey);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSSecret', AWSSecret);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSRegion', AWSRegion);
     // Convert boolean to string manually
     if ModelDownload then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelDownload', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'False');
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelDownload', 'False');
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelPath', ModelPath);
   end;
   
   // Validate Settings Password (skip if already stored in WCM)
@@ -1297,9 +1341,9 @@ begin
   begin
     // Store "already stored" checkbox state
     if SettingsPasswordAlreadyStoredCheck.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPasswordAlreadyStored', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SettingsPasswordAlreadyStored', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPasswordAlreadyStored', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SettingsPasswordAlreadyStored', 'False');
     
     // Only validate password if not already stored in WCM
     if not SettingsPasswordAlreadyStoredCheck.Checked then
@@ -1317,9 +1361,9 @@ begin
   begin
     // Store "already stored" checkbox state
     if SuperUserPasswordAlreadyStoredCheck.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPasswordAlreadyStored', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SuperUserPasswordAlreadyStored', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPasswordAlreadyStored', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SuperUserPasswordAlreadyStored', 'False');
     
     // Only validate password if not already stored in WCM
     if not SuperUserPasswordAlreadyStoredCheck.Checked then
@@ -1337,9 +1381,9 @@ begin
   begin
     // Store "already stored" checkbox state
     if RFQUserPasswordAlreadyStoredCheck.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPasswordAlreadyStored', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'RFQUserPasswordAlreadyStored', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPasswordAlreadyStored', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'RFQUserPasswordAlreadyStored', 'False');
     
     // Only validate password if not already stored in WCM
     if not RFQUserPasswordAlreadyStoredCheck.Checked then
@@ -1353,26 +1397,26 @@ begin
     
     // Store database passwords when on the last password page (only if not already stored)
     if not SettingsPasswordAlreadyStoredCheck.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPasswordPage.Values[0]);
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SettingsPassword', SettingsPasswordPage.Values[0]);
     if not SuperUserPasswordAlreadyStoredCheck.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SuperUserPassword', SuperUserPasswordPage.Values[0]);
     if not RFQUserPasswordAlreadyStoredCheck.Checked then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'RFQUserPassword', RFQUserPasswordPage.Values[0]);
   end;
   
   // Store Server URL when on Server URL page
   if CurPageID = ServerURLPage.ID then
   begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURLPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ServerURL', ServerURLPage.Values[0]);
   end;
   
   // Store Azure key settings when on Azure key page
   if CurPageID = AzureKeyPage.ID then
   begin
     if AzureKeyPage.SelectedValueIndex = 0 then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AzureKeyGenerate', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AzureKeyGenerate', 'False');
   end;
   
   // Validate Azure key input if custom key is selected
@@ -1386,16 +1430,16 @@ begin
       Result := False;
       Exit;
     end;
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyInputPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AzureKeyCustom', AzureKeyInputPage.Values[0]);
   end;
   
   // Store Credential Manager preference
   if CurPageID = CredentialManagerPage.ID then
   begin
     if CredentialManagerPage.SelectedValueIndex = 0 then
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', 'True')
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'UseCredentialManager', 'True')
     else
-      RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', 'False');
+      RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'UseCredentialManager', 'False');
   end;
   
   // Store Service Account preference
@@ -1403,9 +1447,9 @@ begin
   begin
     // 0 = Current User, 1 = Network Service, 2 = Local System
     case ServiceAccountPage.SelectedValueIndex of
-      0: RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', 'CurrentUser');
-      1: RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', 'NetworkService');
-      2: RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', 'LocalSystem');
+      0: RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ServiceAccount', 'CurrentUser');
+      1: RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ServiceAccount', 'NetworkService');
+      2: RegWriteStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ServiceAccount', 'LocalSystem');
     end;
   end;
 end;
@@ -1472,64 +1516,64 @@ begin
   
   // Always read from registry since that's where values are stored during wizard
   // Pages may not be accessible during the [Run] section
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPassword', RFQUserPassword);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServerURL', ServerURL);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyCustom', AzureKeyCustom);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UpdateChannel', UpdateChannel);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'GitHubToken', GitHubToken);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSKey', AWSKey);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSSecret', AWSSecret);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AWSRegion', AWSRegion);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelPath', ModelPath);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SettingsPassword', SettingsPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SuperUserPassword', SuperUserPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'RFQUserPassword', RFQUserPassword);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ServerURL', ServerURL);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AzureKeyCustom', AzureKeyCustom);
+  RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'UpdateChannel', UpdateChannel);
   
   // Read ModelDownload from registry
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', ModelDownloadStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ModelDownload', ModelDownloadStr) then
     ModelDownload := (ModelDownloadStr = 'True')
   else
     ModelDownload := False;
   
   // Read AzureKeyGenerate from registry
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AzureKeyGenerate', AzureKeyGenerateStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'AzureKeyGenerate', AzureKeyGenerateStr) then
     AzureKeyGenerate := (AzureKeyGenerateStr = 'True')
   else
     AzureKeyGenerate := True;
   
   // Read CleanReinstall from registry (default to True if not set)
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanReinstall', CleanReinstallStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'CleanReinstall', CleanReinstallStr) then
     CleanReinstall := (CleanReinstallStr = 'True')
   else
     CleanReinstall := True;  // Default to clean reinstall
   
   // Read CleanupAfterInstall from registry (default to True if not set)
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', CleanupAfterInstallStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'CleanupAfterInstall', CleanupAfterInstallStr) then
     CleanupAfterInstall := (CleanupAfterInstallStr = 'True')
   else
     CleanupAfterInstall := True;  // Default to cleanup after install
   
   // Read UseCredentialManager from registry (default to True if not set)
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'UseCredentialManager', UseCredentialManagerStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'UseCredentialManager', UseCredentialManagerStr) then
     UseCredentialManager := (UseCredentialManagerStr = 'True')
   else
     UseCredentialManager := True;  // Default to Credential Manager
   
   // Read ServiceAccount from registry (default to CurrentUser if not set)
-  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ServiceAccount', ServiceAccount) then
+  if not RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'ServiceAccount', ServiceAccount) then
     ServiceAccount := 'CurrentUser';  // Default to Current User
   
   // Read "already stored" flags from registry
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPasswordAlreadyStored', SettingsPasswordAlreadyStoredStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SettingsPasswordAlreadyStored', SettingsPasswordAlreadyStoredStr) then
     SettingsPasswordAlreadyStored := (SettingsPasswordAlreadyStoredStr = 'True')
   else
     SettingsPasswordAlreadyStored := False;
   
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPasswordAlreadyStored', SuperUserPasswordAlreadyStoredStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'SuperUserPasswordAlreadyStored', SuperUserPasswordAlreadyStoredStr) then
     SuperUserPasswordAlreadyStored := (SuperUserPasswordAlreadyStoredStr = 'True')
   else
     SuperUserPasswordAlreadyStored := False;
   
-  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'RFQUserPasswordAlreadyStored', RFQUserPasswordAlreadyStoredStr) then
+  if RegQueryStringValue(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}', 'RFQUserPasswordAlreadyStored', RFQUserPasswordAlreadyStoredStr) then
     RFQUserPasswordAlreadyStored := (RFQUserPasswordAlreadyStoredStr = 'True')
   else
     RFQUserPasswordAlreadyStored := False;
@@ -1687,10 +1731,10 @@ begin
 
   if CurUninstallStep = usPostUninstall then
   begin
-    if RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer') then
-      Log('Deleted installer registry handoff subtree: HKCU\Software\RFQApplication\Installer')
+    if RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, '{#RfqRegistryHandoffKey}') then
+      Log('Deleted installer registry handoff subtree: HKCU\{#RfqRegistryHandoffKey}')
     else
-      Log('Installer registry handoff subtree did not exist or could not be deleted: HKCU\Software\RFQApplication\Installer');
+      Log('Installer registry handoff subtree did not exist or could not be deleted: HKCU\{#RfqRegistryHandoffKey}');
   end;
 end;
 
