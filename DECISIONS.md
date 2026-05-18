@@ -42,25 +42,21 @@ serves as the prior user disposition because:
 Disposition: gate passed. Advancing to Phase 3 with the locked INFA-661
 proposal as the design source.
 
-## 2026-05-18 — Phase 6 per-component code-quality residual accepted
+## 2026-05-18 — Redesign: full-name env vars, no derivation helper
 
-The Phase 6 per-component code-quality fanout for the single `setup.iss`
-identity component returned HIGH. The residual is accepted for this INFA-669
-slice because the flagged shape is required by the locked INFA-661 design and
-the ticket scope is intentionally limited to the Inno installer identity
-surface.
+User corrected the identity-parameterization design after the initial GUID5
+implementation. INFA-669 now treats each installer identity surface as an
+independent full-value environment variable with its current literal as the
+fallback. Product code does not read or validate `RFQ_INSTANCE_PREFIX`, does
+not concatenate suffixes, and does not derive `AppId` with Pascal GUID5 code.
 
-Accepted findings:
-- Cohesion HIGH: `setup.iss` carries multiple A1 identity classifications
-  without a declared-role carrier.
-- Function-classification HIGH: the locked helpers (`GetRfqInstancePrefix`,
-  `GuidV5`, and `RecoverPrefixFromInstallManifest`) are multi-classifier
-  helpers by design.
-- Push-pull HIGH: `setup.iss` retains the pre-existing SCM topology that pulls
-  installer wizard, registry handoff, run-parameter, and uninstall behavior
-  into one Inno script.
+The previous Phase 6 residual around `GetRfqInstancePrefix`, `GuidV5`, and
+`RecoverPrefixFromInstallManifest` no longer applies because those helpers
+were removed. The remaining `setup.iss` coupling is the pre-existing installer
+topology: wizard state, registry handoff, run parameters, and uninstall
+cleanup remain in the same Inno script for this narrow WU.
 
-Disposition: do not refactor the installer topology in INFA-669. Preserve the
-locked setup.iss-only slice, rely on the added static and Windows-host
-coexistence tests, and leave sibling-owned service/script surfaces to INFA-670
-and wizard prose to INFA-671.
+Disposition: keep the setup.iss-only slice, use `#define ... GetEnv(...)`
+preprocessor defaults for the identity values, and rely on static tests plus
+the Windows-host coexistence script that compiles/runs installers with
+different explicit full-name env-var values.
