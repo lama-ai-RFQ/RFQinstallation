@@ -31,14 +31,237 @@ param(
     [switch]$RFQUserPasswordAlreadyStored
 )
 
+$script:RfqInstallerEnvVarNames = @(
+    "RFQ_APP_SERVICE_NAME",
+    "RFQ_APP_SERVICE_DISPLAY_NAME",
+    "RFQ_APP_SERVICE_DESCRIPTION",
+    "RFQ_UPDATER_SERVICE_NAME",
+    "RFQ_UPDATER_SERVICE_DISPLAY_NAME",
+    "RFQ_UPDATER_SERVICE_DESCRIPTION",
+    "RFQ_INSTALL_DIR",
+    "RFQ_SHORTCUT_NAME",
+    "RFQ_REGISTRY_HANDOFF_KEY",
+    "RFQ_CREDMAN_SQL_SUPER_USER_TARGET",
+    "RFQ_CREDMAN_RFQ_USER_PASSWORD_TARGET",
+    "RFQ_CREDMAN_SETTINGS_PASSWORD_TARGET"
+)
+
+function Get-RfqEnvValueOrDefault {
+    param(
+        [Parameter(Mandatory)]
+        [string]$EnvName,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$DefaultValue,
+
+        [AllowNull()]
+        [scriptblock]$Validator = $null,
+
+        [AllowNull()]
+        [string]$ValidationMessage = $null
+    )
+
+    $value = [Environment]::GetEnvironmentVariable($EnvName, "Process")
+    if ($null -eq $value -or $value -eq "") {
+        return $DefaultValue
+    }
+
+    if ($null -ne $Validator -and -not (& $Validator $value)) {
+        if ([string]::IsNullOrWhiteSpace($ValidationMessage)) {
+            $ValidationMessage = "The value is not valid for this installer setting."
+        }
+        throw "Invalid $EnvName '$value'. $ValidationMessage"
+    }
+
+    return $value
+}
+
+function Test-RfqTextValue {
+    param([AllowNull()][string]$Value)
+
+    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value -notmatch '[\x00-\x1F]'
+}
+
+function Test-RfqServiceName {
+    param([AllowNull()][string]$Value)
+
+    return (Test-RfqTextValue $Value) -and
+        $Value.Length -le 256 -and
+        $Value -notmatch '[\\/:*?"<>|\x00-\x1F]'
+}
+
+function Test-RfqShortcutName {
+    param([AllowNull()][string]$Value)
+
+    return (Test-RfqTextValue $Value) -and
+        $Value -notmatch '[\\/:*?"<>|\x00-\x1F]'
+}
+
+function Test-RfqInstallPath {
+    param([AllowNull()][string]$Value)
+
+    return (Test-RfqTextValue $Value)
+}
+
+function Get-RfqInstallerIdentity {
+    $shortcutName = Get-RfqEnvValueOrDefault `
+        -EnvName "RFQ_SHORTCUT_NAME" `
+        -DefaultValue "RFQ Application" `
+        -Validator { param($Value) Test-RfqShortcutName $Value } `
+        -ValidationMessage "Use a file-name-safe shortcut name without path separators or reserved characters."
+
+    return @{
+        ServiceName = Get-RfqEnvValueOrDefault `
+            -EnvName "RFQ_APP_SERVICE_NAME" `
+            -DefaultValue "RFQapplication" `
+            -Validator { param($Value) Test-RfqServiceName $Value } `
+            -ValidationMessage "Use a non-empty Windows service name without path separators or reserved filename characters."
+        ServiceDisplayName = Get-RfqEnvValueOrDefault `
+            -EnvName "RFQ_APP_SERVICE_DISPLAY_NAME" `
+            -DefaultValue "RFQ Application Service" `
+            -Validator { param($Value) Test-RfqTextValue $Value } `
+            -ValidationMessage "Use a non-empty display name without control characters."
+        ServiceDescription = Get-RfqEnvValueOrDefault `
+            -EnvName "RFQ_APP_SERVICE_DESCRIPTION" `
+            -DefaultValue "RFQ Application service description" `
+            -Validator { param($Value) Test-RfqTextValue $Value } `
+            -ValidationMessage "Use a non-empty description without control characters."
+        UpdaterServiceName = Get-RfqEnvValueOrDefault `
+            -EnvName "RFQ_UPDATER_SERVICE_NAME" `
+            -DefaultValue "RFQUpdaterService" `
+            -Validator { param($Value) Test-RfqServiceName $Value } `
+            -ValidationMessage "Use a non-empty Windows service name without path separators or reserved filename characters."
+        UpdaterServiceDisplayName = Get-RfqEnvValueOrDefault `
+            -EnvName "RFQ_UPDATER_SERVICE_DISPLAY_NAME" `
+            -DefaultValue "RFQ Application Updater Service" `
+            -Validator { param($Value) Test-RfqTextValue $Value } `
+            -ValidationMessage "Use a non-empty display name without control characters."
+        UpdaterServiceDescription = Get-RfqEnvValueOrDefault `
+            -EnvName "RFQ_UPDATER_SERVICE_DESCRIPTION" `
+            -DefaultValue "Polls for update triggers and applies updates to RFQ Application" `
+            -Validator { param($Value) Test-RfqTextValue $Value } `
+            -ValidationMessage "Use a non-empty description without control characters."
+        ShortcutName = $shortcutName
+        ShortcutFileName = "$shortcutName.lnk"
+        CredentialTargets = @{
+            SQL_SUPER_USER = Get-RfqEnvValueOrDefault `
+                -EnvName "RFQ_CREDMAN_SQL_SUPER_USER_TARGET" `
+                -DefaultValue "RFQApplication_SQL_SUPER_USER" `
+                -Validator { param($Value) Test-RfqTextValue $Value } `
+                -ValidationMessage "Use a non-empty Credential Manager target without control characters."
+            RFQ_USER_PASSWORD = Get-RfqEnvValueOrDefault `
+                -EnvName "RFQ_CREDMAN_RFQ_USER_PASSWORD_TARGET" `
+                -DefaultValue "RFQApplication_RFQ_USER_PASSWORD" `
+                -Validator { param($Value) Test-RfqTextValue $Value } `
+                -ValidationMessage "Use a non-empty Credential Manager target without control characters."
+            SETTINGS_PASSWORD = Get-RfqEnvValueOrDefault `
+                -EnvName "RFQ_CREDMAN_SETTINGS_PASSWORD_TARGET" `
+                -DefaultValue "RFQApplication_SETTINGS_PASSWORD" `
+                -Validator { param($Value) Test-RfqTextValue $Value } `
+                -ValidationMessage "Use a non-empty Credential Manager target without control characters."
+        }
+    }
+}
+
+function Resolve-RfqInstallPath {
+    param(
+        [AllowNull()]
+        [string]$CurrentInstallPath,
+
+        [bool]$InstallPathProvided
+    )
+
+    if ($InstallPathProvided) {
+        return $CurrentInstallPath
+    }
+
+    return Get-RfqEnvValueOrDefault `
+        -EnvName "RFQ_INSTALL_DIR" `
+        -DefaultValue "$env:LOCALAPPDATA\RFQApplication" `
+        -Validator { param($Value) Test-RfqInstallPath $Value } `
+        -ValidationMessage "Use a non-empty install path without control characters."
+}
+
+function ConvertTo-RfqPowerShellSingleQuotedLiteral {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return "''"
+    }
+
+    return "'" + ([string]$Value).Replace("'", "''") + "'"
+}
+
+function New-RfqElevatedPowerShellArgumentList {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ScriptPath,
+
+        [Parameter(Mandatory)]
+        [System.Collections.IDictionary]$BoundParameters,
+
+        [Parameter(Mandatory)]
+        [string[]]$EnvironmentVariableNames
+    )
+
+    $invokeParts = @("& $(ConvertTo-RfqPowerShellSingleQuotedLiteral $ScriptPath)")
+    foreach ($key in $BoundParameters.Keys) {
+        $val = $BoundParameters[$key]
+        if ($val -is [System.Management.Automation.SwitchParameter]) {
+            if ($val.IsPresent) {
+                $invokeParts += "-$key"
+            }
+        } else {
+            $invokeParts += "-$key"
+            $invokeParts += (ConvertTo-RfqPowerShellSingleQuotedLiteral $val)
+        }
+    }
+
+    $commandParts = @()
+    foreach ($envName in $EnvironmentVariableNames) {
+        $envValue = [Environment]::GetEnvironmentVariable($envName, "Process")
+        $commandParts += "`$env:$envName = $(ConvertTo-RfqPowerShellSingleQuotedLiteral $envValue)"
+    }
+    $commandParts += ($invokeParts -join " ")
+
+    $command = $commandParts -join [Environment]::NewLine
+
+    $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($command))
+    return @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand)
+}
+
+try {
+    $script:RfqInstallerIdentity = Get-RfqInstallerIdentity
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
+$script:RfqInstallPathWasProvided = $PSBoundParameters.ContainsKey("InstallPath")
+try {
+    $InstallPath = Resolve-RfqInstallPath -CurrentInstallPath $InstallPath -InstallPathProvided $script:RfqInstallPathWasProvided
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+$script:RfqApplicationDisplayName = "RFQ Application"
+$script:RfqShortcutName = $script:RfqInstallerIdentity.ShortcutName
+$script:RfqApplicationShortcutName = $script:RfqInstallerIdentity.ShortcutFileName
+$script:RfqServiceName = $script:RfqInstallerIdentity.ServiceName
+$script:RfqServiceDisplayName = $script:RfqInstallerIdentity.ServiceDisplayName
+$script:RfqServiceDescription = $script:RfqInstallerIdentity.ServiceDescription
+$script:RfqUpdaterServiceName = $script:RfqInstallerIdentity.UpdaterServiceName
+$script:RfqUpdaterServiceDisplayName = $script:RfqInstallerIdentity.UpdaterServiceDisplayName
+$script:RfqUpdaterServiceDescription = $script:RfqInstallerIdentity.UpdaterServiceDescription
+$script:RfqCredentialTargets = $script:RfqInstallerIdentity.CredentialTargets
+
 # Self-elevate to admin if not already running elevated
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
-    foreach ($key in $MyInvocation.BoundParameters.Keys) {
-        $val = $MyInvocation.BoundParameters[$key]
-        if ($val -is [switch]) { if ($val) { $argList += "-$key" } }
-        else { $argList += "-$key"; $argList += "`"$val`"" }
-    }
+    $argList = New-RfqElevatedPowerShellArgumentList `
+        -ScriptPath $PSCommandPath `
+        -BoundParameters $MyInvocation.BoundParameters `
+        -EnvironmentVariableNames $script:RfqInstallerEnvVarNames
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -558,14 +781,15 @@ function Test-CredentialManagerAvailable {
 
 # Show help
 if ($Help) {
+    $DefaultInstallPathHelp = if ($script:RfqInstallPathWasProvided -or $env:RFQ_INSTALL_DIR) { $InstallPath } else { "%LOCALAPPDATA%\RFQApplication" }
     Write-Host @"
-RFQ Application - Windows Installer
+$script:RfqApplicationDisplayName - Windows Installer
 
 USAGE:
     .\download_and_install.ps1 [-InstallPath <path>] [-GitHubToken <token>]
 
 OPTIONS:
-    -InstallPath    Installation directory (default: %LOCALAPPDATA%\RFQApplication)
+    -InstallPath    Installation directory (default: $DefaultInstallPathHelp)
     -GitHubToken    GitHub Personal Access Token (will prompt if not provided)
     -Help           Show this help message
 
@@ -605,7 +829,7 @@ NOTES:
 # Banner
 $BannerText = @"
 ================================================================================
-    RFQ Application - Windows Installer
+    $script:RfqApplicationDisplayName - Windows Installer
     First-Time Installation Script
 ================================================================================
 "@
@@ -1569,7 +1793,7 @@ if ($ENABLE_STEP_7_EXTRACT) {
         # Stop Windows service if it exists
         Write-Info "  Checking for Windows service..."
         try {
-            $ServiceName = "RFQapplication"
+            $ServiceName = $script:RfqServiceName
             $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
             
             if ($service) {
@@ -2179,7 +2403,7 @@ if (Test-Path $EnvTemplatePath) {
         
         if (!$SuperUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SuperUserPassword) -and !$SuperUserPassword.StartsWith("your_")) {
             $script:PasswordsToSave += @{
-                TargetName = "RFQApplication_SQL_SUPER_USER"
+                TargetName = $script:RfqCredentialTargets.SQL_SUPER_USER
                 UserName = "postgres"
                 Password = $SuperUserPassword
             }
@@ -2191,7 +2415,7 @@ if (Test-Path $EnvTemplatePath) {
         
         if (!$RFQUserPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($RFQUserPassword) -and !$RFQUserPassword.StartsWith("your_")) {
             $script:PasswordsToSave += @{
-                TargetName = "RFQApplication_RFQ_USER_PASSWORD"
+                TargetName = $script:RfqCredentialTargets.RFQ_USER_PASSWORD
                 UserName = "rfq_user"
                 Password = $RFQUserPassword
             }
@@ -2203,7 +2427,7 @@ if (Test-Path $EnvTemplatePath) {
         
         if (!$SettingsPasswordAlreadyStored -and ![string]::IsNullOrWhiteSpace($SettingsPassword) -and !$SettingsPassword.StartsWith("your_")) {
             $script:PasswordsToSave += @{
-                TargetName = "RFQApplication_SETTINGS_PASSWORD"
+                TargetName = $script:RfqCredentialTargets.SETTINGS_PASSWORD
                 UserName = "rfq_app"
                 Password = $SettingsPassword
             }
@@ -2371,7 +2595,7 @@ else {
                 $script:PasswordsToSave = @()
             }
             $script:PasswordsToSave += @{
-                TargetName = "RFQApplication_SQL_SUPER_USER"
+                TargetName = $script:RfqCredentialTargets.SQL_SUPER_USER
                 UserName = "postgres"
                 Password = $SuperUserPassword
             }
@@ -2388,7 +2612,7 @@ else {
                 $script:PasswordsToSave = @()
             }
             $script:PasswordsToSave += @{
-                TargetName = "RFQApplication_RFQ_USER_PASSWORD"
+                TargetName = $script:RfqCredentialTargets.RFQ_USER_PASSWORD
                 UserName = "rfq_user"
                 Password = $RFQUserPassword
             }
@@ -2405,7 +2629,7 @@ else {
                 $script:PasswordsToSave = @()
             }
             $script:PasswordsToSave += @{
-                TargetName = "RFQApplication_SETTINGS_PASSWORD"
+                TargetName = $script:RfqCredentialTargets.SETTINGS_PASSWORD
                 UserName = "rfq_app"
                 Password = $SettingsPassword
             }
@@ -3076,10 +3300,10 @@ if ($ExePath) {
     Write-Success "[OK] Found executable: $($ExePath.FullName)"
     
     # Create Windows service
-    Write-Info "`nCreating Windows service 'RFQapplication'..."
-    $ServiceName = "RFQapplication"
-    $ServiceDisplayName = "RFQ Application Service"
-    $ServiceDescription = "RFQ Automation Application Service"
+    $ServiceName = $script:RfqServiceName
+    $ServiceDisplayName = $script:RfqServiceDisplayName
+    $ServiceDescription = $script:RfqServiceDescription
+    Write-Info "`nCreating Windows service '$ServiceName'..."
     $ExePathQuoted = "`"$($ExePath.FullName)`""
     
     $mainServiceCreationBlocked = $false
@@ -3175,7 +3399,7 @@ if ($ExePath) {
         Write-Warning "  [!] Service creation for '$ServiceName' was skipped"
     } else {
         # Create the service using NSSM (preferred) or sc.exe (fallback)
-        Write-Info "  Creating service 'RFQapplication' with executable: $($ExePath.FullName)"
+        Write-Info "  Creating service '$ServiceName' with executable: $($ExePath.FullName)"
     
     # Try to use NSSM first (recommended for non-service-aware applications)
     if ($nssmPath) {
@@ -3654,9 +3878,9 @@ Revision=1
         $updaterExePath = Join-Path $InstallPath "windows_updater.exe"
         
         if (Test-Path $updaterExePath) {
-            $UpdaterServiceName = "RFQUpdaterService"
-            $UpdaterServiceDisplayName = "RFQ Application Updater Service"
-            $UpdaterServiceDescription = "Polls for update triggers and applies updates to RFQ Application"
+            $UpdaterServiceName = $script:RfqUpdaterServiceName
+            $UpdaterServiceDisplayName = $script:RfqUpdaterServiceDisplayName
+            $UpdaterServiceDescription = $script:RfqUpdaterServiceDescription
             $updaterServiceCreationBlocked = $false
             
             # Check if updater service already exists
@@ -3837,12 +4061,12 @@ Revision=1
     try {
         $WshShell = New-Object -ComObject WScript.Shell
         $DesktopPath = [System.Environment]::GetFolderPath('Desktop')
-        $ShortcutPath = Join-Path $DesktopPath "RFQ Application.lnk"
+        $ShortcutPath = Join-Path $DesktopPath $script:RfqApplicationShortcutName
         
         $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
         $Shortcut.TargetPath = $ExePath.FullName
         $Shortcut.WorkingDirectory = $InstallPath
-        $Shortcut.Description = "RFQ Automation Application"
+        $Shortcut.Description = $script:RfqServiceDescription
         $Shortcut.Save()
         
         Write-Success "[OK] Created desktop shortcut"
@@ -3894,10 +4118,10 @@ if ($script:SkippedSteps.Count -gt 0) {
 if ($script:serviceCreated) {
     $SuccessMessage += @"
 NEXT STEPS:
-  1. The Windows service 'RFQapplication' has been created and started
+  1. The Windows service '$($script:RfqServiceName)' has been created and started
   2. The application should now be running as a Windows service
   3. You can also run the application directly: $($ExePath.FullName)
-  4. Or use the desktop shortcut: RFQ Application
+  4. Or use the desktop shortcut: $($script:RfqShortcutName)
   5. For updates, use the built-in updater (Settings -> System Updates)
 
 CONFIGURATION:
