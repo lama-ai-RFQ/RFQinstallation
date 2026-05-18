@@ -5,7 +5,7 @@ REM Simple wrapper to run the PowerShell installation script
 REM Self-elevate to admin if not already running elevated
 net session >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    powershell.exe -Command "Start-Process '%~f0' -ArgumentList '%*' -Verb RunAs"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$rfqEnvNames = @('RFQ_APP_SERVICE_NAME','RFQ_APP_SERVICE_DISPLAY_NAME','RFQ_APP_SERVICE_DESCRIPTION','RFQ_UPDATER_SERVICE_NAME','RFQ_UPDATER_SERVICE_DISPLAY_NAME','RFQ_UPDATER_SERVICE_DESCRIPTION','RFQ_INSTALL_DIR','RFQ_SHORTCUT_NAME','RFQ_REGISTRY_HANDOFF_KEY','RFQ_CREDMAN_SQL_SUPER_USER_TARGET','RFQ_CREDMAN_RFQ_USER_PASSWORD_TARGET','RFQ_CREDMAN_SETTINGS_PASSWORD_TARGET'); foreach ($name in $rfqEnvNames) { $value = [Environment]::GetEnvironmentVariable($name, 'Process'); if ($null -ne $value) { Set-Item -Path ('env:' + $name) -Value $value } }; Start-Process '%~f0' -ArgumentList '%*' -Verb RunAs"
     exit /b
 )
 
@@ -32,6 +32,7 @@ REM Run the PowerShell script
 echo Starting installation...
 echo.
 
+REM RFQ_* name override environment variables are intentionally inherited by PowerShell and validated there.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0download_and_install.ps1" %*
 
 if %ERRORLEVEL% NEQ 0 (
