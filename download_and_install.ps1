@@ -3411,6 +3411,9 @@ Revision=1
                 $stderrLog = Join-Path $logDir "${ServiceName}_stderr.log"
                 & $nssmPath set $ServiceName AppStdout "$stdoutLog" 2>&1 | Out-Null
                 & $nssmPath set $ServiceName AppStderr "$stderrLog" 2>&1 | Out-Null
+                & $nssmPath set $ServiceName AppRotateFiles 1 2>&1 | Out-Null
+                & $nssmPath set $ServiceName AppRotateOnline 1 2>&1 | Out-Null
+                & $nssmPath set $ServiceName AppRotateBytes 314572800 2>&1 | Out-Null
                 
                 # Configure service account (NSSM stores password securely in Windows registry)
                 if ($targetServiceAccount) {
@@ -3744,6 +3747,9 @@ Revision=1
                         $updaterStderrLog = Join-Path $logDir "${UpdaterServiceName}_stderr.log"
                         & $nssmPath set $UpdaterServiceName AppStdout "$updaterStdoutLog" 2>&1 | Out-Null
                         & $nssmPath set $UpdaterServiceName AppStderr "$updaterStderrLog" 2>&1 | Out-Null
+                        & $nssmPath set $UpdaterServiceName AppRotateFiles 1 2>&1 | Out-Null
+                        & $nssmPath set $UpdaterServiceName AppRotateOnline 1 2>&1 | Out-Null
+                        & $nssmPath set $UpdaterServiceName AppRotateBytes 314572800 2>&1 | Out-Null
                         
                         $script:updaterServiceCreated = $true
                         
