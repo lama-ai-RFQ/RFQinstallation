@@ -3075,6 +3075,9 @@ if (!$ExePath) {
 if ($ExePath) {
     Write-Success "[OK] Found executable: $($ExePath.FullName)"
     
+    # Reuse the Linux-side cap var; default 300 MB. Lets tests override (e.g. 5120).
+    $logCapMaxBytes = if ($env:RFQ_LOG_CAP_MAX_BYTES) { $env:RFQ_LOG_CAP_MAX_BYTES } else { 314572800 }
+
     # Create Windows service
     Write-Info "`nCreating Windows service 'RFQapplication'..."
     $ServiceName = "RFQapplication"
@@ -3413,7 +3416,7 @@ Revision=1
                 & $nssmPath set $ServiceName AppStderr "$stderrLog" 2>&1 | Out-Null
                 & $nssmPath set $ServiceName AppRotateFiles 1 2>&1 | Out-Null
                 & $nssmPath set $ServiceName AppRotateOnline 1 2>&1 | Out-Null
-                & $nssmPath set $ServiceName AppRotateBytes 314572800 2>&1 | Out-Null
+                & $nssmPath set $ServiceName AppRotateBytes $logCapMaxBytes 2>&1 | Out-Null
                 
                 # Configure service account (NSSM stores password securely in Windows registry)
                 if ($targetServiceAccount) {
@@ -3749,7 +3752,7 @@ Revision=1
                         & $nssmPath set $UpdaterServiceName AppStderr "$updaterStderrLog" 2>&1 | Out-Null
                         & $nssmPath set $UpdaterServiceName AppRotateFiles 1 2>&1 | Out-Null
                         & $nssmPath set $UpdaterServiceName AppRotateOnline 1 2>&1 | Out-Null
-                        & $nssmPath set $UpdaterServiceName AppRotateBytes 314572800 2>&1 | Out-Null
+                        & $nssmPath set $UpdaterServiceName AppRotateBytes $logCapMaxBytes 2>&1 | Out-Null
                         
                         $script:updaterServiceCreated = $true
                         
