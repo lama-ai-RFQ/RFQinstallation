@@ -58,6 +58,16 @@
   #define RfqQuickLaunchShortcutName "{userappdata}\Microsoft\Internet Explorer\Quick Launch\RFQ Application"
 #endif
 
+#define RfqAppServiceName GetEnv("RFQ_APP_SERVICE_NAME")
+#if RfqAppServiceName == ""
+  #define RfqAppServiceName "RFQapplication"
+#endif
+
+#define RfqAppServiceDisplayName GetEnv("RFQ_APP_SERVICE_DISPLAY_NAME")
+#if RfqAppServiceDisplayName == ""
+  #define RfqAppServiceDisplayName "RFQ Application Service"
+#endif
+
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 AppId={#RfqAppIdSource}
@@ -122,7 +132,7 @@ Name: "{#RfqQuickLaunchShortcutName}"; Filename: "{app}\{#MyAppExeName}"; Tasks:
 ; Parameters will be built dynamically in CurStepChanged
 Filename: "powershell.exe"; \
     Parameters: "{code:GetPowerShellParams}"; \
-    StatusMsg: "Installing RFQ Application and creating Windows service..."; \
+    StatusMsg: "Installing RFQ Application and creating Windows service '{#RfqAppServiceName}'..."; \
     Flags: waituntilterminated; \
     Description: "{code:GetInstallDescription}"
 
@@ -848,15 +858,15 @@ begin
   
   StatusText := 'Windows Service Creation' + #13#10 + #13#10;
   StatusText := StatusText + 'The installer will automatically create a Windows service named:' + #13#10;
-  StatusText := StatusText + '  Service Name: RFQapplication' + #13#10;
-  StatusText := StatusText + '  Display Name: RFQ Application Service' + #13#10 + #13#10;
+  StatusText := StatusText + '  Service Name: {#RfqAppServiceName}' + #13#10;
+  StatusText := StatusText + '  Display Name: {#RfqAppServiceDisplayName}' + #13#10 + #13#10;
   StatusText := StatusText + 'Service Configuration:' + #13#10;
   StatusText := StatusText + '  • The service will be set to start automatically on system boot' + #13#10;
   StatusText := StatusText + '  • The service can be started/stopped manually if needed' + #13#10;
   StatusText := StatusText + '  • Administrator privileges are required to create the service' + #13#10 + #13#10;
   StatusText := StatusText + 'Managing the Service:' + #13#10;
-  StatusText := StatusText + '  • Command Line: sc start/stop RFQapplication' + #13#10;
-  StatusText := StatusText + '  • GUI: Open Services.msc and look for "RFQ Application Service"' + #13#10 + #13#10;
+  StatusText := StatusText + '  • Command Line: sc start/stop {#RfqAppServiceName}' + #13#10;
+  StatusText := StatusText + '  • GUI: Open Services.msc and look for "{#RfqAppServiceDisplayName}"' + #13#10 + #13#10;
   StatusText := StatusText + 'Note: If the service fails to start automatically, you may need to' + #13#10;
   StatusText := StatusText + 'install NSSM (Non-Sucking Service Manager) for better compatibility.' + #13#10;
   
@@ -1469,10 +1479,10 @@ end;
 
 function GetInstallDescription(Param: String): String;
 begin
-  Result := 'Installing application files and creating Windows service ''RFQapplication''...' + #13#10 + #13#10 + \
+  Result := 'Installing application files and creating Windows service ''{#RfqAppServiceName}''...' + #13#10 + #13#10 + \
             'This will:' + #13#10 + \
             '  • Download and extract application files' + #13#10 + \
-            '  • Create Windows service ''RFQapplication'' (starts automatically)' + #13#10 + \
+            '  • Create Windows service ''{#RfqAppServiceName}'' (starts automatically)' + #13#10 + \
             '  • Configure application settings' + #13#10 + \
             '  • Set up database (if selected)' + #13#10 + #13#10 + \
             'This may take several minutes - a PowerShell window will show progress';

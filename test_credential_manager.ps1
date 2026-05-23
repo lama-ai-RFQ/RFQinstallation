@@ -2,47 +2,96 @@
 # This script tests saving and retrieving credentials to verify the integration works
 
 param(
-    [switch]$Cleanup  # If set, will delete test credentials after testing
+    [switch]$Cleanup,  # If set, will delete test credentials after testing
+    [switch]$ListTargetsOnly
 )
+
+function Get-ResolvedEnvValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$DefaultValue
+    )
+
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrEmpty($value)) {
+        return $DefaultValue
+    }
+
+    return $value
+}
+
+# Test credentials
+$testTargets = @(
+    @{
+        EnvVarName = "RFQ_CREDMAN_SQL_SUPER_USER_TARGET"
+        DefaultTargetName = "RFQApplication_SQL_SUPER_USER"
+        TargetName = Get-ResolvedEnvValue -Name "RFQ_CREDMAN_SQL_SUPER_USER_TARGET" -DefaultValue "RFQApplication_SQL_SUPER_USER"
+        UserName = "postgres"
+        Password = "TestPassword123!"
+    },
+    @{
+        EnvVarName = "RFQ_CREDMAN_RFQ_USER_PASSWORD_TARGET"
+        DefaultTargetName = "RFQApplication_RFQ_USER_PASSWORD"
+        TargetName = Get-ResolvedEnvValue -Name "RFQ_CREDMAN_RFQ_USER_PASSWORD_TARGET" -DefaultValue "RFQApplication_RFQ_USER_PASSWORD"
+        UserName = "rfq_user"
+        Password = "TestPassword456@"
+    },
+    @{
+        EnvVarName = "RFQ_CREDMAN_SETTINGS_PASSWORD_TARGET"
+        DefaultTargetName = "RFQApplication_SETTINGS_PASSWORD"
+        TargetName = Get-ResolvedEnvValue -Name "RFQ_CREDMAN_SETTINGS_PASSWORD_TARGET" -DefaultValue "RFQApplication_SETTINGS_PASSWORD"
+        UserName = "rfq_app"
+        Password = "TestPassword789#"
+    }
+)
+
+if ($ListTargetsOnly) {
+    foreach ($test in $testTargets) {
+        Write-Output "$($test.EnvVarName)=$($test.TargetName)"
+    }
+    exit 0
+}
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Windows Credential Manager Test" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Test credentials
-$testTargets = @(
-    @{
-        TargetName = "RFQApplication_SQL_SUPER_USER"
-        UserName = "postgres"
-        Password = "TestPassword123!"
-    },
-    @{
-        TargetName = "RFQApplication_RFQ_USER_PASSWORD"
-        UserName = "rfq_user"
-        Password = "TestPassword456@"
-    },
-    @{
-        TargetName = "RFQApplication_SETTINGS_PASSWORD"
-        UserName = "rfq_app"
-        Password = "TestPassword789#"
+Write-Host "Credential targets under test:" -ForegroundColor Cyan
+foreach ($test in $testTargets) {
+    $envValue = [Environment]::GetEnvironmentVariable($test.EnvVarName)
+    if ([string]::IsNullOrEmpty($envValue)) {
+        Write-Host "  $($test.EnvVarName): <unset> -> $($test.TargetName)" -ForegroundColor Gray
+    } else {
+        Write-Host "  $($test.EnvVarName): $($test.TargetName)" -ForegroundColor Gray
     }
-)
+}
+Write-Host ""
 
 # Function to list all credentials (for debugging)
 function Show-AllCredentials {
-    Write-Host "  Listing all credentials containing 'RFQApplication':" -ForegroundColor Cyan
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$TargetNames
+    )
+
+    $escapedTargets = $TargetNames | ForEach-Object { [regex]::Escape($_) }
+    $targetPattern = $escapedTargets -join "|"
+
+    Write-Host "  Listing configured RFQ credential targets:" -ForegroundColor Cyan
     $listAllProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_list_all.txt" -RedirectStandardError "$env:TEMP\cmdkey_list_all_err.txt"
     
     if (Test-Path "$env:TEMP\cmdkey_list_all.txt") {
         $allCreds = Get-Content "$env:TEMP\cmdkey_list_all.txt" -Raw
-        if ($allCreds -and $allCreds.Trim() -ne "" -and $allCreds -match "RFQApplication") {
+        if ($allCreds -and $allCreds.Trim() -ne "" -and $allCreds -match $targetPattern) {
             Write-Host "    Found credentials:" -ForegroundColor Yellow
-            $allCreds -split "`n" | Where-Object { $_ -match "RFQApplication" } | ForEach-Object {
+            $allCreds -split "`n" | Where-Object { $_ -match $targetPattern } | ForEach-Object {
                 Write-Host "      $_" -ForegroundColor Gray
             }
         } else {
-            Write-Host "    No RFQApplication credentials found in list" -ForegroundColor Yellow
+            Write-Host "    No configured RFQ credential targets found in list" -ForegroundColor Yellow
             if ($allCreds) {
                 Write-Host "    (Output was: $($allCreds.Substring(0, [Math]::Min(100, $allCreds.Length))))" -ForegroundColor Gray
             }
@@ -222,12 +271,12 @@ if ($cmdkeyPath) {
 Write-Host ""
 
 # Show existing credentials first
-Write-Host "[2/4] Checking for existing credentials..." -ForegroundColor Cyan
-Show-AllCredentials
+Write-Host "[2/5] Checking for existing credentials..." -ForegroundColor Cyan
+Show-AllCredentials -TargetNames ($testTargets | ForEach-Object { $_.TargetName })
 Write-Host ""
 
 # Test saving credentials
-Write-Host "[3/4] Testing credential save operations..." -ForegroundColor Cyan
+Write-Host "[3/5] Testing credential save operations..." -ForegroundColor Cyan
 $saveResults = @{}
 foreach ($test in $testTargets) {
     Write-Host "  Testing: $($test.TargetName)" -ForegroundColor Yellow
@@ -243,18 +292,18 @@ Write-Host ""
 
 # Show credentials after saving
 Write-Host "  Verifying credentials were saved..." -ForegroundColor Cyan
-Show-AllCredentials
+Show-AllCredentials -TargetNames ($testTargets | ForEach-Object { $_.TargetName })
 Write-Host ""
 
 # Test listing credentials
-Write-Host "[4/4] Testing credential listing..." -ForegroundColor Cyan
+Write-Host "[4/5] Testing credential listing..." -ForegroundColor Cyan
 foreach ($test in $testTargets) {
     Write-Host "  Checking: $($test.TargetName)" -ForegroundColor Yellow
     $listProcess = Start-Process -FilePath "cmdkey.exe" -ArgumentList "/list:$($test.TargetName)" -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\cmdkey_list.txt"
     
     if ($listProcess.ExitCode -eq 0) {
         $listOutput = Get-Content "$env:TEMP\cmdkey_list.txt" -Raw -ErrorAction SilentlyContinue
-        if ($listOutput -and $listOutput -match $test.TargetName) {
+        if ($listOutput -and $listOutput -match [regex]::Escape($test.TargetName)) {
             Write-Host "    [OK] Credential found in list" -ForegroundColor Green
         } else {
             Write-Host "    [WARN] Credential not found in list output" -ForegroundColor Yellow
@@ -345,9 +394,13 @@ Write-Host "To view credentials manually:" -ForegroundColor Cyan
 Write-Host "  1. Open Control Panel" -ForegroundColor White
 Write-Host "  2. Go to Credential Manager" -ForegroundColor White
 Write-Host "  3. Click 'Windows Credentials'" -ForegroundColor White
-Write-Host "  4. Look for entries starting with 'RFQApplication_'" -ForegroundColor White
+Write-Host "  4. Look for entries named:" -ForegroundColor White
+foreach ($test in $testTargets) {
+    Write-Host "     - $($test.TargetName)" -ForegroundColor White
+}
 Write-Host ""
 Write-Host "Or use command line:" -ForegroundColor Cyan
-Write-Host "  cmdkey /list:RFQApplication_" -ForegroundColor White
+foreach ($test in $testTargets) {
+    Write-Host "  cmdkey /list:$($test.TargetName)" -ForegroundColor White
+}
 Write-Host ""
-
