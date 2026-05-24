@@ -60,3 +60,50 @@ Disposition: keep the setup.iss-only slice, use `#define ... GetEnv(...)`
 preprocessor defaults for the identity values, and rely on static tests plus
 the Windows-host coexistence script that compiles/runs installers with
 different explicit full-name env-var values.
+
+## 2026-05-24 — Installer-side delivery of updater SELF-UPDATE (#69 / #70)
+
+rfqautomation gained updater SELF-UPDATE (capability A): the standalone
+`windows_updater.exe` can replace itself via a one-shot SYSTEM scheduled task
+after an app apply (handling `updater.zip` from the release manifest). Two
+installer-side gaps had to close for A to reach customers.
+
+**#69 — new installs are self-update-ready.**
+- The updater service (`RFQUpdaterService`, env-overridable via
+  `RFQ_UPDATER_SERVICE_NAME`) is created by NSSM (fallback `sc.exe`) with **no
+  `ObjectName`**, so it runs as **LocalSystem** — the same principal a SYSTEM
+  scheduled task uses. A SYSTEM task can therefore `nssm stop/start` and
+  `sc stop/start` it, which is what A's self-update needs. No change required;
+  verified by inspection.
+- Added the staging prerequisite `{app}\updates`: created by `setup.iss`
+  `[Dirs]` and idempotently by `download_and_install.ps1` next to updater
+  service creation. The app writes `updater.zip` there; the updater stages to
+  `updates\updater_staged\`. Default inherited ACLs keep it writable by the
+  LocalSystem updater.
+- `setup.iss` now bundles `windows_updater.exe` into `{app}` so a
+  self-update-capable updater is present from first boot. **Build dependency:**
+  that binary must be rebuilt from a Windows build of rfqautomation's updater
+  (windows/updater + self_update.py) before release — tracked in
+  `UPDATER_BUILD.md`. The bundled binary is not rebuilt in this Linux worktree.
+
+**#70 — bootstrap mechanism for the existing fleet: a DEDICATED Inno
+mini-installer.** Existing installs predate the `updater.zip` special-case, so
+their on-disk updater cannot self-update. Rather than fold a migration into the
+full `setup.iss` (which touches the app, DB, and config), we ship a separate,
+minimal, code-signing-ready `updater-bootstrap.iss` + `bootstrap-updater.ps1`
+that an IT admin runs once. It ONLY swaps the updater: discover install dir +
+service (reusing the `RFQ_INSTALL_DIR` / `RFQ_UPDATER_SERVICE_NAME` env-var
+conventions, falling back to the updater service image path then the default),
+stop + wait-STOPPED (bounded), back up to `.previous` (+ sidecars), copy the new
+binary, start + wait-RUNNING (bounded). On any failure it restores `.previous`
+and restarts the service, so the machine is never left with the updater down. It
+is idempotent (SHA256 match → skip) and logs to a file. Chosen over a PS-only
+script or folding into `setup.iss` because IT double-clicks a single signed
+`.exe`, and over a scheduled-task migration because the swap is a one-time,
+synchronous, observable action.
+
+Disposition: static validation only on Linux (Inno scripts reviewed for
+structure; PowerShell AST-parses clean; Pester content + filesystem
+round-trip tests added under `tests/updater-bootstrap.Tests.ps1`). Compiling the
+installers with ISCC and exercising the live service stop/start/rollback is
+deferred to a Windows host, as is rebuilding the bundled `windows_updater.exe`.

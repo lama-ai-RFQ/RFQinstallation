@@ -119,6 +119,21 @@ Source: "setup_database_auto.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; Include NSSM for service creation
 Source: "nssm.exe"; DestDir: "{pf}\nssm"; Flags: ignoreversion
 Source: "nssm.exe"; DestDir: "{app}"; Flags: ignoreversion
+; BUILD DEPENDENCY (see UPDATER_BUILD.md): windows_updater.exe MUST be the NEW
+; self-update-capable build produced by a Windows build of rfqautomation's
+; updater (windows/updater + self_update.py). Bundling it guarantees new installs
+; have a self-update-capable updater present even before the first release
+; download. download_and_install.ps1 sources the updater from this same
+; {app}\windows_updater.exe path; if the downloaded release package also ships
+; windows_updater.exe it overwrites this baseline copy during extraction.
+Source: "windows_updater.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+[Dirs]
+; Updater staging prerequisite (new-install self-update readiness): the running
+; application writes "updater.zip" here and the updater stages its replacement
+; under "updates\updater_staged\". Created with default (inherited) ACLs so the
+; LocalSystem updater service can read/write it.
+Name: "{app}\updates"
 
 [Icons]
 Name: "{#RfqStartMenuShortcutName}"; Filename: "{app}\{#MyAppExeName}"

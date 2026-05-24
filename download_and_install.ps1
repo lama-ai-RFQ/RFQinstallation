@@ -3874,6 +3874,25 @@ Revision=1
     # Create updater service (polls for trigger file to perform updates)
     Write-Info "`nCreating updater service..."
     try {
+        # Ensure the updater staging prerequisites exist. The running application
+        # writes the downloaded "updater.zip" into "{InstallPath}\updates" and the
+        # self-update-capable updater stages its own replacement under
+        # "updates\updater_staged\". Create the directory now (idempotent) so the
+        # self-update path has a writable staging root from first boot.
+        $updatesDir = Join-Path $InstallPath "updates"
+        if (!(Test-Path $updatesDir)) {
+            try {
+                New-Item -ItemType Directory -Path $updatesDir -Force | Out-Null
+                Write-Success "  [OK] Created updater staging directory: $updatesDir"
+            }
+            catch {
+                Write-Warning "  [!] Could not create updater staging directory '$updatesDir': $_"
+                Add-SkippedStepUnique "Updater staging directory (creation failed)"
+            }
+        } else {
+            Write-Info "  Updater staging directory already exists: $updatesDir"
+        }
+
         # Find windows_updater.exe
         $updaterExePath = Join-Path $InstallPath "windows_updater.exe"
         
