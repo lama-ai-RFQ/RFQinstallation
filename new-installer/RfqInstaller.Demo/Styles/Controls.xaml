@@ -184,11 +184,17 @@
                             BorderThickness="{TemplateBinding BorderThickness}"
                             CornerRadius="6">
                         <Grid>
+                            <!-- Padding is copied to PART_ContentHost by WPF; TextBoxView adds 2px. -->
                             <TextBlock x:Name="Placeholder" Text="{TemplateBinding Tag}"
-                                       Margin="{TemplateBinding Padding}" VerticalAlignment="Center"
+                                       Margin="{TemplateBinding Padding}" Padding="2,0"
+                                       VerticalAlignment="Center"
+                                       FontSize="{TemplateBinding FontSize}"
+                                       FontFamily="{TemplateBinding FontFamily}"
                                        Foreground="{StaticResource TextSecondaryBrush}"
                                        Visibility="Collapsed" IsHitTestVisible="False"/>
-                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="Hidden"/>
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
