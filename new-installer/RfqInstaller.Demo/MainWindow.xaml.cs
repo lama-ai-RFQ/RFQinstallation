@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Input;
+using RfqInstaller.Demo.Dialogs;
 using RfqInstaller.Demo.Models;
 using RfqInstaller.Demo.Pages;
 
@@ -42,14 +43,12 @@ public partial class MainWindow : Window
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        var result = MessageBox.Show(
+        if (AppDialog.Confirm(
             this,
+            "Cancel setup?",
             "Are you sure you want to cancel RFQ Application setup?",
-            "Cancel Setup",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-
-        if (result == MessageBoxResult.Yes)
+            confirmText: "Cancel setup",
+            dismissText: "Continue"))
         {
             Close();
         }

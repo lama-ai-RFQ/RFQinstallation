@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using RfqInstaller.Demo.Dialogs;
 using RfqInstaller.Demo.Models;
 
 namespace RfqInstaller.Demo.Pages;
@@ -26,11 +27,10 @@ public partial class LicenseKeyPage : UserControl, IWizardPage
 
     private void NoKeyLink_Click(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show(
-            "Contact your RFQ Application account representative to obtain a license key.",
-            "License Key",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        AppDialog.Inform(
+            Window.GetWindow(this),
+            "Don't have a key?",
+            "Contact your RFQ Application account representative to obtain a license key.");
     }
 
     public bool Validate()
