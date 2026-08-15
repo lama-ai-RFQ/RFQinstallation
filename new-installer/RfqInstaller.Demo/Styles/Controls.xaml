@@ -243,7 +243,7 @@
     </Style>
 
     <Style x:Key="ModernComboBoxItemStyle" TargetType="ComboBoxItem">
-        <Setter Property="Padding" Value="12,10"/>
+        <Setter Property="Padding" Value="12,8"/>
         <Setter Property="FontSize" Value="14"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
         <Setter Property="Cursor" Value="Hand"/>
@@ -252,15 +252,21 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ComboBoxItem">
                     <Border x:Name="ItemBg" Padding="{TemplateBinding Padding}" Background="Transparent"
-                            CornerRadius="6" Margin="4,2">
-                        <ContentPresenter/>
+                            CornerRadius="4" Margin="2,1">
+                        <Grid>
+                            <ContentPresenter Margin="0,0,22,0" VerticalAlignment="Center"/>
+                            <Path x:Name="Check" Data="M2,6 L5,9.5 L11,2" Stroke="{StaticResource AccentBrush}"
+                                  StrokeThickness="1.75" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                  Visibility="Collapsed"/>
+                        </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsHighlighted" Value="True">
-                            <Setter TargetName="ItemBg" Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                            <Setter TargetName="ItemBg" Property="Background" Value="#F2F2F3"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="ItemBg" Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
@@ -315,27 +321,16 @@
                         </ToggleButton>
                         <Popup x:Name="PART_Popup" Placement="Bottom" PlacementTarget="{Binding ElementName=Bg}"
                                IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True"
-                               Focusable="False" PopupAnimation="Fade">
-                            <Border Margin="0,6,0,8" MinWidth="{Binding ActualWidth, ElementName=Bg}"
+                               Focusable="False" PopupAnimation="None">
+                            <Border Margin="0,4,0,0" MinWidth="{Binding ActualWidth, ElementName=Bg}"
                                     Background="{StaticResource CardBackgroundBrush}"
-                                    BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1"
-                                    CornerRadius="8" Padding="4">
-                                <Border.Effect>
-                                    <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270"
-                                                      Opacity="0.22" Color="#000000"/>
-                                </Border.Effect>
-                                <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}"
-                                              HorizontalScrollBarVisibility="Disabled"
-                                              VerticalScrollBarVisibility="Auto">
-                                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
-                                </ScrollViewer>
+                                    BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1"
+                                    CornerRadius="6" Padding="2">
+                                <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
                             </Border>
                         </Popup>
                     </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-                        </Trigger>
                         <Trigger Property="IsKeyboardFocusWithin" Value="True">
                             <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                             <Setter TargetName="Bg" Property="BorderThickness" Value="2"/>
