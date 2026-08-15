@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Input;
 
 namespace RfqInstaller.Demo.Dialogs;
 
@@ -37,9 +36,9 @@ public partial class AppDialog : Window
     {
         var dialog = new AppDialog
         {
-            Owner = owner,
-            WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner
+            Owner = owner
         };
+        dialog.CoverOwner(owner);
         dialog.HeadingText.Text = heading;
         dialog.MessageText.Text = message;
         dialog.PrimaryButton.Content = primaryText;
@@ -55,12 +54,21 @@ public partial class AppDialog : Window
         return dialog;
     }
 
-    private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void CoverOwner(Window? owner)
     {
-        if (e.ClickCount == 1)
+        if (owner is null)
         {
-            DragMove();
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Width = 1000;
+            Height = 660;
+            return;
         }
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = owner.Left;
+        Top = owner.Top;
+        Width = owner.ActualWidth;
+        Height = owner.ActualHeight;
     }
 
     private void Primary_Click(object sender, RoutedEventArgs e)
