@@ -5,13 +5,15 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d" d:DesignWidth="600">
     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Left" MaxWidth="560">
-        <Border Width="88" Height="88" CornerRadius="44" Background="{StaticResource SuccessSoftBrush}"
-                Margin="0,0,0,28" HorizontalAlignment="Center">
-            <Path Data="M4,13 L11,20 L24,5" Stroke="{StaticResource SuccessBrush}" StrokeThickness="3.5"
-                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
-        </Border>
-        <TextBlock Text="Setup completed successfully" Style="{StaticResource PageTitleStyle}"/>
+        <StackPanel HorizontalAlignment="Left">
+            <Border Width="88" Height="88" CornerRadius="44" Background="{StaticResource SuccessSoftBrush}"
+                    Margin="0,0,0,28" HorizontalAlignment="Center">
+                <Path Data="M4,13 L11,20 L24,5" Stroke="{StaticResource SuccessBrush}" StrokeThickness="3.5"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <TextBlock Text="Setup completed successfully" Style="{StaticResource PageTitleStyle}"/>
+        </StackPanel>
         <TextBlock x:Name="SummaryText" Style="{StaticResource PageSubtitleStyle}"/>
 
         <CheckBox x:Name="LaunchCheckBox" Content="Launch RFQ Application" IsChecked="True"
