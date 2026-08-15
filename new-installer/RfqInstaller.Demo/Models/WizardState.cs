@@ -1,4 +1,4 @@
-using System.IO;
+using RfqInstaller.Core.Config;
 
 namespace RfqInstaller.Demo.Models;
 
@@ -43,8 +43,7 @@ public class WizardState
 
     public bool DownloadModelNow { get; set; } = true;
 
-    public string ModelPath { get; set; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RFQ_Models");
+    public string ModelPath { get; set; } = DefaultPaths.DefaultModelPath();
 
     public bool CleanReinstall { get; set; } = true;
 
