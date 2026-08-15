@@ -312,7 +312,7 @@
                     <TextBlock x:Name="NumberText" Text="{Binding Index}" FontSize="12" FontWeight="SemiBold"
                                Foreground="{StaticResource TextSecondaryBrush}"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    <Path x:Name="CheckIcon" Data="M2,6 L5,9.5 L11,2" Stroke="White" StrokeThickness="2"
+                    <Path x:Name="CheckIcon" Data="M2,6 L5,9.5 L11,2" Stroke="{StaticResource SuccessBrush}" StrokeThickness="2"
                           StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                           Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Grid>
@@ -323,14 +323,14 @@
         <DataTemplate.Triggers>
             <DataTrigger Binding="{Binding IsActive}" Value="True">
                 <Setter TargetName="Indicator" Property="Background" Value="{StaticResource AccentBrush}"/>
-                <Setter TargetName="Indicator" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                <Setter TargetName="Indicator" Property="BorderThickness" Value="0"/>
                 <Setter TargetName="NumberText" Property="Foreground" Value="White"/>
                 <Setter TargetName="TitleText" Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
                 <Setter TargetName="TitleText" Property="FontWeight" Value="SemiBold"/>
             </DataTrigger>
             <DataTrigger Binding="{Binding IsCompleted}" Value="True">
-                <Setter TargetName="Indicator" Property="Background" Value="{StaticResource AccentBrush}"/>
-                <Setter TargetName="Indicator" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                <Setter TargetName="Indicator" Property="Background" Value="{StaticResource SuccessSoftBrush}"/>
+                <Setter TargetName="Indicator" Property="BorderThickness" Value="0"/>
                 <Setter TargetName="NumberText" Property="Visibility" Value="Collapsed"/>
                 <Setter TargetName="CheckIcon" Property="Visibility" Value="Visible"/>
                 <Setter TargetName="TitleText" Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
