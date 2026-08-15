@@ -294,9 +294,9 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ProgressBar">
-                    <Border Background="{TemplateBinding Background}" CornerRadius="4">
-                        <Grid HorizontalAlignment="Left">
-                            <Border x:Name="PART_Track" CornerRadius="4"/>
+                    <Border Background="{TemplateBinding Background}" CornerRadius="4" ClipToBounds="True">
+                        <Grid>
+                            <Border x:Name="PART_Track"/>
                             <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}"
                                     CornerRadius="4" HorizontalAlignment="Left"/>
                         </Grid>
