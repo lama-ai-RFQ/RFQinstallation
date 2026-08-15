@@ -7,6 +7,7 @@ using System.Windows.Input;
 using RfqInstaller.Core.Elevation;
 using RfqInstaller.Demo.Debug;
 using RfqInstaller.Demo.Dialogs;
+using RfqInstaller.Demo.Logging;
 using RfqInstaller.Demo.Models;
 using RfqInstaller.Demo.Pages;
 
@@ -27,6 +28,7 @@ public partial class MainWindow : Window
 
     private readonly WizardState _state = new();
     private WizardStep _current = WizardStep.Welcome;
+    private bool _fatalReported;
 
     public MainWindow()
     {
@@ -103,30 +105,44 @@ public partial class MainWindow : Window
 
     private void Back_Click(object sender, RoutedEventArgs e)
     {
-        GoTo(GetPrevious(_current));
+        try
+        {
+            GoTo(GetPrevious(_current));
+        }
+        catch (Exception ex)
+        {
+            ReportFatalError(ex, $"going back from the {PageName(_current)}");
+        }
     }
 
     private void Next_Click(object sender, RoutedEventArgs e)
     {
-        if (_current == WizardStep.Finish)
+        try
         {
-            HandleFinish();
-            return;
-        }
+            if (_current is WizardStep.Finish or WizardStep.Failed)
+            {
+                HandleFinish();
+                return;
+            }
 
-        if (PageHost.Content is IWizardPage page && !page.Validate())
+            if (PageHost.Content is IWizardPage page && !page.Validate())
+            {
+                return;
+            }
+
+            if (_current == WizardStep.ReadyToInstall && TryElevateAndResume())
+            {
+                // A new elevated process has taken over; this instance exits without installing.
+                Close();
+                return;
+            }
+
+            GoTo(GetNext(_current));
+        }
+        catch (Exception ex)
         {
-            return;
+            ReportFatalError(ex, $"continuing from the {PageName(_current)}");
         }
-
-        if (_current == WizardStep.ReadyToInstall && TryElevateAndResume())
-        {
-            // A new elevated process has taken over; this instance exits without installing.
-            Close();
-            return;
-        }
-
-        GoTo(GetNext(_current));
     }
 
     /// <summary>
@@ -166,11 +182,13 @@ public partial class MainWindow : Window
 
     private void HandleFinish()
     {
-        if (_state.LaunchAfterFinish && _state.Mode == InstallMode.Standalone && _state.ResolvedMainExecutablePath is { } exePath && File.Exists(exePath))
+        if (_current != WizardStep.Failed
+            && _state.LaunchAfterFinish && _state.Mode == InstallMode.Standalone && _state.ResolvedMainExecutablePath is { } exePath && File.Exists(exePath))
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exePath) { UseShellExecute = true });
         }
-        else if (_state.LaunchAfterFinish && _state.Mode == InstallMode.WindowsService)
+        else if (_current != WizardStep.Failed
+            && _state.LaunchAfterFinish && _state.Mode == InstallMode.WindowsService)
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_state.ServerUrl) { UseShellExecute = true });
         }
@@ -232,26 +250,102 @@ public partial class MainWindow : Window
 
     private void GoTo(WizardStep step)
     {
-        _current = step;
-
-        PageHost.Content = step switch
+        object? content;
+        try
         {
-            WizardStep.Welcome => new WelcomePage(),
-            WizardStep.License => new LicenseKeyPage(_state),
-            WizardStep.InstallMode => new InstallModePage(_state),
-            WizardStep.InstallLocation => new InstallLocationPage(_state),
-            WizardStep.DesktopShortcut => new DesktopShortcutPage(_state),
-            WizardStep.ModelDownload => new ModelDownloadPage(_state),
-            WizardStep.Advanced => new AdvancedOptionsPage(_state),
-            WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
-            WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), () => GoTo(WizardStep.ReadyToInstall)),
-            WizardStep.Finish => new FinishPage(_state),
-            _ => PageHost.Content
-        };
+            content = CreatePage(step);
+        }
+        catch (Exception ex)
+        {
+            ReportFatalError(ex, $"opening the {PageName(step)}");
+            return;
+        }
 
+        _current = step;
+        PageHost.Content = content;
         UpdateFooter(step);
         UpdateRail(step);
     }
+
+    private object CreatePage(WizardStep step) => step switch
+    {
+        WizardStep.Welcome => new WelcomePage(),
+        WizardStep.License => new LicenseKeyPage(_state),
+        WizardStep.InstallMode => new InstallModePage(_state),
+        WizardStep.InstallLocation => new InstallLocationPage(_state),
+        WizardStep.DesktopShortcut => new DesktopShortcutPage(_state),
+        WizardStep.ModelDownload => new ModelDownloadPage(_state),
+        WizardStep.Advanced => new AdvancedOptionsPage(_state),
+        WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
+        WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), () => GoTo(WizardStep.ReadyToInstall)),
+        WizardStep.Finish => new FinishPage(_state),
+        WizardStep.Failed => new SetupFailedPage(_state),
+        _ => throw new InvalidOperationException($"Unknown wizard step '{step}'.")
+    };
+
+    /// <summary>
+    /// Logs the exception, replaces the wizard with a failure page, and stops further navigation.
+    /// Safe to call from UI-thread exception handlers; ignored if a fatal error was already shown.
+    /// </summary>
+    public void ReportFatalError(Exception exception, string context)
+    {
+        if (_fatalReported)
+        {
+            InstallerLog.Write(context, exception);
+            return;
+        }
+
+        _fatalReported = true;
+
+        _state.FatalErrorHeading = _current == WizardStep.Installing
+            ? "Installation failed"
+            : "Setup couldn't continue";
+        _state.FatalErrorContext = context;
+        _state.FatalErrorDetail = InstallerLog.FormatUserDetail(exception);
+        _state.FatalErrorLogPath = InstallerLog.Write(context, exception);
+
+        try
+        {
+            _current = WizardStep.Failed;
+            PageHost.Content = new SetupFailedPage(_state);
+            UpdateFooter(WizardStep.Failed);
+        }
+        catch (Exception showEx)
+        {
+            InstallerLog.Write("showing the error page", showEx);
+            try
+            {
+                AppDialog.Inform(
+                    this,
+                    _state.FatalErrorHeading,
+                    $"RFQ Application Setup hit an unexpected error while {context} and had to stop."
+                    + $"{Environment.NewLine}{Environment.NewLine}{_state.FatalErrorDetail}"
+                    + $"{Environment.NewLine}{Environment.NewLine}A detailed log was saved to:{Environment.NewLine}{_state.FatalErrorLogPath}");
+            }
+            catch
+            {
+                // The log is the remaining record.
+            }
+
+            Close();
+        }
+    }
+
+    private static string PageName(WizardStep step) => step switch
+    {
+        WizardStep.Welcome => "welcome page",
+        WizardStep.License => "license key page",
+        WizardStep.InstallMode => "setup options page",
+        WizardStep.InstallLocation => "install location page",
+        WizardStep.DesktopShortcut => "desktop shortcut page",
+        WizardStep.ModelDownload => "AI model download page",
+        WizardStep.Advanced => "Advanced options page",
+        WizardStep.ReadyToInstall => "Ready to install page",
+        WizardStep.Installing => "installation",
+        WizardStep.Finish => "finish page",
+        WizardStep.Failed => "error page",
+        _ => "setup"
+    };
 
     private void UpdateFooter(WizardStep step)
     {
@@ -280,6 +374,12 @@ public partial class MainWindow : Window
                 NextButton.Visibility = Visibility.Visible;
                 NextButton.Content = "Finish";
                 break;
+            case WizardStep.Failed:
+                BackButton.Visibility = Visibility.Collapsed;
+                CancelButton.Visibility = Visibility.Collapsed;
+                NextButton.Visibility = Visibility.Visible;
+                NextButton.Content = "Close";
+                break;
             default:
                 BackButton.Visibility = Visibility.Visible;
                 CancelButton.Visibility = Visibility.Visible;
@@ -301,6 +401,7 @@ public partial class MainWindow : Window
         WizardStep.ReadyToInstall => 4,
         WizardStep.Installing => 5,
         WizardStep.Finish => 6,
+        WizardStep.Failed => 5,
         _ => 0
     };
 

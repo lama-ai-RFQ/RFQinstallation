@@ -26,7 +26,8 @@ public enum WizardStep
     Advanced,
     ReadyToInstall,
     Installing,
-    Finish
+    Finish,
+    Failed
 }
 
 public class WizardState
@@ -65,4 +66,12 @@ public class WizardState
 
     /// <summary>Set by InstallingPage if the install failed, so FinishPage (or an error page) can show the real reason instead of always claiming success.</summary>
     public string? InstallErrorMessage { get; set; }
+
+    public string FatalErrorHeading { get; set; } = "Setup couldn't continue";
+
+    public string? FatalErrorContext { get; set; }
+
+    public string? FatalErrorDetail { get; set; }
+
+    public string? FatalErrorLogPath { get; set; }
 }

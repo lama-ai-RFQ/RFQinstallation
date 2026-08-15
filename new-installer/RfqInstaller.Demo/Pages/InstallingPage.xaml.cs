@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Orchestration;
+using RfqInstaller.Demo.Logging;
 using RfqInstaller.Demo.Models;
 using CoreServiceAccountKind = RfqInstaller.Core.Models.ServiceAccountKind;
 using CoreInstallMode = RfqInstaller.Core.Models.InstallMode;
@@ -68,7 +69,11 @@ public partial class InstallingPage : UserControl
         }
         catch (Exception ex)
         {
-            result = new InstallResult(false, ex.Message, null);
+            var logPath = InstallerLog.Write("installing RFQ Application", ex);
+            result = new InstallResult(
+                false,
+                $"{InstallerLog.FormatUserDetail(ex)}{Environment.NewLine}{Environment.NewLine}Details were saved to:{Environment.NewLine}{logPath}",
+                null);
         }
 
         if (result.Success)
@@ -79,6 +84,11 @@ public partial class InstallingPage : UserControl
         }
         else
         {
+            if (result.ErrorMessage is not null && !result.ErrorMessage.Contains(InstallerLog.LogPath, StringComparison.OrdinalIgnoreCase))
+            {
+                InstallerLog.Write("installation stopped", extra: result.ErrorMessage);
+            }
+
             _state.InstallErrorMessage = result.ErrorMessage;
             ProgressPanel.Visibility = Visibility.Collapsed;
             ErrorText.Text = result.ErrorMessage ?? "An unknown error occurred during installation.";
