@@ -61,9 +61,9 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
             _ => ServiceAccountKind.LocalSystem,
         };
 
-        if (ServiceAccountPasswordBox is not null)
+        if (ServiceAccountPasswordPanel is not null)
         {
-            ServiceAccountPasswordBox.Visibility = _state.ServiceAccount == ServiceAccountKind.CurrentUser
+            ServiceAccountPasswordPanel.Visibility = _state.ServiceAccount == ServiceAccountKind.CurrentUser
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
