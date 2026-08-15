@@ -8,12 +8,29 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>RfqInstaller.Demo</AssemblyName>
     <RootNamespace>RfqInstaller.Demo</RootNamespace>
-    <Product>RFQ Application Setup (Demo)</Product>
-    <AssemblyTitle>RFQ Application Setup (Demo)</AssemblyTitle>
+    <Product>RFQ Application Setup</Product>
+    <AssemblyTitle>RFQ Application Setup</AssemblyTitle>
+    <Platforms>x64</Platforms>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\scint.png"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RfqInstaller.Core\RfqInstaller.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bundled, proven tools the orchestrator copies into the install directory — no PATH/silent-install dependency. -->
+    <Content Include="..\..\nssm.exe">
+      <Link>Bundled\nssm.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\windows_updater.exe">
+      <Link>Bundled\windows_updater.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

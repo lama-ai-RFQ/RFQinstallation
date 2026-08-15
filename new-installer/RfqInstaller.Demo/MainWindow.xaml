@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RfqInstaller.Demo"
         mc:Ignorable="d"
-        Title="RFQ Application Setup (Demo)"
+        Title="RFQ Application Setup"
         Icon="/Assets/scint.png"
         Height="660" Width="1000"
         MinHeight="660" MinWidth="1000"
@@ -27,7 +27,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="RFQ Application Setup (Demo)" Margin="16,0,0,0"
+                <TextBlock Grid.Column="0" Text="RFQ Application Setup" Margin="16,0,0,0"
                            VerticalAlignment="Center" FontSize="12"
                            Foreground="{StaticResource TextSecondaryBrush}"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">

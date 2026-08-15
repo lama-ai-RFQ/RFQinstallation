@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
+using RfqInstaller.Core.Elevation;
 using RfqInstaller.Demo.Dialogs;
 using RfqInstaller.Demo.Models;
 using RfqInstaller.Demo.Pages;
@@ -15,6 +18,7 @@ public partial class MainWindow : Window
         "Welcome",
         "License Key",
         "Setup Options",
+        "Model & Advanced",
         "Ready to Install",
         "Installing",
         "Finish"
@@ -26,7 +30,44 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        GoTo(WizardStep.Welcome);
+
+        if (TryLoadResumeState(out var resumed))
+        {
+            _state = resumed!;
+            GoTo(WizardStep.Installing);
+        }
+        else
+        {
+            GoTo(WizardStep.Welcome);
+        }
+    }
+
+    /// <summary>
+    /// If this process was relaunched elevated (see <see cref="TryElevateAndResume"/>), the wizard
+    /// state was handed off via a temp JSON file whose path is the sole command-line argument.
+    /// Loading it here lets the elevated instance jump straight to the Installing step instead of
+    /// re-asking the user everything.
+    /// </summary>
+    private static bool TryLoadResumeState(out WizardState? state)
+    {
+        state = null;
+        var args = Environment.GetCommandLineArgs();
+        if (args.Length != 2 || !File.Exists(args[1]))
+        {
+            return false;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(args[1]);
+            state = JsonSerializer.Deserialize<WizardState>(json);
+            File.Delete(args[1]);
+            return state is not null;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -63,7 +104,7 @@ public partial class MainWindow : Window
     {
         if (_current == WizardStep.Finish)
         {
-            Close();
+            HandleFinish();
             return;
         }
 
@@ -72,7 +113,63 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_current == WizardStep.ReadyToInstall && TryElevateAndResume())
+        {
+            // A new elevated process has taken over; this instance exits without installing.
+            Close();
+            return;
+        }
+
         GoTo(GetNext(_current));
+    }
+
+    /// <summary>
+    /// Service installs (and standalone installs into a machine-wide folder like Program Files)
+    /// need admin rights. Rather than always demanding elevation at startup like the old Inno
+    /// installer, we only ask for it right before it's actually needed, and only once.
+    /// </summary>
+    private bool TryElevateAndResume()
+    {
+        if (ElevationHelper.IsElevated() || !ElevationHelper.RequiresElevation(
+                _state.Mode == InstallMode.WindowsService ? Core.Models.InstallMode.WindowsService : Core.Models.InstallMode.Standalone,
+                _state.InstallPath))
+        {
+            return false;
+        }
+
+        var tempFile = Path.Combine(Path.GetTempPath(), $"rfq-installer-state-{Guid.NewGuid():N}.json");
+        File.WriteAllText(tempFile, JsonSerializer.Serialize(_state));
+
+        var process = ElevationHelper.RelaunchElevated(new[] { tempFile });
+        if (process is null)
+        {
+            // User declined the UAC prompt — stay on this page so they can try again or cancel.
+            TryDeleteQuietly(tempFile);
+            AppDialog.Inform(this, "Administrator rights required",
+                "Installing as a Windows service (or into a system folder) requires administrator approval. Please try again and accept the prompt.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void TryDeleteQuietly(string path)
+    {
+        try { File.Delete(path); } catch { /* best-effort */ }
+    }
+
+    private void HandleFinish()
+    {
+        if (_state.LaunchAfterFinish && _state.Mode == InstallMode.Standalone && _state.ResolvedMainExecutablePath is { } exePath && File.Exists(exePath))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exePath) { UseShellExecute = true });
+        }
+        else if (_state.LaunchAfterFinish && _state.Mode == InstallMode.WindowsService)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_state.ServerUrl) { UseShellExecute = true });
+        }
+
+        Close();
     }
 
     private WizardStep GetNext(WizardStep current) => current switch
@@ -82,8 +179,10 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => WizardStep.InstallLocation,
         WizardStep.InstallLocation => _state.Mode == InstallMode.Standalone
             ? WizardStep.DesktopShortcut
-            : WizardStep.ReadyToInstall,
-        WizardStep.DesktopShortcut => WizardStep.ReadyToInstall,
+            : WizardStep.ModelDownload,
+        WizardStep.DesktopShortcut => WizardStep.ModelDownload,
+        WizardStep.ModelDownload => WizardStep.Advanced,
+        WizardStep.Advanced => WizardStep.ReadyToInstall,
         WizardStep.ReadyToInstall => WizardStep.Installing,
         WizardStep.Installing => WizardStep.Finish,
         _ => WizardStep.Finish
@@ -95,9 +194,11 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => WizardStep.License,
         WizardStep.InstallLocation => WizardStep.InstallMode,
         WizardStep.DesktopShortcut => WizardStep.InstallLocation,
-        WizardStep.ReadyToInstall => _state.Mode == InstallMode.Standalone
+        WizardStep.ModelDownload => _state.Mode == InstallMode.Standalone
             ? WizardStep.DesktopShortcut
             : WizardStep.InstallLocation,
+        WizardStep.Advanced => WizardStep.ModelDownload,
+        WizardStep.ReadyToInstall => WizardStep.Advanced,
         _ => WizardStep.Welcome
     };
 
@@ -112,8 +213,10 @@ public partial class MainWindow : Window
             WizardStep.InstallMode => new InstallModePage(_state),
             WizardStep.InstallLocation => new InstallLocationPage(_state),
             WizardStep.DesktopShortcut => new DesktopShortcutPage(_state),
+            WizardStep.ModelDownload => new ModelDownloadPage(_state),
+            WizardStep.Advanced => new AdvancedOptionsPage(_state),
             WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
-            WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish)),
+            WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), () => GoTo(WizardStep.ReadyToInstall)),
             WizardStep.Finish => new FinishPage(_state),
             _ => PageHost.Content
         };
@@ -165,9 +268,11 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => 2,
         WizardStep.InstallLocation => 2,
         WizardStep.DesktopShortcut => 2,
-        WizardStep.ReadyToInstall => 3,
-        WizardStep.Installing => 4,
-        WizardStep.Finish => 5,
+        WizardStep.ModelDownload => 3,
+        WizardStep.Advanced => 3,
+        WizardStep.ReadyToInstall => 4,
+        WizardStep.Installing => 5,
+        WizardStep.Finish => 6,
         _ => 0
     };
 

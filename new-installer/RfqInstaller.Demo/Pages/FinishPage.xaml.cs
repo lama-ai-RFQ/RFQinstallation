@@ -16,6 +16,10 @@ public partial class FinishPage : UserControl
             ? "RFQ Application has been installed and is running as a Windows service."
             : "RFQ Application has been installed and is ready to use.";
 
+        LaunchCheckBox.Content = state.Mode == InstallMode.WindowsService
+            ? "Open RFQ Application in my browser"
+            : "Launch RFQ Application";
+
         LaunchCheckBox.IsChecked = _state.LaunchAfterFinish;
         LaunchCheckBox.Checked += (_, _) => _state.LaunchAfterFinish = true;
         LaunchCheckBox.Unchecked += (_, _) => _state.LaunchAfterFinish = false;

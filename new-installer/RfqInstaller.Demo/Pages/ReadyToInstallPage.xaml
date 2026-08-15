@@ -27,9 +27,19 @@
                     <TextBlock x:Name="PathSummary" FontWeight="SemiBold" TextWrapping="Wrap"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
                 </StackPanel>
-                <StackPanel x:Name="ShortcutRow" Orientation="Horizontal">
+                <StackPanel x:Name="ShortcutRow" Orientation="Horizontal" Margin="0,0,0,16">
                     <TextBlock Text="Desktop shortcut" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
                     <TextBlock x:Name="ShortcutSummary" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                    <TextBlock Text="AI model" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <TextBlock x:Name="ModelSummary" FontWeight="SemiBold" TextWrapping="Wrap"
+                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Service account" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                    <TextBlock x:Name="ServiceAccountSummary" FontWeight="SemiBold"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
                 </StackPanel>
             </StackPanel>

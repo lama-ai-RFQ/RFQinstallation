@@ -25,6 +25,17 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
         {
             ShortcutRow.Visibility = Visibility.Collapsed;
         }
+
+        ModelSummary.Text = state.DownloadModelNow
+            ? $"Download now (~30 GB) to {state.ModelPath}"
+            : "Skip for now";
+
+        ServiceAccountSummary.Text = state.ServiceAccount switch
+        {
+            ServiceAccountKind.NetworkService => "Network Service",
+            ServiceAccountKind.CurrentUser => "Current User",
+            _ => "Local System",
+        };
     }
 
     private static string MaskLicenseKey(string key)

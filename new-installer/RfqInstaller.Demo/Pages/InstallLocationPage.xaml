@@ -26,7 +26,8 @@
                    FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"/>
 
         <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,20,0,0">
-            Approximately 250 MB of free disk space is required.
+            Approximately 1 GB of free disk space is required for the application and database.
+            The AI model, if you choose to download it, needs about 30 GB more.
         </TextBlock>
     </StackPanel>
 </UserControl>

@@ -1,7 +1,7 @@
 <Window x:Class="RfqInstaller.Demo.Dialogs.AppDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="RFQ Application Setup (Demo)"
+        Title="RFQ Application Setup"
         Icon="/Assets/scint.png"
         WindowStyle="None"
         AllowsTransparency="True"
