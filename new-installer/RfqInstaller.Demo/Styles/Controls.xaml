@@ -39,7 +39,7 @@
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Padding" Value="32,0"/>
         <Setter Property="MinWidth" Value="128"/>
-        <Setter Property="Height" Value="42"/>
+        <Setter Property="MinHeight" Value="42"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Template">
@@ -72,7 +72,7 @@
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Padding" Value="28,0"/>
         <Setter Property="MinWidth" Value="112"/>
-        <Setter Property="Height" Value="42"/>
+        <Setter Property="MinHeight" Value="42"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="BorderBrush" Value="{StaticResource BorderStrongBrush}"/>
