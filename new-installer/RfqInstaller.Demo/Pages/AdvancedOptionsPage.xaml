@@ -25,19 +25,18 @@
                      Tag="Base64-encoded key" TextChanged="CustomKeyTextBox_TextChanged" Visibility="Collapsed"/>
 
             <TextBlock Text="Service account" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,0,0,8">
+                Choose which account the Windows service should run as. This controls what it can access.
+            </TextBlock>
             <ComboBox x:Name="ServiceAccountCombo" Style="{StaticResource ModernComboBoxStyle}"
                       SelectionChanged="ServiceAccountCombo_SelectionChanged">
-                <ComboBoxItem Content="Local System (recommended, no password needed)"/>
+                <ComboBoxItem Content="Current User (recommended)"/>
                 <ComboBoxItem Content="Network Service"/>
-                <ComboBoxItem Content="Current User"/>
+                <ComboBoxItem Content="Local System"/>
             </ComboBox>
-            <StackPanel x:Name="ServiceAccountPasswordPanel" Visibility="Collapsed" Margin="0,12,0,0">
-                <TextBlock Text="Windows account password" Style="{StaticResource FieldLabelStyle}"/>
-                <PasswordBox x:Name="ServiceAccountPasswordBox" Style="{StaticResource ModernPasswordBoxStyle}"
-                             PasswordChanged="ServiceAccountPasswordBox_PasswordChanged"/>
-                <TextBlock Text="Required because the service will run as your Windows user."
-                           Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0"/>
-            </StackPanel>
+            <TextBlock x:Name="ServiceAccountHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0">
+                Recommended. The service can use passwords stored in your Windows Credential Manager. Windows will ask for this account's password when you click Install; the installer does not save it.
+            </TextBlock>
 
             <TextBlock Text="Reinstalling" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
             <CheckBox x:Name="CleanReinstallCheck" Content="Delete previously downloaded files and start fresh"

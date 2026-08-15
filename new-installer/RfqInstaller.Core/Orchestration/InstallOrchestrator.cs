@@ -218,7 +218,9 @@ public class InstallOrchestrator
         string? currentUserAccount = null;
         if (plan.ServiceAccount == ServiceAccountKind.CurrentUser)
         {
-            currentUserAccount = $"{Environment.UserDomainName}\\{Environment.UserName}";
+            currentUserAccount = plan.ServiceAccountName
+                ?? $"{Environment.UserDomainName}\\{Environment.UserName}";
+            ServiceLogonRight.TryGrant(currentUserAccount);
         }
 
         await nssm.InstallOrReplaceAsync(

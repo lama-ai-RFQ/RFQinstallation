@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using RfqInstaller.Demo.Models;
 
 namespace RfqInstaller.Demo.Pages;
@@ -28,12 +29,13 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         ServiceAccountCombo.SelectedIndex = _state.ServiceAccount switch
         {
             ServiceAccountKind.NetworkService => 1,
-            ServiceAccountKind.CurrentUser => 2,
+            ServiceAccountKind.LocalSystem => 2,
             _ => 0,
         };
 
         CleanReinstallCheck.IsChecked = _state.CleanReinstall;
         CleanupAfterCheck.IsChecked = _state.CleanupAfterInstall;
+        UpdateServiceAccountHelp();
     }
 
     private void ServerUrlTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.ServerUrl = ServerUrlTextBox.Text;
@@ -57,33 +59,36 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         _state.ServiceAccount = ServiceAccountCombo.SelectedIndex switch
         {
             1 => ServiceAccountKind.NetworkService,
-            2 => ServiceAccountKind.CurrentUser,
-            _ => ServiceAccountKind.LocalSystem,
+            2 => ServiceAccountKind.LocalSystem,
+            _ => ServiceAccountKind.CurrentUser,
         };
-
-        if (ServiceAccountPasswordPanel is not null)
-        {
-            ServiceAccountPasswordPanel.Visibility = _state.ServiceAccount == ServiceAccountKind.CurrentUser
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
+        UpdateServiceAccountHelp();
     }
 
-    private void ServiceAccountPasswordBox_PasswordChanged(object sender, RoutedEventArgs e) =>
-        _state.ServiceAccountPassword = ServiceAccountPasswordBox.Password;
+    private void UpdateServiceAccountHelp()
+    {
+        if (ServiceAccountHelp is null)
+        {
+            return;
+        }
+
+        ServiceAccountHelp.Text = _state.ServiceAccount switch
+        {
+            ServiceAccountKind.CurrentUser =>
+                "Recommended. The service can use passwords stored in your Windows Credential Manager. Windows will ask for this account's password when you click Install; the installer does not save it.",
+            ServiceAccountKind.NetworkService =>
+                "Network Service cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation.",
+            _ =>
+                "Local System cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation.",
+        };
+        ServiceAccountHelp.Foreground = _state.ServiceAccount == ServiceAccountKind.CurrentUser
+            ? (Brush)FindResource("TextSecondaryBrush")
+            : new SolidColorBrush(Color.FromRgb(0x8A, 0x00, 0x00));
+    }
 
     private void CleanReinstallCheck_Changed(object sender, RoutedEventArgs e) => _state.CleanReinstall = CleanReinstallCheck.IsChecked == true;
 
     private void CleanupAfterCheck_Changed(object sender, RoutedEventArgs e) => _state.CleanupAfterInstall = CleanupAfterCheck.IsChecked == true;
 
-    public bool Validate()
-    {
-        if (_state.ServiceAccount == ServiceAccountKind.CurrentUser && string.IsNullOrEmpty(_state.ServiceAccountPassword))
-        {
-            ServiceAccountPasswordBox.Focus();
-            return false;
-        }
-
-        return true;
-    }
+    public bool Validate() => true;
 }

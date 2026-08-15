@@ -56,9 +56,10 @@ public class WizardState
 
     public string CustomEncryptionKey { get; set; } = string.Empty;
 
-    public ServiceAccountKind ServiceAccount { get; set; } = ServiceAccountKind.LocalSystem;
+    public ServiceAccountKind ServiceAccount { get; set; } = ServiceAccountKind.CurrentUser;
 
-    /// <summary>Only ever populated when ServiceAccount == CurrentUser, via a styled (non-console) field the user fills in once.</summary>
+    /// <summary>Only ever populated in-memory during install from the Windows credential dialog. Never serialized.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
     public string ServiceAccountPassword { get; set; } = string.Empty;
 
     /// <summary>Set by InstallingPage once the install finishes, so FinishPage knows the real executable path to launch.</summary>

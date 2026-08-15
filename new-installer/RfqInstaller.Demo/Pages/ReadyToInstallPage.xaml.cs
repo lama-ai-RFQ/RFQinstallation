@@ -35,8 +35,8 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
 
         ServiceAccountSummary.Text = state.ServiceAccount switch
         {
+            ServiceAccountKind.CurrentUser => "Current User (recommended)",
             ServiceAccountKind.NetworkService => "Network Service",
-            ServiceAccountKind.CurrentUser => "Current User",
             _ => "Local System",
         };
     }

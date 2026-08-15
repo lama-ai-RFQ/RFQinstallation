@@ -1,8 +1,10 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Orchestration;
+using RfqInstaller.Core.Security;
 using RfqInstaller.Demo.Logging;
 using RfqInstaller.Demo.Models;
 using CoreServiceAccountKind = RfqInstaller.Core.Models.ServiceAccountKind;
@@ -48,7 +50,38 @@ public partial class InstallingPage : UserControl
 
         _cts = new CancellationTokenSource();
 
-        var plan = BuildInstallPlan();
+        string? serviceAccountName = null;
+        string? serviceAccountPassword = null;
+        if (_state.Mode == Models.InstallMode.WindowsService
+            && _state.ServiceAccount == Models.ServiceAccountKind.CurrentUser)
+        {
+            CurrentStepText.Text = "Waiting for Windows account...";
+            var owner = Window.GetWindow(this);
+            var hwnd = owner is not null ? new WindowInteropHelper(owner).Handle : IntPtr.Zero;
+            WindowsAccountCredentials? credentials;
+            try
+            {
+                credentials = Application.Current.Dispatcher.Invoke(
+                    () => WindowsCredentialPrompt.Request(hwnd));
+            }
+            catch (Exception ex)
+            {
+                var logPath = InstallerLog.Write("asking Windows for the service account", ex);
+                FailInstall($"{InstallerLog.FormatUserDetail(ex)}{Environment.NewLine}{Environment.NewLine}Details were saved to:{Environment.NewLine}{logPath}");
+                return;
+            }
+
+            if (credentials is null)
+            {
+                FailInstall("Windows Security was cancelled. The service was not configured to run as your account. Click Go Back to change the service account, or Try Again to enter the password.");
+                return;
+            }
+
+            serviceAccountName = credentials.AccountName;
+            serviceAccountPassword = credentials.Password;
+        }
+
+        var plan = BuildInstallPlan(serviceAccountName, serviceAccountPassword);
         var baseDirectory = AppContext.BaseDirectory;
         var orchestrator = new InstallOrchestrator(
             Path.Combine(baseDirectory, "Bundled", "nssm.exe"),
@@ -84,19 +117,24 @@ public partial class InstallingPage : UserControl
         }
         else
         {
-            if (result.ErrorMessage is not null && !result.ErrorMessage.Contains(InstallerLog.LogPath, StringComparison.OrdinalIgnoreCase))
-            {
-                InstallerLog.Write("installation stopped", extra: result.ErrorMessage);
-            }
-
-            _state.InstallErrorMessage = result.ErrorMessage;
-            ProgressPanel.Visibility = Visibility.Collapsed;
-            ErrorText.Text = result.ErrorMessage ?? "An unknown error occurred during installation.";
-            ErrorPanel.Visibility = Visibility.Visible;
+            FailInstall(result.ErrorMessage ?? "An unknown error occurred during installation.");
         }
     }
 
-    private InstallPlan BuildInstallPlan() => new()
+    private void FailInstall(string message)
+    {
+        if (!message.Contains(InstallerLog.LogPath, StringComparison.OrdinalIgnoreCase))
+        {
+            InstallerLog.Write("installation stopped", extra: message);
+        }
+
+        _state.InstallErrorMessage = message;
+        ProgressPanel.Visibility = Visibility.Collapsed;
+        ErrorText.Text = message;
+        ErrorPanel.Visibility = Visibility.Visible;
+    }
+
+    private InstallPlan BuildInstallPlan(string? serviceAccountName, string? serviceAccountPassword) => new()
     {
         LicenseKey = _state.LicenseKey,
         Mode = _state.Mode == Models.InstallMode.WindowsService ? CoreInstallMode.WindowsService : CoreInstallMode.Standalone,
@@ -116,7 +154,8 @@ public partial class InstallingPage : UserControl
             Models.ServiceAccountKind.CurrentUser => CoreServiceAccountKind.CurrentUser,
             _ => CoreServiceAccountKind.LocalSystem,
         },
-        ServiceAccountPassword = string.IsNullOrEmpty(_state.ServiceAccountPassword) ? null : _state.ServiceAccountPassword,
+        ServiceAccountName = serviceAccountName,
+        ServiceAccountPassword = serviceAccountPassword,
     };
 
     private async void RetryButton_Click(object sender, RoutedEventArgs e) => await RunInstallAsync();

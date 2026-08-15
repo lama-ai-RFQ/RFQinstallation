@@ -34,8 +34,15 @@ public class InstallPlan
     public bool AutoGenerateEncryptionKey { get; init; } = true;
     public string? CustomEncryptionKey { get; init; }
 
-    public ServiceAccountKind ServiceAccount { get; init; } = ServiceAccountKind.LocalSystem;
-    /// <summary>Only populated when ServiceAccount == CurrentUser; the Windows account's own login password, captured once via a styled (non-console) field.</summary>
+    public ServiceAccountKind ServiceAccount { get; init; } = ServiceAccountKind.CurrentUser;
+    /// <summary>
+    /// DOMAIN\user from the Windows credential dialog. Only used when ServiceAccount is CurrentUser.
+    /// </summary>
+    public string? ServiceAccountName { get; init; }
+    /// <summary>
+    /// Windows logon password from the native credential dialog. Held only for this install run
+    /// and passed to NSSM (LSA). Never written to wizard state, logs, or files.
+    /// </summary>
     public string? ServiceAccountPassword { get; init; }
 
     public string UpdateChannel { get; init; } = "customer";
