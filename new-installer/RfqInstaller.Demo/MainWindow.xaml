@@ -1,0 +1,89 @@
+<Window x:Class="RfqInstaller.Demo.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:RfqInstaller.Demo"
+        mc:Ignorable="d"
+        Title="RFQ Application Setup (Demo)"
+        Icon="/Assets/scint.png"
+        Height="660" Width="1000"
+        MinHeight="660" MinWidth="1000"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource AppBackgroundBrush}"
+        FontFamily="Segoe UI Variable Text, Segoe UI">
+    <Border BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="40"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Background="{StaticResource TitleBarBrush}"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="RFQ Application Setup (Demo)" Margin="16,0,0,0"
+                           VerticalAlignment="Center" FontSize="12"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="&#xE921;" Style="{StaticResource CaptionButtonStyle}"
+                            Click="Minimize_Click" ToolTip="Minimize"/>
+                    <Button Content="&#xE8BB;" Style="{StaticResource CaptionCloseButtonStyle}"
+                            Click="Close_Click" ToolTip="Close"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="250"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Background="{StaticResource RailBackgroundBrush}"
+                        BorderBrush="{StaticResource BorderBrush2}" BorderThickness="0,0,1,0">
+                    <StackPanel Margin="32,36,20,20">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,40">
+                            <Border Width="34" Height="34" CornerRadius="8"
+                                    Background="{StaticResource CardBackgroundBrush}"
+                                    BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1">
+                                <Image Source="/Assets/scint.png" Stretch="Uniform" Margin="5"/>
+                            </Border>
+                            <TextBlock Text="RFQ Application" Margin="10,0,0,0" FontSize="15" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ItemsControl x:Name="RailItemsControl"
+                                      ItemTemplate="{StaticResource RailStepTemplate}"/>
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ContentControl x:Name="PageHost" Grid.Row="0" Margin="56,44,56,20"/>
+
+                    <Border Grid.Row="1" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="0,1,0,0"
+                            Padding="56,16">
+                        <Grid>
+                            <Button x:Name="BackButton" Content="Back" HorizontalAlignment="Left"
+                                    Style="{StaticResource SecondaryButtonStyle}" Click="Back_Click"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="CancelButton" Content="Cancel" Margin="0,0,10,0"
+                                        Style="{StaticResource SecondaryButtonStyle}" Click="Cancel_Click"/>
+                                <Button x:Name="NextButton" Content="Next"
+                                        Style="{StaticResource PrimaryButtonStyle}" Click="Next_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

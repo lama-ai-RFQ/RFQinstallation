@@ -1,0 +1,24 @@
+<UserControl x:Class="RfqInstaller.Demo.Pages.LicenseKeyPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="600">
+    <StackPanel MaxWidth="500" HorizontalAlignment="Left">
+        <TextBlock Text="Activate your license" Style="{StaticResource PageTitleStyle}"/>
+        <TextBlock Style="{StaticResource PageSubtitleStyle}">
+            Enter the license key you received when you purchased RFQ Application. This single
+            key activates and configures your installation.
+        </TextBlock>
+
+        <TextBlock Text="License key" Style="{StaticResource FieldLabelStyle}" Margin="0,32,0,6"/>
+        <TextBox x:Name="LicenseKeyTextBox" Style="{StaticResource ModernTextBoxStyle}"
+                 FontSize="15" TextChanged="LicenseKeyTextBox_TextChanged"
+                 Tag="e.g. RFQ-XXXXX-XXXXX-XXXXX-XXXXX"/>
+        <TextBlock x:Name="ErrorText" Text="Please enter a license key to continue." Foreground="#C42B1C"
+                   FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"/>
+
+        <Button x:Name="NoKeyLink" Content="Don't have a key?" Style="{StaticResource LinkButtonStyle}"
+                Margin="0,20,0,0" Click="NoKeyLink_Click"/>
+    </StackPanel>
+</UserControl>
