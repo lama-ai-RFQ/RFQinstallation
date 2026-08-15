@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using RfqInstaller.Demo.Debug;
 using RfqInstaller.Demo.Models;
 
 namespace RfqInstaller.Demo.Pages;
@@ -10,7 +11,9 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
     {
         InitializeComponent();
 
-        LicenseKeySummary.Text = MaskLicenseKey(state.LicenseKey);
+        LicenseKeySummary.Text = InstallerDebug.ShouldSkip(WizardStep.License)
+            ? "Skipped (debug)"
+            : MaskLicenseKey(state.LicenseKey);
         ModeSummary.Text = state.Mode == InstallMode.WindowsService
             ? "Windows Service (starts automatically)"
             : "Standalone application";

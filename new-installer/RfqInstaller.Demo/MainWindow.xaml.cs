@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using RfqInstaller.Core.Elevation;
+using RfqInstaller.Demo.Debug;
 using RfqInstaller.Demo.Dialogs;
 using RfqInstaller.Demo.Models;
 using RfqInstaller.Demo.Pages;
@@ -30,6 +31,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        if (InstallerDebug.Enabled)
+        {
+            DebugBadge.Visibility = Visibility.Visible;
+        }
 
         if (TryLoadResumeState(out var resumed))
         {
@@ -172,7 +178,29 @@ public partial class MainWindow : Window
         Close();
     }
 
-    private WizardStep GetNext(WizardStep current) => current switch
+    private WizardStep GetNext(WizardStep current)
+    {
+        var next = NextStep(current);
+        while (InstallerDebug.ShouldSkip(next) && next != WizardStep.Finish)
+        {
+            next = NextStep(next);
+        }
+
+        return next;
+    }
+
+    private WizardStep GetPrevious(WizardStep current)
+    {
+        var prev = PreviousStep(current);
+        while (InstallerDebug.ShouldSkip(prev) && prev != WizardStep.Welcome)
+        {
+            prev = PreviousStep(prev);
+        }
+
+        return prev;
+    }
+
+    private WizardStep NextStep(WizardStep current) => current switch
     {
         WizardStep.Welcome => WizardStep.License,
         WizardStep.License => WizardStep.InstallMode,
@@ -188,7 +216,7 @@ public partial class MainWindow : Window
         _ => WizardStep.Finish
     };
 
-    private WizardStep GetPrevious(WizardStep current) => current switch
+    private WizardStep PreviousStep(WizardStep current) => current switch
     {
         WizardStep.License => WizardStep.Welcome,
         WizardStep.InstallMode => WizardStep.License,

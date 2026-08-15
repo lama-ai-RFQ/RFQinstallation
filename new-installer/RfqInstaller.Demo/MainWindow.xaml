@@ -27,9 +27,16 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="RFQ Application Setup" Margin="16,0,0,0"
-                           VerticalAlignment="Center" FontSize="12"
-                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <TextBlock Text="RFQ Application Setup" FontSize="12"
+                               Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                    <Border x:Name="DebugBadge" Margin="10,0,0,0" Padding="6,1" CornerRadius="3"
+                            Background="{StaticResource AccentSoftBrush}" Visibility="Collapsed"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="Debug" FontSize="10" FontWeight="SemiBold"
+                                   Foreground="{StaticResource AccentBrush}"/>
+                    </Border>
+                </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button Content="&#xE921;" Style="{StaticResource CaptionButtonStyle}"
                             Click="Minimize_Click" ToolTip="Minimize"/>

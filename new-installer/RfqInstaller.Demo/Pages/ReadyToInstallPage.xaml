@@ -11,38 +11,42 @@
         </TextBlock>
 
         <Border Style="{StaticResource CardBorderStyle}" Margin="0,28,0,0">
-            <StackPanel x:Name="SummaryPanel">
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                    <TextBlock Text="License key" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <TextBlock x:Name="LicenseKeySummary" FontWeight="SemiBold"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
+            <ScrollViewer Style="{StaticResource ModernScrollViewerStyle}"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="SummaryPanel">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                        <TextBlock Text="License key" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="LicenseKeySummary" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                        <TextBlock Text="Run mode" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="ModeSummary" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                        <TextBlock Text="Install folder" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="PathSummary" FontWeight="SemiBold" TextWrapping="NoWrap"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel x:Name="ShortcutRow" Orientation="Horizontal" Margin="0,0,0,16">
+                        <TextBlock Text="Desktop shortcut" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="ShortcutSummary" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                        <TextBlock Text="AI model" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="ModelSummary" FontWeight="SemiBold" TextWrapping="NoWrap"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Service account" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="ServiceAccountSummary" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                    <TextBlock Text="Run mode" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <TextBlock x:Name="ModeSummary" FontWeight="SemiBold"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                    <TextBlock Text="Install folder" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <TextBlock x:Name="PathSummary" FontWeight="SemiBold" TextWrapping="Wrap"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                </StackPanel>
-                <StackPanel x:Name="ShortcutRow" Orientation="Horizontal" Margin="0,0,0,16">
-                    <TextBlock Text="Desktop shortcut" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <TextBlock x:Name="ShortcutSummary" FontWeight="SemiBold"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                    <TextBlock Text="AI model" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <TextBlock x:Name="ModelSummary" FontWeight="SemiBold" TextWrapping="Wrap"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Service account" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <TextBlock x:Name="ServiceAccountSummary" FontWeight="SemiBold"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                </StackPanel>
-            </StackPanel>
+            </ScrollViewer>
         </Border>
     </StackPanel>
 </UserControl>
