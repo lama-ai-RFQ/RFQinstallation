@@ -40,10 +40,10 @@ public partial class MainWindow : Window
             DebugBadge.Visibility = Visibility.Visible;
         }
 
-        if (TryLoadResumeState(out var resumed))
+        if (TryLoadResumeState(out var resumed, out var resumeStep))
         {
             _state = resumed!;
-            GoTo(WizardStep.Installing);
+            GoTo(resumeStep);
         }
         else
         {
@@ -51,15 +51,22 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Written to the temp hand-off file whenever this process relaunches itself elevated — carries its own resume target so it can never drift out of sync with wherever elevation was actually triggered from.</summary>
+    private class ElevationHandoff
+    {
+        public WizardState State { get; set; } = new();
+        public WizardStep ResumeStep { get; set; }
+    }
+
     /// <summary>
-    /// If this process was relaunched elevated (see <see cref="TryElevateAndResume"/>), the wizard
-    /// state was handed off via a temp JSON file whose path is the sole command-line argument.
-    /// Loading it here lets the elevated instance jump straight to the Installing step instead of
-    /// re-asking the user everything.
+    /// If this process was relaunched elevated (see <see cref="HandleElevationIfNeeded"/>), the
+    /// wizard state — and exactly which step to resume at — was handed off via a temp JSON file
+    /// whose path is the sole command-line argument.
     /// </summary>
-    private static bool TryLoadResumeState(out WizardState? state)
+    private static bool TryLoadResumeState(out WizardState? state, out WizardStep resumeStep)
     {
         state = null;
+        resumeStep = WizardStep.Welcome;
         var args = Environment.GetCommandLineArgs();
         if (args.Length != 2 || !File.Exists(args[1]))
         {
@@ -69,7 +76,9 @@ public partial class MainWindow : Window
         try
         {
             var json = File.ReadAllText(args[1]);
-            state = JsonSerializer.Deserialize<WizardState>(json);
+            var handoff = JsonSerializer.Deserialize<ElevationHandoff>(json);
+            state = handoff?.State;
+            resumeStep = handoff?.ResumeStep ?? WizardStep.Welcome;
             File.Delete(args[1]);
             return state is not null;
         }
@@ -131,17 +140,36 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // Elevate (if needed) as soon as Mode + InstallPath are both known, right before
-            // SettingsPassword — not at ReadyToInstall. Every page from here on (SettingsPassword,
-            // ModelDownload, Advanced, ReadyToInstall) collects real data, including a
-            // human-chosen password, and none of it should have to survive a UAC-relaunch
-            // temp-file hand-off. Safe to re-check on every forward navigation: a no-op once
-            // already elevated.
-            if (GetNext(_current) == WizardStep.SettingsPassword && TryElevateAndResume())
+            // Elevate as early as each mode actually determines it's needed — never assuming the
+            // current account is already an administrator, and never collecting so much as one
+            // page of data before knowing whether elevation will even succeed:
+            //  - Windows Service always needs it, decided the moment that's chosen, so a decline
+            //    leaves "Run as a standalone application" one click away on the very same page.
+            //  - Standalone only needs it if the install path itself turns out to be privileged
+            //    (e.g. Program Files), which isn't known until InstallLocation is chosen.
+            // Both reuse the same check/relaunch logic; it's a no-op once already elevated.
+            if (_current == WizardStep.InstallMode && _state.Mode == InstallMode.WindowsService)
             {
-                // A new elevated process has taken over; this instance exits without installing.
-                Close();
-                return;
+                switch (HandleElevationIfNeeded(WizardStep.InstallLocation))
+                {
+                    case ElevationOutcome.RelaunchedElevated:
+                        Close();
+                        return;
+                    case ElevationOutcome.Declined:
+                        // Stay on InstallMode — Standalone is right there to switch to, or Next tries again.
+                        return;
+                }
+            }
+            else if (_current == WizardStep.InstallLocation)
+            {
+                switch (HandleElevationIfNeeded(GetNext(_current)))
+                {
+                    case ElevationOutcome.RelaunchedElevated:
+                        Close();
+                        return;
+                    case ElevationOutcome.Declined:
+                        return;
+                }
             }
 
             GoTo(GetNext(_current));
@@ -152,34 +180,63 @@ public partial class MainWindow : Window
         }
     }
 
+    private enum ElevationOutcome
+    {
+        NotNeeded,
+        RelaunchedElevated,
+        Declined,
+    }
+
     /// <summary>
     /// Service installs (and standalone installs into a machine-wide folder like Program Files)
     /// need admin rights. Rather than always demanding elevation at startup like the old Inno
-    /// installer, we only ask for it right before it's actually needed, and only once.
+    /// installer, we only ask for it right before it's actually needed, and only once — but we
+    /// explain why first, in our own dialog, before Windows' own UAC prompt appears, so it never
+    /// just pops up out of nowhere. Never assumes the current account is already an administrator:
+    /// whether Windows' own approval step ends up being a one-click consent or a full credential
+    /// prompt depends on the account and the machine's policy, neither of which we assume here.
     /// </summary>
-    private bool TryElevateAndResume()
+    private ElevationOutcome HandleElevationIfNeeded(WizardStep resumeStep)
     {
         if (ElevationHelper.IsElevated() || !ElevationHelper.RequiresElevation(
                 _state.Mode == InstallMode.WindowsService ? Core.Models.InstallMode.WindowsService : Core.Models.InstallMode.Standalone,
                 _state.InstallPath))
         {
-            return false;
+            return ElevationOutcome.NotNeeded;
+        }
+
+        // This is about the *installer process* being allowed to register a Windows service and
+        // write to a system folder — a Windows OS restriction that applies no matter which account
+        // the service will run as. It's unrelated to the Current User password step later (if
+        // applicable): that step never needs an administrator account, just some account's
+        // password, and only happens after this one, on a separate page.
+        if (!AppDialog.Confirm(
+            this,
+            "Administrator approval needed",
+            "Registering a Windows service (or installing into a system folder) requires administrator approval for this installer, regardless of which account the service will run as. Windows will ask you to approve this now.",
+            confirmText: "Continue",
+            dismissText: "Cancel"))
+        {
+            return ElevationOutcome.Declined;
         }
 
         var tempFile = Path.Combine(Path.GetTempPath(), $"rfq-installer-state-{Guid.NewGuid():N}.json");
-        File.WriteAllText(tempFile, JsonSerializer.Serialize(_state));
+        File.WriteAllText(tempFile, JsonSerializer.Serialize(new ElevationHandoff { State = _state, ResumeStep = resumeStep }));
 
         var process = ElevationHelper.RelaunchElevated(new[] { tempFile });
         if (process is null)
         {
-            // User declined the UAC prompt — stay on this page so they can try again or cancel.
+            // Declined (or failed) the actual UAC prompt — stay put. If Windows Service is still
+            // selected, Next tries again; Standalone is available on the same page as an
+            // immediate alternative that needs no approval at all (unless its install path is
+            // itself privileged).
             TryDeleteQuietly(tempFile);
-            AppDialog.Inform(this, "Administrator rights required",
-                "Installing as a Windows service (or into a system folder) requires administrator approval. Please try again and accept the prompt.");
-            return false;
+            AppDialog.Inform(this, "Administrator approval required",
+                "Administrator approval wasn't given, so this can't continue as a Windows service (or into that folder) right now. Click Next to try again, or choose \"Run as a standalone application\" instead.");
+            return ElevationOutcome.Declined;
         }
 
-        return true;
+        return ElevationOutcome.RelaunchedElevated;
     }
 
     private static void TryDeleteQuietly(string path)
@@ -236,7 +293,12 @@ public partial class MainWindow : Window
         WizardStep.DesktopShortcut => WizardStep.SettingsPassword,
         WizardStep.SettingsPassword => WizardStep.ModelDownload,
         WizardStep.ModelDownload => WizardStep.Advanced,
-        WizardStep.Advanced => WizardStep.ReadyToInstall,
+        // Only Current User needs Windows to confirm an account/password — Network Service and
+        // Local System need no credential at all, so there's nothing to confirm for them.
+        WizardStep.Advanced => NeedsServiceAccountConfirm()
+            ? WizardStep.ServiceAccountConfirm
+            : WizardStep.ReadyToInstall,
+        WizardStep.ServiceAccountConfirm => WizardStep.ReadyToInstall,
         WizardStep.ReadyToInstall => WizardStep.Installing,
         WizardStep.Installing => WizardStep.Finish,
         _ => WizardStep.Finish
@@ -253,9 +315,15 @@ public partial class MainWindow : Window
             : WizardStep.InstallLocation,
         WizardStep.ModelDownload => WizardStep.SettingsPassword,
         WizardStep.Advanced => WizardStep.ModelDownload,
-        WizardStep.ReadyToInstall => WizardStep.Advanced,
+        WizardStep.ServiceAccountConfirm => WizardStep.Advanced,
+        WizardStep.ReadyToInstall => NeedsServiceAccountConfirm()
+            ? WizardStep.ServiceAccountConfirm
+            : WizardStep.Advanced,
         _ => WizardStep.Welcome
     };
+
+    private bool NeedsServiceAccountConfirm() =>
+        _state.Mode == InstallMode.WindowsService && _state.ServiceAccount == ServiceAccountKind.CurrentUser;
 
     private void GoTo(WizardStep step)
     {
@@ -286,6 +354,7 @@ public partial class MainWindow : Window
         WizardStep.ModelDownload => new ModelDownloadPage(_state),
         WizardStep.SettingsPassword => new SettingsPasswordPage(_state),
         WizardStep.Advanced => new AdvancedOptionsPage(_state),
+        WizardStep.ServiceAccountConfirm => new ServiceAccountConfirmPage(_state, GoTo),
         WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
         WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), GoTo),
         WizardStep.Finish => new FinishPage(_state),
@@ -351,6 +420,7 @@ public partial class MainWindow : Window
         WizardStep.ModelDownload => "AI model download page",
         WizardStep.SettingsPassword => "Settings password page",
         WizardStep.Advanced => "Advanced options page",
+        WizardStep.ServiceAccountConfirm => "Windows account confirmation page",
         WizardStep.ReadyToInstall => "Ready to install page",
         WizardStep.Installing => "installation",
         WizardStep.Finish => "finish page",
@@ -410,6 +480,7 @@ public partial class MainWindow : Window
         WizardStep.SettingsPassword => 3,
         WizardStep.ModelDownload => 4,
         WizardStep.Advanced => 4,
+        WizardStep.ServiceAccountConfirm => 5, // conditional step; shares Ready to Install's slot rather than its own label so the rail doesn't visually "skip" a step when it doesn't apply
         WizardStep.ReadyToInstall => 5,
         WizardStep.Installing => 6,
         WizardStep.Finish => 7,

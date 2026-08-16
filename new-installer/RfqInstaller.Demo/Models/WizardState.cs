@@ -25,6 +25,7 @@ public enum WizardStep
     ModelDownload,
     SettingsPassword,
     Advanced,
+    ServiceAccountConfirm,
     ReadyToInstall,
     Installing,
     Finish,
@@ -68,9 +69,23 @@ public class WizardState
 
     public ServiceAccountKind ServiceAccount { get; set; } = ServiceAccountKind.CurrentUser;
 
-    /// <summary>Only ever populated in-memory during install from the Windows credential dialog. Never serialized.</summary>
+    /// <summary>
+    /// Set by ServiceAccountConfirmPage once Windows Security succeeds — this is its own wizard
+    /// step (not something InstallingPage triggers as a side effect), so a cancelled/failed
+    /// attempt leaves the user sitting on that page with Back/Try Again/switch-account options,
+    /// instead of jumping into the "Installing" step before anything has actually been confirmed.
+    /// Neither field is ever serialized: both are only ever populated after the wizard's elevation
+    /// checkpoint has already run.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string ServiceAccountName { get; set; } = string.Empty;
+
     [System.Text.Json.Serialization.JsonIgnore]
     public string ServiceAccountPassword { get; set; } = string.Empty;
+
+    /// <summary>True once ServiceAccountConfirmPage has successfully obtained Windows credentials for this run.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ServiceAccountConfirmed { get; set; }
 
     /// <summary>Set by InstallingPage once the install finishes, so FinishPage knows the real executable path to launch.</summary>
     public string? ResolvedMainExecutablePath { get; set; }

@@ -1,10 +1,8 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Interop;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Orchestration;
-using RfqInstaller.Core.Security;
 using RfqInstaller.Demo.Logging;
 using RfqInstaller.Demo.Models;
 using CoreServiceAccountKind = RfqInstaller.Core.Models.ServiceAccountKind;
@@ -12,6 +10,12 @@ using CoreInstallMode = RfqInstaller.Core.Models.InstallMode;
 
 namespace RfqInstaller.Demo.Pages;
 
+/// <summary>
+/// Purely the real install work — the Windows-account credential (when needed) is obtained
+/// earlier by ServiceAccountConfirmPage, a real wizard step of its own, so this page can assume it
+/// already has everything it needs and never has to distinguish "need different input" from
+/// "something actually broke."
+/// </summary>
 public partial class InstallingPage : UserControl
 {
     private readonly WizardState _state;
@@ -42,7 +46,6 @@ public partial class InstallingPage : UserControl
     private async Task RunInstallAsync()
     {
         ProgressPanel.Visibility = Visibility.Visible;
-        CredentialNeededPanel.Visibility = Visibility.Collapsed;
         ErrorPanel.Visibility = Visibility.Collapsed;
         Progress.Value = 0;
         PercentText.Text = "0%";
@@ -51,43 +54,7 @@ public partial class InstallingPage : UserControl
 
         _cts = new CancellationTokenSource();
 
-        string? serviceAccountName = null;
-        string? serviceAccountPassword = null;
-        if (_state.Mode == Models.InstallMode.WindowsService
-            && _state.ServiceAccount == Models.ServiceAccountKind.CurrentUser)
-        {
-            CurrentStepText.Text = "Waiting for Windows account...";
-            var owner = Window.GetWindow(this);
-            var hwnd = owner is not null ? new WindowInteropHelper(owner).Handle : IntPtr.Zero;
-            WindowsAccountCredentials? credentials;
-            try
-            {
-                credentials = Application.Current.Dispatcher.Invoke(
-                    () => WindowsCredentialPrompt.Request(hwnd));
-            }
-            catch (Exception ex)
-            {
-                var logPath = InstallerLog.Write("asking Windows for the service account", ex);
-                ShowCredentialNeeded(
-                    "Windows couldn't show the account/password dialog "
-                    + $"({InstallerLog.FormatUserDetail(ex)}). Details were saved to {logPath}.");
-                return;
-            }
-
-            if (credentials is null)
-            {
-                ShowCredentialNeeded("Windows Security was closed without entering a password, so the service wasn't configured yet. Nothing has been installed — pick how you'd like to continue.");
-                return;
-            }
-
-            serviceAccountName = credentials.AccountName;
-            serviceAccountPassword = credentials.Password;
-        }
-
-        // Nothing above this point touches the system — only from here does the orchestrator
-        // start downloading files, provisioning the database, and registering services. That's
-        // the actual "installation," so only a failure at or after this point is treated as one.
-        var plan = BuildInstallPlan(serviceAccountName, serviceAccountPassword);
+        var plan = BuildInstallPlan();
         var baseDirectory = AppContext.BaseDirectory;
         var orchestrator = new InstallOrchestrator(
             Path.Combine(baseDirectory, "Bundled", "nssm.exe"),
@@ -127,18 +94,6 @@ public partial class InstallingPage : UserControl
         }
     }
 
-    /// <summary>
-    /// The Windows account/password step happens before any real install work starts, so a
-    /// cancellation or failure there isn't a broken install — it's a request for different input.
-    /// Offers concrete next steps instead of the generic failure panel.
-    /// </summary>
-    private void ShowCredentialNeeded(string message)
-    {
-        ProgressPanel.Visibility = Visibility.Collapsed;
-        CredentialNeededText.Text = message;
-        CredentialNeededPanel.Visibility = Visibility.Visible;
-    }
-
     private void FailInstall(string message)
     {
         if (!message.Contains(InstallerLog.LogPath, StringComparison.OrdinalIgnoreCase))
@@ -152,7 +107,7 @@ public partial class InstallingPage : UserControl
         ErrorPanel.Visibility = Visibility.Visible;
     }
 
-    private InstallPlan BuildInstallPlan(string? serviceAccountName, string? serviceAccountPassword) => new()
+    private InstallPlan BuildInstallPlan() => new()
     {
         LicenseKey = _state.LicenseKey,
         Mode = _state.Mode == Models.InstallMode.WindowsService ? CoreInstallMode.WindowsService : CoreInstallMode.Standalone,
@@ -173,21 +128,11 @@ public partial class InstallingPage : UserControl
             Models.ServiceAccountKind.CurrentUser => CoreServiceAccountKind.CurrentUser,
             _ => CoreServiceAccountKind.LocalSystem,
         },
-        ServiceAccountName = serviceAccountName,
-        ServiceAccountPassword = serviceAccountPassword,
+        ServiceAccountName = string.IsNullOrEmpty(_state.ServiceAccountName) ? null : _state.ServiceAccountName,
+        ServiceAccountPassword = string.IsNullOrEmpty(_state.ServiceAccountPassword) ? null : _state.ServiceAccountPassword,
     };
 
     private async void RetryButton_Click(object sender, RoutedEventArgs e) => await RunInstallAsync();
 
     private void BackToReviewButton_Click(object sender, RoutedEventArgs e) => _onNavigateTo(WizardStep.ReadyToInstall);
-
-    private async void CredentialRetryButton_Click(object sender, RoutedEventArgs e) => await RunInstallAsync();
-
-    private void ChangeServiceAccountButton_Click(object sender, RoutedEventArgs e) => _onNavigateTo(WizardStep.Advanced);
-
-    private void SwitchToStandaloneButton_Click(object sender, RoutedEventArgs e)
-    {
-        _state.Mode = Models.InstallMode.Standalone;
-        _onNavigateTo(WizardStep.InstallMode);
-    }
 }

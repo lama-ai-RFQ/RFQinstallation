@@ -24,27 +24,6 @@
                        TextTrimming="CharacterEllipsis"/>
         </StackPanel>
 
-        <!--
-            Shown when Windows Security is cancelled/fails while asking for the service account's
-            password. Nothing has been downloaded or changed on the system yet at this point, so
-            this is treated as "we need different input," not "the installation failed" — three
-            concrete ways forward, not a generic error.
-        -->
-        <StackPanel x:Name="CredentialNeededPanel" Visibility="Collapsed" Margin="0,8,0,0">
-            <TextBlock Text="Windows account password needed" Style="{StaticResource PageTitleStyle}"/>
-            <TextBlock x:Name="CredentialNeededText" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap"/>
-            <StackPanel Margin="0,24,0,0">
-                <Button x:Name="CredentialRetryButton" Content="Try Again" Style="{StaticResource PrimaryButtonStyle}"
-                        HorizontalAlignment="Left" Click="CredentialRetryButton_Click"/>
-                <Button x:Name="ChangeServiceAccountButton" Content="Choose a different service account"
-                        Style="{StaticResource LinkButtonStyle}" HorizontalAlignment="Left" Margin="0,14,0,0"
-                        Click="ChangeServiceAccountButton_Click"/>
-                <Button x:Name="SwitchToStandaloneButton" Content="Install as a standalone application instead (no service account needed)"
-                        Style="{StaticResource LinkButtonStyle}" HorizontalAlignment="Left" Margin="0,10,0,0"
-                        Click="SwitchToStandaloneButton_Click"/>
-            </StackPanel>
-        </StackPanel>
-
         <StackPanel x:Name="ErrorPanel" Visibility="Collapsed" Margin="0,8,0,0">
             <TextBlock Text="Installation failed" Style="{StaticResource PageTitleStyle}" Foreground="#C42B1C"/>
             <TextBlock x:Name="ErrorText" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap"/>

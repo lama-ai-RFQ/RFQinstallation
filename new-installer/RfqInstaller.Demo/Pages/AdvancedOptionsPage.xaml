@@ -25,8 +25,9 @@
                      Tag="Base64-encoded key" TextChanged="CustomKeyTextBox_TextChanged" Visibility="Collapsed"/>
 
             <TextBlock Text="Service account" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
-            <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,0,0,8">
-                Choose which account the Windows service should run as. This controls what it can access.
+            <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,0,0,8" TextWrapping="Wrap">
+                Which Windows identity the background service uses. Does not need to be an administrator
+                account, even for Current User.
             </TextBlock>
             <ComboBox x:Name="ServiceAccountCombo" Style="{StaticResource ModernComboBoxStyle}"
                       SelectionChanged="ServiceAccountCombo_SelectionChanged">
@@ -34,9 +35,7 @@
                 <ComboBoxItem Content="Network Service"/>
                 <ComboBoxItem Content="Local System"/>
             </ComboBox>
-            <TextBlock x:Name="ServiceAccountHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0">
-                Recommended. The service can use passwords stored in your Windows Credential Manager. Windows will ask for this account's password when you click Install; the installer does not save it.
-            </TextBlock>
+            <TextBlock x:Name="ServiceAccountHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0" TextWrapping="Wrap"/>
 
             <TextBlock Text="Reinstalling" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
             <CheckBox x:Name="CleanReinstallCheck" Content="Delete previously downloaded files and start fresh"

@@ -75,11 +75,12 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         ServiceAccountHelp.Text = _state.ServiceAccount switch
         {
             ServiceAccountKind.CurrentUser =>
-                "Recommended. The service can use passwords stored in your Windows Credential Manager. Windows will ask for this account's password when you click Install; the installer does not save it.",
+                "Recommended. The service can use passwords stored in your Windows Credential Manager. " +
+                "Windows will separately ask you to confirm this account's own password on the next page — a one-time step for the service to log on as this account, unrelated to administrator rights.",
             ServiceAccountKind.NetworkService =>
-                "Network Service cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation.",
+                "Network Service cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation. No password is needed for this account.",
             _ =>
-                "Local System cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation.",
+                "Local System cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation. No password is needed for this account.",
         };
         ServiceAccountHelp.Foreground = _state.ServiceAccount == ServiceAccountKind.CurrentUser
             ? (Brush)FindResource("TextSecondaryBrush")
