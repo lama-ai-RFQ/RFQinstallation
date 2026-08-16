@@ -145,6 +145,7 @@ public partial class InstallingPage : UserControl
         ModelPath = _state.ModelPath,
         CleanReinstall = _state.CleanReinstall,
         CleanupAfterInstall = _state.CleanupAfterInstall,
+        SettingsPassword = _state.SettingsPassword,
         ServerUrl = _state.ServerUrl,
         AutoGenerateEncryptionKey = _state.AutoGenerateEncryptionKey,
         CustomEncryptionKey = string.IsNullOrWhiteSpace(_state.CustomEncryptionKey) ? null : _state.CustomEncryptionKey,

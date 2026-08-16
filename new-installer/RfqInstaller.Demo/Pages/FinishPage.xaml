@@ -16,6 +16,9 @@
         </StackPanel>
         <TextBlock x:Name="SummaryText" Style="{StaticResource PageSubtitleStyle}"/>
 
+        <TextBlock Text="Use the Settings page password you created earlier during setup to access Settings within the application."
+                   Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,16,0,0"/>
+
         <CheckBox x:Name="LaunchCheckBox" Content="Launch RFQ Application" IsChecked="True"
                   Style="{StaticResource ModernCheckBoxStyle}" Margin="0,28,0,0"/>
     </StackPanel>

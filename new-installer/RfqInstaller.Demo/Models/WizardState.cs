@@ -23,6 +23,7 @@ public enum WizardStep
     InstallLocation,
     DesktopShortcut,
     ModelDownload,
+    SettingsPassword,
     Advanced,
     ReadyToInstall,
     Installing,
@@ -49,6 +50,15 @@ public class WizardState
     public bool CleanReinstall { get; set; } = true;
 
     public bool CleanupAfterInstall { get; set; } = true;
+
+    /// <summary>
+    /// Chosen (or generated-and-shown) by the admin on SettingsPasswordPage. Never serialized: the
+    /// wizard's elevation checkpoint was moved to right after InstallLocation specifically so this
+    /// page — and every page after it — always runs in the process that will actually perform the
+    /// install, and this value never needs to survive the UAC-relaunch temp-file hand-off.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string SettingsPassword { get; set; } = string.Empty;
 
     public string ServerUrl { get; set; } = "https://localhost";
 

@@ -20,6 +20,7 @@ public partial class MainWindow : Window
         "Welcome",
         "License Key",
         "Setup Options",
+        "Security",
         "Model & Advanced",
         "Ready to Install",
         "Installing",
@@ -130,7 +131,13 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (_current == WizardStep.ReadyToInstall && TryElevateAndResume())
+            // Elevate (if needed) as soon as Mode + InstallPath are both known, right before
+            // SettingsPassword — not at ReadyToInstall. Every page from here on (SettingsPassword,
+            // ModelDownload, Advanced, ReadyToInstall) collects real data, including a
+            // human-chosen password, and none of it should have to survive a UAC-relaunch
+            // temp-file hand-off. Safe to re-check on every forward navigation: a no-op once
+            // already elevated.
+            if (GetNext(_current) == WizardStep.SettingsPassword && TryElevateAndResume())
             {
                 // A new elevated process has taken over; this instance exits without installing.
                 Close();
@@ -225,8 +232,9 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => WizardStep.InstallLocation,
         WizardStep.InstallLocation => _state.Mode == InstallMode.Standalone
             ? WizardStep.DesktopShortcut
-            : WizardStep.ModelDownload,
-        WizardStep.DesktopShortcut => WizardStep.ModelDownload,
+            : WizardStep.SettingsPassword,
+        WizardStep.DesktopShortcut => WizardStep.SettingsPassword,
+        WizardStep.SettingsPassword => WizardStep.ModelDownload,
         WizardStep.ModelDownload => WizardStep.Advanced,
         WizardStep.Advanced => WizardStep.ReadyToInstall,
         WizardStep.ReadyToInstall => WizardStep.Installing,
@@ -240,9 +248,10 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => WizardStep.License,
         WizardStep.InstallLocation => WizardStep.InstallMode,
         WizardStep.DesktopShortcut => WizardStep.InstallLocation,
-        WizardStep.ModelDownload => _state.Mode == InstallMode.Standalone
+        WizardStep.SettingsPassword => _state.Mode == InstallMode.Standalone
             ? WizardStep.DesktopShortcut
             : WizardStep.InstallLocation,
+        WizardStep.ModelDownload => WizardStep.SettingsPassword,
         WizardStep.Advanced => WizardStep.ModelDownload,
         WizardStep.ReadyToInstall => WizardStep.Advanced,
         _ => WizardStep.Welcome
@@ -275,6 +284,7 @@ public partial class MainWindow : Window
         WizardStep.InstallLocation => new InstallLocationPage(_state),
         WizardStep.DesktopShortcut => new DesktopShortcutPage(_state),
         WizardStep.ModelDownload => new ModelDownloadPage(_state),
+        WizardStep.SettingsPassword => new SettingsPasswordPage(_state),
         WizardStep.Advanced => new AdvancedOptionsPage(_state),
         WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
         WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), () => GoTo(WizardStep.ReadyToInstall)),
@@ -339,6 +349,7 @@ public partial class MainWindow : Window
         WizardStep.InstallLocation => "install location page",
         WizardStep.DesktopShortcut => "desktop shortcut page",
         WizardStep.ModelDownload => "AI model download page",
+        WizardStep.SettingsPassword => "Settings password page",
         WizardStep.Advanced => "Advanced options page",
         WizardStep.ReadyToInstall => "Ready to install page",
         WizardStep.Installing => "installation",
@@ -396,12 +407,13 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => 2,
         WizardStep.InstallLocation => 2,
         WizardStep.DesktopShortcut => 2,
-        WizardStep.ModelDownload => 3,
-        WizardStep.Advanced => 3,
-        WizardStep.ReadyToInstall => 4,
-        WizardStep.Installing => 5,
-        WizardStep.Finish => 6,
-        WizardStep.Failed => 5,
+        WizardStep.SettingsPassword => 3,
+        WizardStep.ModelDownload => 4,
+        WizardStep.Advanced => 4,
+        WizardStep.ReadyToInstall => 5,
+        WizardStep.Installing => 6,
+        WizardStep.Finish => 7,
+        WizardStep.Failed => 6,
         _ => 0
     };
 

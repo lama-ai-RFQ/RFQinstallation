@@ -30,6 +30,13 @@ public class InstallPlan
     public bool CleanReinstall { get; init; }
     public bool CleanupAfterInstall { get; init; } = true;
 
+    /// <summary>
+    /// Chosen (or generated-and-shown) by the admin on the Settings Password wizard page. Unlike
+    /// the DB passwords, this one gates a human-typed login form with no in-app reset, so it can't
+    /// be silently auto-generated without the admin ever seeing it.
+    /// </summary>
+    public required string SettingsPassword { get; init; }
+
     public string ServerUrl { get; init; } = "https://localhost";
     public bool AutoGenerateEncryptionKey { get; init; } = true;
     public string? CustomEncryptionKey { get; init; }

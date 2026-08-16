@@ -78,7 +78,7 @@ public class InstallOrchestrator
             progress.Report(new InstallStepProgress("Generating credentials", 0.4, null));
             var superUserPassword = PasswordGenerator.Generate();
             var appUserPassword = PasswordGenerator.Generate();
-            var settingsPassword = PasswordGenerator.Generate();
+            var settingsPassword = plan.SettingsPassword;
 
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));
             var provisioner = new PostgresProvisioner(_downloader);
