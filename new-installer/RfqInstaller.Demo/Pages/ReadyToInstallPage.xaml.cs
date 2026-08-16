@@ -33,14 +33,22 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
             ? $"Download now (~30 GB) to {state.ModelPath}"
             : "Skip for now";
 
-        ServiceAccountSummary.Text = state.ServiceAccount switch
+        if (state.Mode == InstallMode.WindowsService)
         {
-            ServiceAccountKind.CurrentUser => state.ServiceAccountConfirmed
-                ? $"Current User (confirmed: {state.ServiceAccountName})"
-                : "Current User (recommended)",
-            ServiceAccountKind.NetworkService => "Network Service",
-            _ => "Local System",
-        };
+            ServiceAccountRow.Visibility = Visibility.Visible;
+            ServiceAccountSummary.Text = state.ServiceAccount switch
+            {
+                ServiceAccountKind.CurrentUser => state.ServiceAccountConfirmed
+                    ? $"Current User (confirmed: {state.ServiceAccountName})"
+                    : "Current User (recommended)",
+                ServiceAccountKind.NetworkService => "Network Service",
+                _ => "Local System",
+            };
+        }
+        else
+        {
+            ServiceAccountRow.Visibility = Visibility.Collapsed;
+        }
     }
 
     private static string MaskLicenseKey(string key)

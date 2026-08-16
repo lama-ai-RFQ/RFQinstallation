@@ -40,7 +40,7 @@
                         <TextBlock x:Name="ModelSummary" FontWeight="SemiBold" TextWrapping="NoWrap"
                                    Foreground="{StaticResource TextPrimaryBrush}"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel x:Name="ServiceAccountRow" Orientation="Horizontal">
                         <TextBlock Text="Service account" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBlock x:Name="ServiceAccountSummary" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}"/>

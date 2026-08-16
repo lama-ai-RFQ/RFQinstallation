@@ -33,6 +33,11 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
             _ => 0,
         };
 
+        // Only a Windows Service has an account to run as; Standalone runs as whoever launches it.
+        ServiceAccountSection.Visibility = _state.Mode == InstallMode.WindowsService
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         CleanReinstallCheck.IsChecked = _state.CleanReinstall;
         CleanupAfterCheck.IsChecked = _state.CleanupAfterInstall;
         UpdateServiceAccountHelp();
