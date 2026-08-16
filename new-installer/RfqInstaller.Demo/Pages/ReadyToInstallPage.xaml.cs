@@ -33,6 +33,14 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
             ? $"Download now (~30 GB) to {state.ModelPath}"
             : "Skip for now";
 
+        var credentialManagerWillActuallyWork = state.UseCredentialManager
+            && (state.Mode == InstallMode.Standalone || state.ServiceAccount == ServiceAccountKind.CurrentUser);
+        PasswordStorageSummary.Text = credentialManagerWillActuallyWork
+            ? "Windows Credential Manager"
+            : state.UseCredentialManager
+                ? ".env file (Credential Manager doesn't work with the chosen service account)"
+                : ".env file";
+
         if (state.Mode == InstallMode.WindowsService)
         {
             ServiceAccountRow.Visibility = Visibility.Visible;

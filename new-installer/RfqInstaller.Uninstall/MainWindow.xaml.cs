@@ -13,6 +13,12 @@ public partial class MainWindow : Window
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => Close();
 
+    private void ViewPasswordsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var installPath = AppContext.BaseDirectory.TrimEnd('\\');
+        new CredentialsViewerWindow(installPath) { Owner = this }.ShowDialog();
+    }
+
     private async void UninstallButton_Click(object sender, RoutedEventArgs e)
     {
         OptionsPanel.IsEnabled = false;

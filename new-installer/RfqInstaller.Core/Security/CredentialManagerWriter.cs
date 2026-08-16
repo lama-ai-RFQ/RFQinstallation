@@ -5,16 +5,19 @@ namespace RfqInstaller.Core.Security;
 
 /// <summary>
 /// Writes generated secrets into Windows Credential Manager (via the CredWrite Win32 API) —
-/// the same mechanism validated by test_credential_manager.ps1. This is the authoritative store
-/// when the service runs as Current User (the recommended, default account): the service can read
-/// its own account's Credential Manager entries back at runtime (see RFQautomation's
-/// get_password_from_credential_manager). Only called for that case — see
-/// InstallOrchestrator.ConfigureApplication, which uses SecretStore/DPAPI instead for Network
-/// Service/Local System, since neither of those can access a user's Credential Manager.
+/// the same mechanism validated by test_credential_manager.ps1. Used when the customer has chosen
+/// Credential Manager storage AND the service runs as Current User (the only account that can
+/// actually read its own Credential Manager entries back at runtime — see RFQautomation's
+/// get_password_from_credential_manager). InstallOrchestrator falls back to plaintext .env for
+/// every other combination (Network Service/Local System, or an explicit customer choice to use
+/// .env instead).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class CredentialManagerWriter
 {
+    /// <summary>Placeholder written to `.env` in place of the real value; RFQautomation's config loader resolves it back via Credential Manager at runtime.</summary>
+    public const string Sentinel = "__CREDENTIAL_MANAGER__";
+
     private const int CRED_TYPE_GENERIC = 1;
     private const int CRED_PERSIST_LOCAL_MACHINE = 2;
 

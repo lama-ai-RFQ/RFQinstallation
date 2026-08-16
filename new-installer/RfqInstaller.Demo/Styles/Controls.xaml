@@ -432,6 +432,12 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="OuterDot" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                         </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                            <Setter TargetName="OuterDot" Property="BorderBrush" Value="{StaticResource BorderStrongBrush}"/>
+                            <Setter TargetName="InnerDot" Property="Fill" Value="{StaticResource TextSecondaryBrush}"/>
+                        </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>

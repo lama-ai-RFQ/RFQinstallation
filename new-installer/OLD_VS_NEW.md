@@ -28,6 +28,8 @@ Summary of work on `feature/new-windows-installer`.
 | Uninstall                  | Inno uninstaller                                                                 | Dedicated WPF uninstaller                                                                           |
 
 
+
+
 ## Fixes & polish on the new installer
 
 - Roadmap icon styling

@@ -67,6 +67,9 @@ public class WizardState
 
     public string CustomEncryptionKey { get; set; } = string.Empty;
 
+    /// <summary>Explicit choice: Windows Credential Manager (recommended) or a plaintext .env file — applies to all three generated passwords.</summary>
+    public bool UseCredentialManager { get; set; } = true;
+
     public ServiceAccountKind ServiceAccount { get; set; } = ServiceAccountKind.CurrentUser;
 
     /// <summary>

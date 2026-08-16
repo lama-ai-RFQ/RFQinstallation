@@ -122,6 +122,7 @@ public partial class InstallingPage : UserControl
         ServerUrl = _state.ServerUrl,
         AutoGenerateEncryptionKey = _state.AutoGenerateEncryptionKey,
         CustomEncryptionKey = string.IsNullOrWhiteSpace(_state.CustomEncryptionKey) ? null : _state.CustomEncryptionKey,
+        UseCredentialManager = _state.UseCredentialManager,
         ServiceAccount = _state.ServiceAccount switch
         {
             Models.ServiceAccountKind.NetworkService => CoreServiceAccountKind.NetworkService,

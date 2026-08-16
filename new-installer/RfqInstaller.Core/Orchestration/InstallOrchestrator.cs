@@ -182,37 +182,42 @@ public class InstallOrchestrator
             ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
             : plan.CustomEncryptionKey ?? string.Empty;
 
-        // Only one of these is ever the real, load-bearing store for a given install — writing
-        // both unconditionally would leave secrets.dat silently shadowing Credential Manager for
-        // every install, since RFQautomation's resolver checks secrets.dat first. Use whichever
-        // one the chosen service account can actually read back at runtime.
-        if (plan.ServiceAccount == ServiceAccountKind.CurrentUser)
-        {
-            CredentialManagerWriter.TryWrite("RFQApplication_SQL_SUPER_USER", "postgres", superUserPassword);
-            CredentialManagerWriter.TryWrite("RFQApplication_RFQ_USER_PASSWORD", DatabaseSetup.AppUserName, appUserPassword);
-            CredentialManagerWriter.TryWrite("RFQApplication_SETTINGS_PASSWORD", "rfq_app", settingsPassword);
-        }
-        else
-        {
-            var secretStore = new SecretStore();
-            secretStore.Set("SQL_SUPER_USER", superUserPassword);
-            secretStore.Set("RFQ_USER_PASSWORD", appUserPassword);
-            secretStore.Set("SETTINGS_PASSWORD", settingsPassword);
-            secretStore.Save(Path.Combine(plan.InstallPath, "secrets.dat"));
-        }
+        // Explicit customer choice, applies to all three passwords. Credential Manager only
+        // actually works when the service runs as Current User — for Network Service/Local System
+        // it silently can't be read back at runtime, so fall back to .env in that combination
+        // rather than producing an install that looks configured but isn't (the wizard's Advanced
+        // page already warns about this combination before install starts).
+        var effectivelyUseCredentialManager = plan.UseCredentialManager && plan.ServiceAccount == ServiceAccountKind.CurrentUser;
 
-        EnvFileWriter.Upsert(plan.InstallPath, new Dictionary<string, string>
+        var envValues = new Dictionary<string, string>
         {
-            ["SQL_SUPER_USER"] = SecretStore.Sentinel,
-            ["RFQ_USER_PASSWORD"] = SecretStore.Sentinel,
-            ["SETTINGS_PASSWORD"] = SecretStore.Sentinel,
             ["RFQ_CONFIG_ENCRYPTION_KEY"] = encryptionKey,
             ["SERVER_URL"] = broker.DefaultServerUrl ?? plan.ServerUrl,
             ["RFQ_UPDATE_CHANNEL"] = broker.UpdateChannel ?? plan.UpdateChannel,
             ["WINDOWS"] = "true",
             ["LOCAL_DATABASE"] = "1",
             ["CONTAINER"] = "0",
-        });
+        };
+
+        if (effectivelyUseCredentialManager)
+        {
+            CredentialManagerWriter.TryWrite("RFQApplication_SQL_SUPER_USER", "postgres", superUserPassword);
+            CredentialManagerWriter.TryWrite("RFQApplication_RFQ_USER_PASSWORD", DatabaseSetup.AppUserName, appUserPassword);
+            CredentialManagerWriter.TryWrite("RFQApplication_SETTINGS_PASSWORD", "rfq_app", settingsPassword);
+
+            envValues["SQL_SUPER_USER"] = CredentialManagerWriter.Sentinel;
+            envValues["RFQ_USER_PASSWORD"] = CredentialManagerWriter.Sentinel;
+            envValues["SETTINGS_PASSWORD"] = CredentialManagerWriter.Sentinel;
+        }
+        else
+        {
+            // Explicit, accepted tradeoff: real values in plaintext .env.
+            envValues["SQL_SUPER_USER"] = superUserPassword;
+            envValues["RFQ_USER_PASSWORD"] = appUserPassword;
+            envValues["SETTINGS_PASSWORD"] = settingsPassword;
+        }
+
+        EnvFileWriter.Upsert(plan.InstallPath, envValues);
 
         UserConfigWriter.WriteLicense(plan.InstallPath, plan.LicenseKey, broker.CustomerId, broker.Features, broker.Limits);
     }

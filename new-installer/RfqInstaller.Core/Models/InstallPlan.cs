@@ -41,6 +41,14 @@ public class InstallPlan
     public bool AutoGenerateEncryptionKey { get; init; } = true;
     public string? CustomEncryptionKey { get; init; }
 
+    /// <summary>
+    /// Explicit choice: Windows Credential Manager (recommended) or a plaintext .env file. Applies
+    /// to all three generated passwords. Only actually usable with ServiceAccount == CurrentUser —
+    /// InstallOrchestrator falls back to .env automatically (with a warning surfaced earlier in the
+    /// wizard) for Network Service/Local System, since Credential Manager cannot be read by them.
+    /// </summary>
+    public bool UseCredentialManager { get; init; } = true;
+
     public ServiceAccountKind ServiceAccount { get; init; } = ServiceAccountKind.CurrentUser;
     /// <summary>
     /// DOMAIN\user from the Windows credential dialog. Only used when ServiceAccount is CurrentUser.

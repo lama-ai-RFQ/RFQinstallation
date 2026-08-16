@@ -7,6 +7,8 @@ namespace RfqInstaller.Demo.Pages;
 
 public partial class AdvancedOptionsPage : UserControl, IWizardPage
 {
+    private static readonly SolidColorBrush WarningBrush = new(Color.FromRgb(0x8A, 0x00, 0x00));
+
     private readonly WizardState _state;
 
     public AdvancedOptionsPage(WizardState state)
@@ -26,6 +28,15 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
             CustomKeyTextBox.Text = _state.CustomEncryptionKey;
         }
 
+        if (_state.UseCredentialManager)
+        {
+            CredentialManagerRadio.IsChecked = true;
+        }
+        else
+        {
+            EnvFileRadio.IsChecked = true;
+        }
+
         ServiceAccountCombo.SelectedIndex = _state.ServiceAccount switch
         {
             ServiceAccountKind.NetworkService => 1,
@@ -40,7 +51,8 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
         CleanReinstallCheck.IsChecked = _state.CleanReinstall;
         CleanupAfterCheck.IsChecked = _state.CleanupAfterInstall;
-        UpdateServiceAccountHelp();
+        UpdateCredentialManagerAvailability();
+        UpdateHelpText();
     }
 
     private void ServerUrlTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.ServerUrl = ServerUrlTextBox.Text;
@@ -59,6 +71,18 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
     private void CustomKeyTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.CustomEncryptionKey = CustomKeyTextBox.Text;
 
+    private void CredentialManagerRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        _state.UseCredentialManager = true;
+        UpdateHelpText();
+    }
+
+    private void EnvFileRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        _state.UseCredentialManager = false;
+        UpdateHelpText();
+    }
+
     private void ServiceAccountCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _state.ServiceAccount = ServiceAccountCombo.SelectedIndex switch
@@ -67,29 +91,58 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
             2 => ServiceAccountKind.LocalSystem,
             _ => ServiceAccountKind.CurrentUser,
         };
-        UpdateServiceAccountHelp();
+        UpdateCredentialManagerAvailability();
+        UpdateHelpText();
     }
 
-    private void UpdateServiceAccountHelp()
+    /// <summary>
+    /// Credential Manager only actually works when the service also runs as Current User — rather
+    /// than allowing a combination that would silently fall back at install time, disable the
+    /// option outright and force .env for as long as the combination doesn't work.
+    /// </summary>
+    private void UpdateCredentialManagerAvailability()
     {
-        if (ServiceAccountHelp is null)
+        var credentialManagerViable = _state.Mode == InstallMode.Standalone || _state.ServiceAccount == ServiceAccountKind.CurrentUser;
+
+        CredentialManagerRadio.IsEnabled = credentialManagerViable;
+        // When Credential Manager isn't viable, .env isn't really a choice anymore — it's the only
+        // option — so lock both radios (greyed) rather than leaving .env looking like an active pick.
+        EnvFileRadio.IsEnabled = credentialManagerViable;
+        if (!credentialManagerViable && CredentialManagerRadio.IsChecked == true)
+        {
+            EnvFileRadio.IsChecked = true; // fires EnvFileRadio_Checked, which updates _state and help text
+        }
+    }
+
+    private void UpdateHelpText()
+    {
+        if (PasswordStorageHelp is null || ServiceAccountHelp is null)
         {
             return;
+        }
+
+        if (!_state.UseCredentialManager)
+        {
+            PasswordStorageHelp.Text = CredentialManagerRadio.IsEnabled
+                ? "Passwords will be written in plain text to the app's .env file. Anyone with file access to the install folder can read them."
+                : "Passwords will be written in plain text to the app's .env file — Windows Credential Manager doesn't work with the service account selected below.";
+            PasswordStorageHelp.Foreground = WarningBrush;
+        }
+        else
+        {
+            PasswordStorageHelp.Text = "Passwords will be stored in Windows Credential Manager, not written anywhere in plain text.";
+            PasswordStorageHelp.Foreground = (Brush)FindResource("TextSecondaryBrush");
         }
 
         ServiceAccountHelp.Text = _state.ServiceAccount switch
         {
             ServiceAccountKind.CurrentUser =>
-                "Recommended. The service can use passwords stored in your Windows Credential Manager. " +
-                "Windows will separately ask you to confirm this account's own password on the next page — a one-time step for the service to log on as this account, unrelated to administrator rights.",
+                "Recommended. Windows will separately ask you to confirm this account's own password on the next page — a one-time step for the service to log on as this account, unrelated to administrator rights.",
             ServiceAccountKind.NetworkService =>
-                "Network Service cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation. No password is needed for this account.",
+                "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
             _ =>
-                "Local System cannot use your Windows Credential Manager. To use those credentials, change the service to a user account after installation. No password is needed for this account.",
+                "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
         };
-        ServiceAccountHelp.Foreground = _state.ServiceAccount == ServiceAccountKind.CurrentUser
-            ? (Brush)FindResource("TextSecondaryBrush")
-            : new SolidColorBrush(Color.FromRgb(0x8A, 0x00, 0x00));
     }
 
     private void CleanReinstallCheck_Changed(object sender, RoutedEventArgs e) => _state.CleanReinstall = CleanReinstallCheck.IsChecked == true;

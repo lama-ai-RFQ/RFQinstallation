@@ -24,6 +24,13 @@
             <TextBox x:Name="CustomKeyTextBox" Style="{StaticResource ModernTextBoxStyle}" Margin="0,8,0,0"
                      Tag="Base64-encoded key" TextChanged="CustomKeyTextBox_TextChanged" Visibility="Collapsed"/>
 
+            <TextBlock Text="Where should passwords be stored?" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <RadioButton x:Name="CredentialManagerRadio" GroupName="PasswordStorage" Content="Windows Credential Manager (recommended, more secure)"
+                         Style="{StaticResource ModernRadioButtonStyle}" Checked="CredentialManagerRadio_Checked" Margin="0,0,0,6"/>
+            <RadioButton x:Name="EnvFileRadio" GroupName="PasswordStorage" Content=".env file (less secure, but portable)"
+                         Style="{StaticResource ModernRadioButtonStyle}" Checked="EnvFileRadio_Checked"/>
+            <TextBlock x:Name="PasswordStorageHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
             <StackPanel x:Name="ServiceAccountSection">
                 <TextBlock Text="Service account" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
                 <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,0,0,8" TextWrapping="Wrap">

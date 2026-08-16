@@ -40,6 +40,11 @@
                         <TextBlock x:Name="ModelSummary" FontWeight="SemiBold" TextWrapping="NoWrap"
                                    Foreground="{StaticResource TextPrimaryBrush}"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                        <TextBlock Text="Password storage" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock x:Name="PasswordStorageSummary" FontWeight="SemiBold" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
                     <StackPanel x:Name="ServiceAccountRow" Orientation="Horizontal">
                         <TextBlock Text="Service account" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBlock x:Name="ServiceAccountSummary" FontWeight="SemiBold"
