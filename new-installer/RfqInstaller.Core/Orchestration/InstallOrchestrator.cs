@@ -182,16 +182,24 @@ public class InstallOrchestrator
             ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
             : plan.CustomEncryptionKey ?? string.Empty;
 
-        var secretStore = new SecretStore();
-        secretStore.Set("SQL_SUPER_USER", superUserPassword);
-        secretStore.Set("RFQ_USER_PASSWORD", appUserPassword);
-        secretStore.Set("SETTINGS_PASSWORD", settingsPassword);
-        secretStore.Save(Path.Combine(plan.InstallPath, "secrets.dat"));
-
-        // Best-effort convenience copy for the installing admin's own session (see CredentialManagerWriter docs).
-        CredentialManagerWriter.TryWrite("RFQApplication_SQL_SUPER_USER", "postgres", superUserPassword);
-        CredentialManagerWriter.TryWrite("RFQApplication_RFQ_USER_PASSWORD", DatabaseSetup.AppUserName, appUserPassword);
-        CredentialManagerWriter.TryWrite("RFQApplication_SETTINGS_PASSWORD", "rfq_app", settingsPassword);
+        // Only one of these is ever the real, load-bearing store for a given install — writing
+        // both unconditionally would leave secrets.dat silently shadowing Credential Manager for
+        // every install, since RFQautomation's resolver checks secrets.dat first. Use whichever
+        // one the chosen service account can actually read back at runtime.
+        if (plan.ServiceAccount == ServiceAccountKind.CurrentUser)
+        {
+            CredentialManagerWriter.TryWrite("RFQApplication_SQL_SUPER_USER", "postgres", superUserPassword);
+            CredentialManagerWriter.TryWrite("RFQApplication_RFQ_USER_PASSWORD", DatabaseSetup.AppUserName, appUserPassword);
+            CredentialManagerWriter.TryWrite("RFQApplication_SETTINGS_PASSWORD", "rfq_app", settingsPassword);
+        }
+        else
+        {
+            var secretStore = new SecretStore();
+            secretStore.Set("SQL_SUPER_USER", superUserPassword);
+            secretStore.Set("RFQ_USER_PASSWORD", appUserPassword);
+            secretStore.Set("SETTINGS_PASSWORD", settingsPassword);
+            secretStore.Save(Path.Combine(plan.InstallPath, "secrets.dat"));
+        }
 
         EnvFileWriter.Upsert(plan.InstallPath, new Dictionary<string, string>
         {

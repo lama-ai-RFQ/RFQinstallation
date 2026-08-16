@@ -4,12 +4,13 @@ using System.Runtime.Versioning;
 namespace RfqInstaller.Core.Security;
 
 /// <summary>
-/// Best-effort convenience copy of generated secrets into the installing admin's own Windows
-/// Credential Manager (via the CredWrite Win32 API), so they can inspect them via Control Panel
-/// exactly as validated by the existing test_credential_manager.ps1 script. This is NOT the
-/// authoritative store — the app reads secrets.dat (see SecretStore) at runtime, because the
-/// service normally runs as LocalSystem, which cannot access a user's Credential Manager. A
-/// failure here is logged and ignored; it never blocks install.
+/// Writes generated secrets into Windows Credential Manager (via the CredWrite Win32 API) —
+/// the same mechanism validated by test_credential_manager.ps1. This is the authoritative store
+/// when the service runs as Current User (the recommended, default account): the service can read
+/// its own account's Credential Manager entries back at runtime (see RFQautomation's
+/// get_password_from_credential_manager). Only called for that case — see
+/// InstallOrchestrator.ConfigureApplication, which uses SecretStore/DPAPI instead for Network
+/// Service/Local System, since neither of those can access a user's Credential Manager.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class CredentialManagerWriter

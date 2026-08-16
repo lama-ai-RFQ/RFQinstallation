@@ -7,11 +7,15 @@ namespace RfqInstaller.Core.Security;
 
 /// <summary>
 /// Persists generated secrets (DB/settings passwords) as DPAPI LocalMachine-scope protected blobs
-/// in a JSON file next to the app (secrets.dat). LocalMachine scope (not CurrentUser / Windows
-/// Credential Manager) is used deliberately: the default service account is LocalSystem, which has
-/// no loaded user profile and can't reliably unlock CurrentUser-scope DPAPI or Credential Manager
-/// entries. RFQautomation's config loader resolves the `__CREDENTIAL_MANAGER__` sentinel in `.env`
-/// by reading this same file (see backend/main config loader patch).
+/// in a JSON file next to the app (secrets.dat). Only used when the service account is Network
+/// Service or Local System — the recommended/default Current User account uses Windows Credential
+/// Manager instead (see CredentialManagerWriter), since it can actually read that back at runtime.
+/// LocalMachine scope (not CurrentUser-scope DPAPI) is used here because Network Service/Local
+/// System have no loaded user profile to unlock a CurrentUser-scope secret. RFQautomation's config
+/// loader resolves the `__CREDENTIAL_MANAGER__` sentinel in `.env` by trying this file first, then
+/// falling back to Credential Manager (see backend/main config loader patch) — so this file must
+/// only exist when it's actually the intended store, or it would shadow a real Credential Manager
+/// entry.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public class SecretStore

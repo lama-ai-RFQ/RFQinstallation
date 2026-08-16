@@ -133,10 +133,49 @@ public static class WindowsCredentialPrompt
         return string.IsNullOrWhiteSpace(domain) ? local : $"{domain}\\{local}";
     }
 
+    /// <summary>
+    /// Preserves whatever the admin actually entered/confirmed in the dialog — "DOMAIN\user",
+    /// ".\user", or a bare "user" (treated as local, same convention the old installer's
+    /// "DOMAIN\User (or .\User)" prompt used) — instead of collapsing every account to a local
+    /// one. A real domain account must stay a domain account, or the service logon will fail on
+    /// a domain-joined machine. Only Microsoft Account / Azure AD / UPN identities are rejected
+    /// here, since those genuinely cannot be used as a classic Windows service logon account at
+    /// all (falling back silently to *some* account would be worse than being explicit about it).
+    /// </summary>
     private static string ToServiceAccountName(string account)
     {
-        var local = FirstLocalUserName(account, SessionUserName(), Environment.UserName);
-        return $".\\{local}";
+        var trimmed = account.Trim();
+
+        if (IsIncompatibleIdentity(trimmed))
+        {
+            return FallbackAccountName();
+        }
+
+        if (trimmed.Contains('\\', StringComparison.Ordinal))
+        {
+            return trimmed; // "DOMAIN\user" or ".\user" exactly as entered.
+        }
+
+        return $".\\{trimmed}"; // bare "user" -- assume local, matching the old ".\User" convention.
+    }
+
+    private static string FallbackAccountName()
+    {
+        var local = FirstLocalUserName(SessionUserName(), Environment.UserName);
+        var domain = Environment.UserDomainName;
+        return string.IsNullOrWhiteSpace(domain) ? $".\\{local}" : $"{domain}\\{local}";
+    }
+
+    private static bool IsIncompatibleIdentity(string account)
+    {
+        var slash = account.LastIndexOf('\\');
+        var domain = slash > 0 ? account[..slash] : null;
+        var name = slash >= 0 ? account[(slash + 1)..] : account;
+
+        return name.Contains('@', StringComparison.Ordinal)
+            || (domain is not null &&
+                (domain.Equals("MicrosoftAccount", StringComparison.OrdinalIgnoreCase)
+                 || domain.Equals("AzureAD", StringComparison.OrdinalIgnoreCase)));
     }
 
     private static string FirstLocalUserName(params string?[] candidates)
@@ -164,22 +203,10 @@ public static class WindowsCredentialPrompt
         var slash = name.LastIndexOf('\\');
         if (slash >= 0 && slash < name.Length - 1)
         {
-            var domain = name[..slash];
             name = name[(slash + 1)..];
-            if (domain.Equals("MicrosoftAccount", StringComparison.OrdinalIgnoreCase)
-                || domain.Equals("AzureAD", StringComparison.OrdinalIgnoreCase)
-                || name.Contains('@', StringComparison.Ordinal))
-            {
-                return null;
-            }
         }
 
-        if (name.Contains('@', StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        return string.IsNullOrWhiteSpace(name) ? null : name;
+        return name.Contains('@', StringComparison.Ordinal) || string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
     private static string? SessionUserName()
