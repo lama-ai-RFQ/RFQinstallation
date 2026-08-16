@@ -16,16 +16,16 @@ public partial class InstallingPage : UserControl
 {
     private readonly WizardState _state;
     private readonly Action _onSuccess;
-    private readonly Action _onBackToReview;
+    private readonly Action<WizardStep> _onNavigateTo;
     private CancellationTokenSource? _cts;
     private bool _started;
 
-    public InstallingPage(WizardState state, Action onSuccess, Action onBackToReview)
+    public InstallingPage(WizardState state, Action onSuccess, Action<WizardStep> onNavigateTo)
     {
         InitializeComponent();
         _state = state;
         _onSuccess = onSuccess;
-        _onBackToReview = onBackToReview;
+        _onNavigateTo = onNavigateTo;
     }
 
     private async void InstallingPage_Loaded(object sender, RoutedEventArgs e)
@@ -42,6 +42,7 @@ public partial class InstallingPage : UserControl
     private async Task RunInstallAsync()
     {
         ProgressPanel.Visibility = Visibility.Visible;
+        CredentialNeededPanel.Visibility = Visibility.Collapsed;
         ErrorPanel.Visibility = Visibility.Collapsed;
         Progress.Value = 0;
         PercentText.Text = "0%";
@@ -67,13 +68,15 @@ public partial class InstallingPage : UserControl
             catch (Exception ex)
             {
                 var logPath = InstallerLog.Write("asking Windows for the service account", ex);
-                FailInstall($"{InstallerLog.FormatUserDetail(ex)}{Environment.NewLine}{Environment.NewLine}Details were saved to:{Environment.NewLine}{logPath}");
+                ShowCredentialNeeded(
+                    "Windows couldn't show the account/password dialog "
+                    + $"({InstallerLog.FormatUserDetail(ex)}). Details were saved to {logPath}.");
                 return;
             }
 
             if (credentials is null)
             {
-                FailInstall("Windows Security was cancelled. The service was not configured to run as your account. Click Go Back to change the service account, or Try Again to enter the password.");
+                ShowCredentialNeeded("Windows Security was closed without entering a password, so the service wasn't configured yet. Nothing has been installed — pick how you'd like to continue.");
                 return;
             }
 
@@ -81,6 +84,9 @@ public partial class InstallingPage : UserControl
             serviceAccountPassword = credentials.Password;
         }
 
+        // Nothing above this point touches the system — only from here does the orchestrator
+        // start downloading files, provisioning the database, and registering services. That's
+        // the actual "installation," so only a failure at or after this point is treated as one.
         var plan = BuildInstallPlan(serviceAccountName, serviceAccountPassword);
         var baseDirectory = AppContext.BaseDirectory;
         var orchestrator = new InstallOrchestrator(
@@ -119,6 +125,18 @@ public partial class InstallingPage : UserControl
         {
             FailInstall(result.ErrorMessage ?? "An unknown error occurred during installation.");
         }
+    }
+
+    /// <summary>
+    /// The Windows account/password step happens before any real install work starts, so a
+    /// cancellation or failure there isn't a broken install — it's a request for different input.
+    /// Offers concrete next steps instead of the generic failure panel.
+    /// </summary>
+    private void ShowCredentialNeeded(string message)
+    {
+        ProgressPanel.Visibility = Visibility.Collapsed;
+        CredentialNeededText.Text = message;
+        CredentialNeededPanel.Visibility = Visibility.Visible;
     }
 
     private void FailInstall(string message)
@@ -161,5 +179,15 @@ public partial class InstallingPage : UserControl
 
     private async void RetryButton_Click(object sender, RoutedEventArgs e) => await RunInstallAsync();
 
-    private void BackToReviewButton_Click(object sender, RoutedEventArgs e) => _onBackToReview();
+    private void BackToReviewButton_Click(object sender, RoutedEventArgs e) => _onNavigateTo(WizardStep.ReadyToInstall);
+
+    private async void CredentialRetryButton_Click(object sender, RoutedEventArgs e) => await RunInstallAsync();
+
+    private void ChangeServiceAccountButton_Click(object sender, RoutedEventArgs e) => _onNavigateTo(WizardStep.Advanced);
+
+    private void SwitchToStandaloneButton_Click(object sender, RoutedEventArgs e)
+    {
+        _state.Mode = Models.InstallMode.Standalone;
+        _onNavigateTo(WizardStep.InstallMode);
+    }
 }

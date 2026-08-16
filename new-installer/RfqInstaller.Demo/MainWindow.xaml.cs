@@ -287,7 +287,7 @@ public partial class MainWindow : Window
         WizardStep.SettingsPassword => new SettingsPasswordPage(_state),
         WizardStep.Advanced => new AdvancedOptionsPage(_state),
         WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
-        WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), () => GoTo(WizardStep.ReadyToInstall)),
+        WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), GoTo),
         WizardStep.Finish => new FinishPage(_state),
         WizardStep.Failed => new SetupFailedPage(_state),
         _ => throw new InvalidOperationException($"Unknown wizard step '{step}'.")
