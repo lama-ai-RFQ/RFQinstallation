@@ -16,13 +16,30 @@
             <TextBlock Text="Server URL (used for OAuth redirects)" Style="{StaticResource FieldLabelStyle}" Margin="0,28,0,6"/>
             <TextBox x:Name="ServerUrlTextBox" Style="{StaticResource ModernTextBoxStyle}" TextChanged="ServerUrlTextBox_TextChanged"/>
 
-            <TextBlock Text="Configuration encryption key" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
-            <RadioButton x:Name="AutoKeyRadio" GroupName="EncryptionKey" Content="Generate automatically (recommended)"
-                         Style="{StaticResource ModernRadioButtonStyle}" Checked="AutoKeyRadio_Checked" Margin="0,0,0,6"/>
-            <RadioButton x:Name="CustomKeyRadio" GroupName="EncryptionKey" Content="Use a specific key"
-                         Style="{StaticResource ModernRadioButtonStyle}" Checked="CustomKeyRadio_Checked"/>
-            <TextBox x:Name="CustomKeyTextBox" Style="{StaticResource ModernTextBoxStyle}" Margin="0,8,0,0"
-                     Tag="Base64-encoded key" TextChanged="CustomKeyTextBox_TextChanged" Visibility="Collapsed"/>
+            <TextBlock Text="Azure config encryption key" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <TextBlock x:Name="EncryptionKeyHelp" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+            <StackPanel x:Name="EncryptionKeyChoicePanel">
+                <RadioButton x:Name="AutoKeyRadio" GroupName="EncryptionKey" Content="Generate automatically (recommended)"
+                             Style="{StaticResource ModernRadioButtonStyle}" Checked="AutoKeyRadio_Checked" Margin="0,0,0,6"/>
+                <RadioButton x:Name="CustomKeyRadio" GroupName="EncryptionKey" Content="Keep the existing key (recommended)"
+                             Style="{StaticResource ModernRadioButtonStyle}" Checked="CustomKeyRadio_Checked"/>
+                <Grid x:Name="CustomKeyRow" Margin="0,8,0,0" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="CustomKeyTextBox" Grid.Column="0" Style="{StaticResource ModernTextBoxStyle}"
+                             Tag="Base64-encoded key" TextChanged="CustomKeyTextBox_TextChanged"/>
+                    <Button x:Name="CopyKeyButton" Grid.Column="1" Height="40" Content="Copy" Margin="10,0,0,0"
+                            Style="{StaticResource SecondaryButtonStyle}" Click="CopyKeyButton_Click"/>
+                </Grid>
+                <TextBlock x:Name="GenerateNewWarning" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"
+                           Foreground="{StaticResource DangerBrush}" Visibility="Collapsed"
+                           Text="Generating a new key will make secrets already stored in the database unreadable. This cannot be undone."/>
+            </StackPanel>
+            <TextBlock x:Name="EncryptionKeyError" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap"
+                       FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"/>
 
             <TextBlock Text="Where should passwords be stored?" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
             <RadioButton x:Name="CredentialManagerRadio" GroupName="PasswordStorage" Content="Windows Credential Manager (recommended, more secure)"

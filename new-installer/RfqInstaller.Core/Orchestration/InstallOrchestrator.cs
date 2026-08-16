@@ -191,6 +191,9 @@ public class InstallOrchestrator
 
         var envValues = new Dictionary<string, string>
         {
+            // Older app builds only read AZURE_CONFIG_ENCRYPTION_KEY. Write both to the same
+            // value so a leftover RFQ_ placeholder in env.template cannot shadow the real key.
+            ["AZURE_CONFIG_ENCRYPTION_KEY"] = encryptionKey,
             ["RFQ_CONFIG_ENCRYPTION_KEY"] = encryptionKey,
             ["SERVER_URL"] = broker.DefaultServerUrl ?? plan.ServerUrl,
             ["RFQ_UPDATE_CHANNEL"] = broker.UpdateChannel ?? plan.UpdateChannel,

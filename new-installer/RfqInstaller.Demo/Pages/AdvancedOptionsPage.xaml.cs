@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using RfqInstaller.Core.Config;
+using RfqInstaller.Demo.Dialogs;
 using RfqInstaller.Demo.Models;
 
 namespace RfqInstaller.Demo.Pages;
@@ -10,23 +12,19 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
     private static readonly SolidColorBrush WarningBrush = new(Color.FromRgb(0x8A, 0x00, 0x00));
 
     private readonly WizardState _state;
+    private readonly string? _existingEncryptionKey;
+    private bool _suppressKeyEvents;
+    private bool _generateNewConfirmed;
 
     public AdvancedOptionsPage(WizardState state)
     {
         InitializeComponent();
         _state = state;
+        _existingEncryptionKey = EncryptionKeyResolver.ResolveFromInstallPath(_state.InstallPath);
 
         ServerUrlTextBox.Text = _state.ServerUrl;
 
-        if (_state.AutoGenerateEncryptionKey)
-        {
-            AutoKeyRadio.IsChecked = true;
-        }
-        else
-        {
-            CustomKeyRadio.IsChecked = true;
-            CustomKeyTextBox.Text = _state.CustomEncryptionKey;
-        }
+        ApplyEncryptionKeyUi();
 
         if (_state.UseCredentialManager)
         {
@@ -57,19 +55,130 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
     private void ServerUrlTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.ServerUrl = ServerUrlTextBox.Text;
 
+    private void ApplyEncryptionKeyUi()
+    {
+        _suppressKeyEvents = true;
+        try
+        {
+            if (_existingEncryptionKey is null)
+            {
+                // First install: generate only — no paste field.
+                EncryptionKeyHelp.Text =
+                    "This key encrypts secrets stored in the database. We'll create one and save it as AZURE_CONFIG_ENCRYPTION_KEY in the app's .env file. You don't need to enter it. If this key is lost, those secrets cannot be recovered — keep a backup of .env.";
+                EncryptionKeyChoicePanel.Visibility = Visibility.Collapsed;
+                _state.AutoGenerateEncryptionKey = true;
+                _state.CustomEncryptionKey = string.Empty;
+                return;
+            }
+
+            EncryptionKeyHelp.Text =
+                "An encryption key was found in this folder's .env file. Keep it so the app can still read secrets already in the database.;
+            EncryptionKeyChoicePanel.Visibility = Visibility.Visible;
+            AutoKeyRadio.Content = "Generate a new key";
+            CustomKeyRadio.Content = "Keep the existing key (recommended)";
+
+            _state.AutoGenerateEncryptionKey = false;
+            _state.CustomEncryptionKey = _existingEncryptionKey;
+            CustomKeyTextBox.Text = _existingEncryptionKey;
+            CustomKeyRadio.IsChecked = true;
+            ShowCustomKeyRow(true);
+            GenerateNewWarning.Visibility = Visibility.Collapsed;
+        }
+        finally
+        {
+            _suppressKeyEvents = false;
+        }
+    }
+
     private void AutoKeyRadio_Checked(object sender, RoutedEventArgs e)
     {
+        if (_suppressKeyEvents || AutoKeyRadio is null)
+        {
+            return;
+        }
+
+        if (_existingEncryptionKey is not null && !_generateNewConfirmed)
+        {
+            var confirmed = AppDialog.Confirm(
+                Window.GetWindow(this),
+                "Generate a new encryption key?",
+                "Secrets already stored in the database will become unreadable. This cannot be undone.",
+                confirmText: "Generate new key",
+                dismissText: "Keep existing key");
+            if (!confirmed)
+            {
+                _suppressKeyEvents = true;
+                CustomKeyRadio.IsChecked = true;
+                _suppressKeyEvents = false;
+                return;
+            }
+
+            _generateNewConfirmed = true;
+        }
+
         _state.AutoGenerateEncryptionKey = true;
-        if (CustomKeyTextBox is not null) CustomKeyTextBox.Visibility = Visibility.Collapsed;
+        ShowCustomKeyRow(false);
+        if (GenerateNewWarning is not null)
+        {
+            GenerateNewWarning.Visibility = _existingEncryptionKey is not null ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        HideEncryptionKeyError();
     }
 
     private void CustomKeyRadio_Checked(object sender, RoutedEventArgs e)
     {
+        if (_suppressKeyEvents || CustomKeyRadio is null)
+        {
+            return;
+        }
+
+        _generateNewConfirmed = false;
         _state.AutoGenerateEncryptionKey = false;
-        if (CustomKeyTextBox is not null) CustomKeyTextBox.Visibility = Visibility.Visible;
+        if (string.IsNullOrWhiteSpace(_state.CustomEncryptionKey) && _existingEncryptionKey is not null)
+        {
+            _state.CustomEncryptionKey = _existingEncryptionKey;
+            CustomKeyTextBox.Text = _existingEncryptionKey;
+        }
+
+        ShowCustomKeyRow(true);
+        if (GenerateNewWarning is not null)
+        {
+            GenerateNewWarning.Visibility = Visibility.Collapsed;
+        }
+
+        HideEncryptionKeyError();
     }
 
-    private void CustomKeyTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.CustomEncryptionKey = CustomKeyTextBox.Text;
+    private void CustomKeyTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _state.CustomEncryptionKey = CustomKeyTextBox.Text;
+        HideEncryptionKeyError();
+    }
+
+    private void CopyKeyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_state.CustomEncryptionKey))
+        {
+            Clipboard.SetText(_state.CustomEncryptionKey);
+        }
+    }
+
+    private void ShowCustomKeyRow(bool visible)
+    {
+        if (CustomKeyRow is not null)
+        {
+            CustomKeyRow.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private void HideEncryptionKeyError()
+    {
+        if (EncryptionKeyError is not null)
+        {
+            EncryptionKeyError.Visibility = Visibility.Collapsed;
+        }
+    }
 
     private void CredentialManagerRadio_Checked(object sender, RoutedEventArgs e)
     {
@@ -149,5 +258,50 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
     private void CleanupAfterCheck_Changed(object sender, RoutedEventArgs e) => _state.CleanupAfterInstall = CleanupAfterCheck.IsChecked == true;
 
-    public bool Validate() => true;
+    public bool Validate()
+    {
+        if (_existingEncryptionKey is null)
+        {
+            _state.AutoGenerateEncryptionKey = true;
+            return true;
+        }
+
+        if (_state.AutoGenerateEncryptionKey)
+        {
+            if (_generateNewConfirmed)
+            {
+                return true;
+            }
+
+            var confirmed = AppDialog.Confirm(
+                Window.GetWindow(this),
+                "Generate a new encryption key?",
+                "Secrets already stored in the database will become unreadable. This cannot be undone.",
+                confirmText: "Generate new key",
+                dismissText: "Keep existing key");
+            if (!confirmed)
+            {
+                _suppressKeyEvents = true;
+                CustomKeyRadio.IsChecked = true;
+                _suppressKeyEvents = false;
+                _state.AutoGenerateEncryptionKey = false;
+                _state.CustomEncryptionKey = _existingEncryptionKey;
+                ShowCustomKeyRow(true);
+                GenerateNewWarning.Visibility = Visibility.Collapsed;
+                return false;
+            }
+
+            _generateNewConfirmed = true;
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(_state.CustomEncryptionKey))
+        {
+            EncryptionKeyError.Text = "An encryption key is required when keeping or entering a specific key.";
+            EncryptionKeyError.Visibility = Visibility.Visible;
+            return false;
+        }
+
+        return true;
+    }
 }

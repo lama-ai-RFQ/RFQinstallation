@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using RfqInstaller.Core.Config;
 using RfqInstaller.Demo.Debug;
 using RfqInstaller.Demo.Models;
 
@@ -32,6 +33,12 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
         ModelSummary.Text = state.DownloadModelNow
             ? $"Download now (~30 GB) to {state.ModelPath}"
             : "Skip for now";
+
+        EncryptionKeySummary.Text = state.AutoGenerateEncryptionKey
+            ? EncryptionKeyResolver.ResolveFromInstallPath(state.InstallPath) is not null
+                ? "Generate a new key (existing database secrets will be unreadable)"
+                : "Generate automatically"
+            : "Reuse existing key";
 
         var credentialManagerWillActuallyWork = state.UseCredentialManager
             && (state.Mode == InstallMode.Standalone || state.ServiceAccount == ServiceAccountKind.CurrentUser);

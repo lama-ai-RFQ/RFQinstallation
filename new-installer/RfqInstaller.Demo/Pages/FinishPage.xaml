@@ -18,6 +18,8 @@
 
         <TextBlock Text="Use the Settings page password you created earlier during setup to access Settings within the application."
                    Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,16,0,0"/>
+        <TextBlock Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,12,0,0"
+                   Text="The database encryption key is saved in the install folder's .env file as AZURE_CONFIG_ENCRYPTION_KEY. Keep a backup of that file — if the key is lost, secrets already in the database cannot be recovered."/>
 
         <CheckBox x:Name="LaunchCheckBox" Content="Launch RFQ Application" IsChecked="True"
                   Style="{StaticResource ModernCheckBoxStyle}" Margin="0,28,0,0"/>
