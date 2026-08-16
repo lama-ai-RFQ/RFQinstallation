@@ -10,6 +10,33 @@
         <Setter Property="Padding" Value="24"/>
     </Style>
 
+    <!-- Implicit (no x:Key) so every ToolTip in the app picks this up automatically. Dark chip on
+         light text, borderless — the standard high-contrast tooltip treatment most modern apps use
+         even inside an otherwise light theme, rather than trying to blend into the card palette. -->
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="{StaticResource TooltipBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource TextOnAccentBrush}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Padding" Value="10,6"/>
+        <Setter Property="HasDropShadow" Value="False"/>
+        <Setter Property="HorizontalOffset" Value="0"/>
+        <Setter Property="VerticalOffset" Value="6"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="5">
+                        <Border.Effect>
+                            <DropShadowEffect Color="#000000" Opacity="0.22" BlurRadius="16" ShadowDepth="3" Direction="270"/>
+                        </Border.Effect>
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                           TextElement.Foreground="{TemplateBinding Foreground}"
+                                           TextElement.FontSize="{TemplateBinding FontSize}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="PageTitleStyle" TargetType="TextBlock">
         <Setter Property="FontSize" Value="26"/>
         <Setter Property="FontWeight" Value="SemiBold"/>

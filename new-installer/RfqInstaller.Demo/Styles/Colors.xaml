@@ -43,6 +43,9 @@
     <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
     <SolidColorBrush x:Key="TextOnAccentBrush" Color="{StaticResource TextOnAccentColor}"/>
 
+    <!-- Tooltip fill reuses the darkest ink color already in the palette, inverted: dark chip, light text. -->
+    <SolidColorBrush x:Key="TooltipBackgroundBrush" Color="{StaticResource TextPrimaryColor}"/>
+
     <SolidColorBrush x:Key="BorderBrush2" Color="{StaticResource BorderColor}"/>
     <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}"/>
 
