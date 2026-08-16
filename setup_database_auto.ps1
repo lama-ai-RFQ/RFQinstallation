@@ -4,7 +4,7 @@
 #   - Check if user 'rfq_user' exists (create or update password)
 #   - Grant all necessary permissions
 #
-# Credentials are read from registry (HKEY_CURRENT_USER\Software\RFQApplication\Installer)
+# Credentials are read from the RFQ installer registry handoff path
 # or from .env file as fallback
 
 param(
@@ -14,6 +14,58 @@ param(
     [switch]$ShowPasswordPreview,
     [switch]$Help
 )
+
+function Get-RfqEnvValueOrDefault {
+    param(
+        [Parameter(Mandatory)]
+        [string]$EnvName,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$DefaultValue,
+
+        [AllowNull()]
+        [scriptblock]$Validator = $null,
+
+        [AllowNull()]
+        [string]$ValidationMessage = $null
+    )
+
+    $value = [Environment]::GetEnvironmentVariable($EnvName, "Process")
+    if ($null -eq $value -or $value -eq "") {
+        return $DefaultValue
+    }
+
+    if ($null -ne $Validator -and -not (& $Validator $value)) {
+        if ([string]::IsNullOrWhiteSpace($ValidationMessage)) {
+            $ValidationMessage = "The value is not valid for this installer setting."
+        }
+        throw "Invalid $EnvName '$value'. $ValidationMessage"
+    }
+
+    return $value
+}
+
+function Test-RfqRegistryKeyPath {
+    param([AllowNull()][string]$Value)
+
+    return -not [string]::IsNullOrWhiteSpace($Value) -and
+        $Value -notmatch '[\x00-\x1F]' -and
+        $Value -notmatch '(^\\|\\$|\\\\|/|:)'
+}
+
+try {
+    $script:RfqInstallerRegistryKeyPath = Get-RfqEnvValueOrDefault `
+        -EnvName "RFQ_REGISTRY_HANDOFF_KEY" `
+        -DefaultValue "Software\RFQApplication\Installer" `
+        -Validator { param($Value) Test-RfqRegistryKeyPath $Value } `
+        -ValidationMessage "Use an HKCU-relative registry key path without leading, trailing, duplicate, forward, or drive-root slashes."
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
+$script:RfqInstallerRegistryPath = "HKCU:\$script:RfqInstallerRegistryKeyPath"
 
 # Show help if requested
 if ($Help) {
@@ -57,7 +109,7 @@ EXAMPLES:
     .\setup_database_auto.ps1 -EnvFilePath "C:\RFQ\.env" -Debug -ShowPasswordPreview
 
 CREDENTIAL SOURCES (checked in order):
-    1. Registry: HKCU:\Software\RFQApplication\Installer\SuperUserPassword
+    1. Registry: $script:RfqInstallerRegistryPath\SuperUserPassword
     2. Environment variable: SQL_SUPER_USER_B64 (base64 encoded)
     3. .env file: SQL_SUPER_USER=your_password
 
@@ -241,7 +293,7 @@ Write-Info "[STEP 1/6] Reading credentials..."
 Write-Host ""
 
 # Verify registry path exists
-$regPath = "HKCU:\Software\RFQApplication\Installer"
+$regPath = $script:RfqInstallerRegistryPath
 if ($Debug) {
     Write-Info "  Debug: Checking registry path: $regPath"
     if (Test-Path $regPath) {
@@ -276,11 +328,11 @@ if ($Debug) {
 $SQL_SUPER_USER = $null
 
 # Try registry first
-Write-Info "  Checking registry: HKCU:\Software\RFQApplication\Installer\SuperUserPassword"
-$SQL_SUPER_USER = Get-RegistryValue -KeyPath "Software\RFQApplication\Installer" -ValueName "SuperUserPassword" -Verbose
+Write-Info "  Checking registry: $script:RfqInstallerRegistryPath\SuperUserPassword"
+$SQL_SUPER_USER = Get-RegistryValue -KeyPath $script:RfqInstallerRegistryKeyPath -ValueName "SuperUserPassword" -Verbose
 if ($SQL_SUPER_USER) {
     Write-Info "  Using SQL_SUPER_USER from registry"
-    Write-Info "  Registry path: HKCU:\Software\RFQApplication\Installer"
+    Write-Info "  Registry path: $script:RfqInstallerRegistryPath"
 } else {
     Write-Warning "  Not found in registry, trying other sources..."
 }
@@ -322,7 +374,7 @@ if ([string]::IsNullOrWhiteSpace($SQL_SUPER_USER)) {
     Write-Error-Custom "ERROR: SQL_SUPER_USER not found"
     Write-Host ""
     Write-Host "Please ensure one of the following:"
-    Write-Host "  1. Registry: HKCU:\Software\RFQApplication\Installer\SuperUserPassword"
+    Write-Host "  1. Registry: $script:RfqInstallerRegistryPath\SuperUserPassword"
     Write-Host "  2. Environment variable: SQL_SUPER_USER_B64 (base64 encoded)"
     Write-Host "  3. .env file: SQL_SUPER_USER=your_password"
     Write-Host ""
@@ -363,11 +415,11 @@ Write-Host ""
 $RFQ_PASSWORD = $null
 
 # Try registry first
-Write-Info "  Checking registry: HKCU:\Software\RFQApplication\Installer\RFQUserPassword"
-$RFQ_PASSWORD = Get-RegistryValue -KeyPath "Software\RFQApplication\Installer" -ValueName "RFQUserPassword" -Verbose
+Write-Info "  Checking registry: $script:RfqInstallerRegistryPath\RFQUserPassword"
+$RFQ_PASSWORD = Get-RegistryValue -KeyPath $script:RfqInstallerRegistryKeyPath -ValueName "RFQUserPassword" -Verbose
 if ($RFQ_PASSWORD) {
     Write-Info "  Using RFQ_USER_PASSWORD from registry"
-    Write-Info "  Registry path: HKCU:\Software\RFQApplication\Installer"
+    Write-Info "  Registry path: $script:RfqInstallerRegistryPath"
 } else {
     Write-Warning "  Not found in registry, trying other sources..."
 }
@@ -409,7 +461,7 @@ if ([string]::IsNullOrWhiteSpace($RFQ_PASSWORD)) {
     Write-Error-Custom "ERROR: RFQ_USER_PASSWORD not found"
     Write-Host ""
     Write-Host "Please ensure one of the following:"
-    Write-Host "  1. Registry: HKCU:\Software\RFQApplication\Installer\RFQUserPassword"
+    Write-Host "  1. Registry: $script:RfqInstallerRegistryPath\RFQUserPassword"
     Write-Host "  2. Environment variable: RFQ_USER_B64 (base64 encoded)"
     Write-Host "  3. .env file: RFQ_USER_PASSWORD=your_password"
     Write-Host ""
@@ -522,14 +574,14 @@ try {
         Write-Host "     Get-Service | Where-Object { `$_.Name -like 'postgresql*' }"
         Write-Host ""
         Write-Host "  2. Check if password in registry matches PostgreSQL 'postgres' user password"
-        Write-Host "     Registry path: HKCU:\Software\RFQApplication\Installer\SuperUserPassword"
+        Write-Host "     Registry path: $script:RfqInstallerRegistryPath\SuperUserPassword"
         Write-Host "     Current registry value length: $($SQL_SUPER_USER.Length) characters"
         Write-Host ""
         Write-Host "     To view registry value (PowerShell):"
-        Write-Host "       Get-ItemProperty -Path 'HKCU:\Software\RFQApplication\Installer' -Name 'SuperUserPassword'"
+        Write-Host "       Get-ItemProperty -Path '$script:RfqInstallerRegistryPath' -Name 'SuperUserPassword'"
         Write-Host ""
         Write-Host "     To test password manually:"
-        Write-Host "       `$pwd = (Get-ItemProperty -Path 'HKCU:\Software\RFQApplication\Installer' -Name 'SuperUserPassword').SuperUserPassword"
+        Write-Host "       `$pwd = (Get-ItemProperty -Path '$script:RfqInstallerRegistryPath' -Name 'SuperUserPassword').SuperUserPassword"
         Write-Host "       `$env:PGPASSWORD = `$pwd"
         Write-Host "       psql -U postgres -h localhost -p 5432 -c 'SELECT version();'"
         Write-Host ""
@@ -757,4 +809,3 @@ finally {
     Remove-Item $TempSQL2 -ErrorAction SilentlyContinue
     Remove-Item $TempSQL3 -ErrorAction SilentlyContinue
 }
-
