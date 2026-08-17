@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private readonly WizardState _state = new();
     private WizardStep _current = WizardStep.Welcome;
     private bool _fatalReported;
+    private string? _elevationReadySignalPath;
 
     public MainWindow()
     {
@@ -40,9 +41,11 @@ public partial class MainWindow : Window
             DebugBadge.Visibility = Visibility.Visible;
         }
 
-        if (TryLoadResumeState(out var resumed, out var resumeStep))
+        if (TryLoadResumeState(out var resumed, out var resumeStep, out var readySignalPath))
         {
             _state = resumed!;
+            _elevationReadySignalPath = readySignalPath;
+            ContentRendered += SignalElevationReady;
             GoTo(resumeStep);
         }
         else
@@ -51,41 +54,79 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Written to the temp hand-off file whenever this process relaunches itself elevated — carries its own resume target so it can never drift out of sync with wherever elevation was actually triggered from.</summary>
-    private class ElevationHandoff
+    private void SignalElevationReady(object? sender, EventArgs e)
     {
-        public WizardState State { get; set; } = new();
-        public WizardStep ResumeStep { get; set; }
+        ContentRendered -= SignalElevationReady;
+        if (string.IsNullOrEmpty(_elevationReadySignalPath))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_elevationReadySignalPath)!);
+            File.WriteAllText(_elevationReadySignalPath, "ready");
+        }
+        catch (Exception ex)
+        {
+            InstallerLog.Write("signaling elevated window ready", ex);
+        }
     }
 
     /// <summary>
     /// If this process was relaunched elevated (see <see cref="HandleElevationIfNeeded"/>), the
-    /// wizard state — and exactly which step to resume at — was handed off via a temp JSON file
-    /// whose path is the sole command-line argument.
+    /// wizard state — and exactly which step to resume at — was handed off via a JSON file whose
+    /// path is passed as <see cref="ElevationHandoff.ResumeArgument"/>.
     /// </summary>
-    private static bool TryLoadResumeState(out WizardState? state, out WizardStep resumeStep)
+    private static bool TryLoadResumeState(out WizardState? state, out WizardStep resumeStep, out string? readySignalPath)
     {
         state = null;
         resumeStep = WizardStep.Welcome;
-        var args = Environment.GetCommandLineArgs();
-        if (args.Length != 2 || !File.Exists(args[1]))
+        readySignalPath = null;
+
+        var handoffPath = FindHandoffPath(Environment.GetCommandLineArgs());
+        if (handoffPath is null)
         {
             return false;
         }
 
         try
         {
-            var json = File.ReadAllText(args[1]);
+            var json = File.ReadAllText(handoffPath);
             var handoff = JsonSerializer.Deserialize<ElevationHandoff>(json);
             state = handoff?.State;
             resumeStep = handoff?.ResumeStep ?? WizardStep.Welcome;
-            File.Delete(args[1]);
+            readySignalPath = handoff?.ReadySignalPath;
+            File.Delete(handoffPath);
             return state is not null;
         }
-        catch
+        catch (Exception ex)
         {
+            InstallerLog.Write("loading elevated resume state", ex, extra: handoffPath);
             return false;
         }
+    }
+
+    private static string? FindHandoffPath(string[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (string.Equals(args[i], ElevationHandoff.ResumeArgument, StringComparison.OrdinalIgnoreCase)
+                && i + 1 < args.Length
+                && File.Exists(args[i + 1]))
+            {
+                return args[i + 1];
+            }
+
+            if (File.Exists(args[i])
+                && Path.GetFileName(args[i]).StartsWith("rfq-installer-state-", StringComparison.OrdinalIgnoreCase)
+                && args[i].EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i];
+            }
+        }
+
+        return null;
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -220,23 +261,68 @@ public partial class MainWindow : Window
             return ElevationOutcome.Declined;
         }
 
-        var tempFile = Path.Combine(Path.GetTempPath(), $"rfq-installer-state-{Guid.NewGuid():N}.json");
-        File.WriteAllText(tempFile, JsonSerializer.Serialize(new ElevationHandoff { State = _state, ResumeStep = resumeStep }));
+        var handoffDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "RFQ Application Setup");
+        Directory.CreateDirectory(handoffDir);
+        var id = Guid.NewGuid().ToString("N");
+        var handoffPath = Path.Combine(handoffDir, $"rfq-installer-state-{id}.json");
+        var readyPath = Path.Combine(handoffDir, $"rfq-installer-ready-{id}.signal");
 
-        var process = ElevationHelper.RelaunchElevated(new[] { tempFile });
+        File.WriteAllText(handoffPath, JsonSerializer.Serialize(new ElevationHandoff
+        {
+            State = _state,
+            ResumeStep = resumeStep,
+            ReadySignalPath = readyPath,
+        }));
+
+        var process = ElevationHelper.RelaunchElevated(new[] { ElevationHandoff.ResumeArgument, handoffPath });
         if (process is null)
         {
             // Declined (or failed) the actual UAC prompt — stay put. If Windows Service is still
             // selected, Next tries again; Standalone is available on the same page as an
             // immediate alternative that needs no approval at all (unless its install path is
             // itself privileged).
-            TryDeleteQuietly(tempFile);
+            TryDeleteQuietly(handoffPath);
+            TryDeleteQuietly(readyPath);
             AppDialog.Inform(this, "Administrator approval required",
                 "Administrator approval wasn't given, so this can't continue as a Windows service (or into that folder) right now. Click Next to try again, or choose \"Run as a standalone application\" instead.");
             return ElevationOutcome.Declined;
         }
 
+        // Keep this window (and its dock icon) until the elevated window is actually on screen.
+        // Closing immediately leaves a gap where the icon disappears and the new process looks
+        // like a fresh launch. Unelevated code cannot WaitForInputIdle on an elevated process
+        // (UIPI), so the new window writes a signal file instead.
+        WaitForElevationReady(readyPath, process);
         return ElevationOutcome.RelaunchedElevated;
+    }
+
+    private static void WaitForElevationReady(string readyPath, System.Diagnostics.Process elevatedProcess)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(readyPath))
+            {
+                TryDeleteQuietly(readyPath);
+                return;
+            }
+
+            try
+            {
+                if (elevatedProcess.HasExited)
+                {
+                    return;
+                }
+            }
+            catch
+            {
+                // Elevated process handles are sometimes inaccessible; keep waiting on the file.
+            }
+
+            System.Threading.Thread.Sleep(100);
+        }
     }
 
     private static void TryDeleteQuietly(string path)

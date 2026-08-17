@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.Versioning;
 using System.Security.Principal;
 
@@ -39,20 +40,15 @@ public static class ElevationHelper
     /// <summary>Relaunches the current executable elevated via the UAC "runas" verb, forwarding all args. Caller should exit immediately after calling this.</summary>
     public static Process? RelaunchElevated(string[] args)
     {
-        var exePath = Process.GetCurrentProcess().MainModule?.FileName
-            ?? throw new InvalidOperationException("Could not determine the current executable path.");
-
         var startInfo = new ProcessStartInfo
         {
-            FileName = exePath,
+            FileName = GetCurrentExecutablePath(),
             UseShellExecute = true,
             Verb = "runas",
+            WorkingDirectory = AppContext.BaseDirectory,
+            // ArgumentList is ignored when UseShellExecute is true.
+            Arguments = string.Join(" ", args.Select(QuoteArgument)),
         };
-
-        foreach (var arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
 
         try
         {
@@ -63,4 +59,41 @@ public static class ElevationHelper
             return null; // user declined the UAC prompt
         }
     }
+
+    /// <summary>
+    /// The process path is often <c>dotnet.exe</c> when launched from an IDE. UAC must restart the
+    /// actual WPF apphost, or the elevated process is not the installer and the original window
+    /// just disappears.
+    /// </summary>
+    public static string GetCurrentExecutablePath()
+    {
+        var processPath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+        if (!string.IsNullOrEmpty(processPath) && File.Exists(processPath) && !IsDotnetHost(processPath))
+        {
+            return processPath;
+        }
+
+        var entry = Assembly.GetEntryAssembly()?.Location;
+        if (!string.IsNullOrEmpty(entry))
+        {
+            var apphost = Path.ChangeExtension(entry, ".exe");
+            if (File.Exists(apphost))
+            {
+                return apphost;
+            }
+        }
+
+        return processPath
+            ?? throw new InvalidOperationException("Could not determine the current executable path.");
+    }
+
+    private static bool IsDotnetHost(string path)
+    {
+        var name = Path.GetFileName(path);
+        return name.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string QuoteArgument(string arg) =>
+        $"\"{arg.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 }
