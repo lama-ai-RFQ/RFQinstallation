@@ -16,8 +16,8 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
             ? "Skipped (debug)"
             : MaskLicenseKey(state.LicenseKey);
         ModeSummary.Text = state.Mode == InstallMode.WindowsService
-            ? "Windows Service (starts automatically)"
-            : "Standalone application";
+            ? "Windows Service (advanced)"
+            : "Desktop app (.exe)";
         PathSummary.Text = state.InstallPath;
 
         if (state.Mode == InstallMode.Standalone)

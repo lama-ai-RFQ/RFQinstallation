@@ -6,30 +6,30 @@
              mc:Ignorable="d" d:DesignWidth="600">
     <StackPanel MaxWidth="560" HorizontalAlignment="Left">
         <TextBlock Text="Choose how RFQ Application should run" Style="{StaticResource PageTitleStyle}"/>
-        <TextBlock Style="{StaticResource PageSubtitleStyle}">
-            You can change this later by re-running setup.
+        <TextBlock Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap">
+            If you're installing this on your own computer, choose the desktop app. Use the Windows Service only if you manage this machine and need the app to start by itself.
         </TextBlock>
 
         <StackPanel Margin="0,28,0,0">
-            <RadioButton x:Name="ServiceRadio" GroupName="InstallMode"
-                         Style="{StaticResource OptionCardRadioStyle}"
-                         Checked="ServiceRadio_Checked">
-                <StackPanel>
-                    <TextBlock Text="Run as a Windows Service (recommended)" FontWeight="SemiBold" FontSize="15"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="Starts automatically in the background when Windows starts. No need to launch it yourself."
-                               Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"/>
-                </StackPanel>
-            </RadioButton>
-
             <RadioButton x:Name="StandaloneRadio" GroupName="InstallMode"
                          Style="{StaticResource OptionCardRadioStyle}"
                          Checked="StandaloneRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Run as a standalone application" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock Text="Desktop app (.exe) — recommended for most people" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="Installs an .exe that you launch yourself, like a regular desktop application."
-                               Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"/>
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
+                               Text="Installs a program you open yourself, like other desktop software. No Windows service or extra account setup."/>
+                </StackPanel>
+            </RadioButton>
+
+            <RadioButton x:Name="ServiceRadio" GroupName="InstallMode"
+                         Style="{StaticResource OptionCardRadioStyle}"
+                         Checked="ServiceRadio_Checked">
+                <StackPanel>
+                    <TextBlock Text="Windows Service — advanced" FontWeight="SemiBold" FontSize="15"
+                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                    <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
+                               Text="Runs in the background and starts with Windows. Needs a Windows account password."/>
                 </StackPanel>
             </RadioButton>
         </StackPanel>

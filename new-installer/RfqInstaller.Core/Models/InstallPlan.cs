@@ -19,7 +19,7 @@ public enum ServiceAccountKind
 public class InstallPlan
 {
     public required string LicenseKey { get; init; }
-    public InstallMode Mode { get; init; } = InstallMode.WindowsService;
+    public InstallMode Mode { get; init; } = InstallMode.Standalone;
     public required string InstallPath { get; init; }
     public bool CreateDesktopShortcut { get; init; } = true;
     public bool LaunchAfterFinish { get; init; } = true;

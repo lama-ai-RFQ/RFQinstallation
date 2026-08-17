@@ -36,7 +36,7 @@ public class WizardState
 {
     public string LicenseKey { get; set; } = string.Empty;
 
-    public InstallMode Mode { get; set; } = InstallMode.WindowsService;
+    public InstallMode Mode { get; set; } = InstallMode.Standalone;
 
     public string InstallPath { get; set; } = @"C:\Program Files\RFQ Application";
 

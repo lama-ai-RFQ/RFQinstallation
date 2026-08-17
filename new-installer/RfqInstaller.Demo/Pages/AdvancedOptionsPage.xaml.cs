@@ -72,7 +72,7 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
             }
 
             EncryptionKeyHelp.Text =
-                "An encryption key was found in this folder's .env file. Keep it so the app can still read secrets already in the database.;
+                "An encryption key was found in this folder's .env file. Keep it so the app can still read secrets already in the database.";
             EncryptionKeyChoicePanel.Visibility = Visibility.Visible;
             AutoKeyRadio.Content = "Generate a new key";
             CustomKeyRadio.Content = "Keep the existing key (recommended)";
