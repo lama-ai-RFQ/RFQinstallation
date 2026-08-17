@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using RfqInstaller.Core.Licensing;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Orchestration;
 using RfqInstaller.Demo.Logging;
@@ -133,7 +134,17 @@ public partial class InstallingPage : UserControl
         ServiceAccountPassword = string.IsNullOrEmpty(_state.ServiceAccountPassword) ? null : _state.ServiceAccountPassword,
     };
 
-    private async void RetryButton_Click(object sender, RoutedEventArgs e) => await RunInstallAsync();
+    private async void RetryButton_Click(object sender, RoutedEventArgs e)
+    {
+        var licenseCheck = LocalLicenseValidator.Validate(_state.LicenseKey);
+        if (!licenseCheck.SignatureValid || licenseCheck.Expired)
+        {
+            _onNavigateTo(WizardStep.License);
+            return;
+        }
+
+        await RunInstallAsync();
+    }
 
     private void BackToReviewButton_Click(object sender, RoutedEventArgs e) => _onNavigateTo(WizardStep.ReadyToInstall);
 }

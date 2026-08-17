@@ -262,6 +262,11 @@ public partial class MainWindow : Window
 
     private WizardStep GetNext(WizardStep current)
     {
+        if (current == WizardStep.License && !string.IsNullOrWhiteSpace(_state.InstallErrorMessage))
+        {
+            return WizardStep.ReadyToInstall;
+        }
+
         var next = NextStep(current);
         while (InstallerDebug.ShouldSkip(next) && next != WizardStep.Finish)
         {

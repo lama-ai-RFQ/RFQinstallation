@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using RfqInstaller.Core.Licensing;
-using RfqInstaller.Demo.Debug;
 using RfqInstaller.Demo.Dialogs;
 using RfqInstaller.Demo.Models;
 
@@ -37,11 +36,6 @@ public partial class LicenseKeyPage : UserControl, IWizardPage
 
     public bool Validate()
     {
-        if (InstallerDebug.ShouldSkip(WizardStep.License))
-        {
-            return true;
-        }
-
         if (string.IsNullOrWhiteSpace(_state.LicenseKey))
         {
             ShowError("Please enter a license key to continue.");
