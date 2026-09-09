@@ -1,198 +1,52 @@
-# RFQ Application - Windows Installer (Developer Guide)
+# RFQ Application — Windows Installer
 
-This directory contains the Inno Setup installer script for creating the Windows installer.
+The active installer is a custom **.NET/WPF wizard** in [`new-installer/`](new-installer/) (branch
+`feature/new-windows-installer`), replacing an older Inno Setup + PowerShell installer. See
+[`new-installer/OLD_VS_NEW.md`](new-installer/OLD_VS_NEW.md) for the full old-vs-new comparison,
+open items, and fix history.
 
-## 📁 Directory Contents
+A legacy Inno-based installer (`setup.iss`, `download_and_install.ps1`,
+`setup_database_auto.ps1`) and a stripped-down demo of it (`legacy-demo/`) are kept in this
+directory for reference until the new installer has been through a full real-world install cycle
+and can retire them — they are not the active installer and are not otherwise documented here.
 
-| File | Purpose |
+## Directory contents
+
+| Path | Purpose |
 |------|---------|
-| `setup.iss` | Inno Setup installer script - compiles to `RFQ_Application_Setup.exe` |
-| `download_and_install.ps1` | PowerShell script used by the installer to download and install components |
-| `USER_QUICK_START.md` | End-user installation guide |
+| `new-installer/` | The active WPF installer — `RfqInstaller.sln` (wizard + `RfqInstaller.Core` + `RfqInstaller.Uninstall`) |
+| `new-installer/OLD_VS_NEW.md` | Old-vs-new comparison, open items, fix history |
+| `new-installer/test-environments/` | Windows Sandbox + Hyper-V scenarios for testing installs without touching a real machine |
+| `license-broker/` | Reference AWS Lambda implementation for the (not yet deployed) license/download service |
+| `setup.iss`, `download_and_install.ps1`, `setup_database_auto.ps1` | Legacy Inno installer — reference only |
+| `legacy-demo/` | Stripped-down demo of the legacy installer — reference only |
 
-## 🚀 Creating the Installer
-
-### Prerequisites
-
-- Inno Setup 6.x installed
-- Built Windows application (from PyInstaller or your build process)
-- GitHub Personal Access Token (for downloading from private repo)
-
-### Build Process
-
-1. **Build your Windows application** (using PyInstaller or your build process)
-
-2. **Compile the installer**:
-   - Open `setup.iss` in Inno Setup Compiler
-   - Or use command line:
-     ```powershell
-     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
-     ```
-
-3. **Output**: `installer_output\RFQ_Application_Setup.exe`
-
-4. **Upload to GitHub releases**:
-   - Go to your GitHub releases page
-   - Create a new release with version tag
-   - Upload `RFQ_Application_Setup.exe`
-   - Publish release
-
-### Installer Features
-
-The Setup installer (`setup.iss`) provides:
-- ✅ Directory selection page
-- ✅ GitHub token input (mandatory)
-- ✅ AWS credentials input (for model download)
-- ✅ Model download option and path selection
-- ✅ Database password configuration (Settings, Super User, RFQ User)
-- ✅ Automatic component download from private GitHub repo
-- ✅ Model download from AWS S3 (optional, ~30 GB)
-- ✅ Desktop shortcut creation
-- ✅ Progress display during installation
-
-### For End Users
-
-Users download `RFQ_Application_Setup.exe` from GitHub releases and run it. See `USER_QUICK_START.md` for detailed end-user instructions.
-
-## 📋 Workflow
-
-### Creating a Release
+## Building
 
 ```powershell
-# 1. Build Windows application
-cd windows
-.\build_windows_exe.ps1
-
-# 2. Compile installer
-cd installation
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
-
-# 3. Upload to GitHub releases
-# - Go to your GitHub releases page
-# - Create new release with version tag
-# - Upload installer_output\RFQ_Application_Setup.exe
-# - Publish release
+cd new-installer
+dotnet build RfqInstaller.sln
 ```
 
-### User Installation Flow
+For a build that runs standalone on a machine with no .NET runtime installed (matches how it
+actually ships), publish instead of building — `RfqInstaller.csproj`/`RfqInstaller.Uninstall.csproj`
+are self-contained, single-file `win-x64`:
 
-```
-User downloads → RFQ_Application_Setup.exe
-       ↓
-Runs installer → Collects configuration (GitHub token, AWS creds, passwords)
-       ↓
-Installer runs → download_and_install.ps1 script
-       ↓
-Downloads components → From private GitHub repo (component-based)
-       ↓
-Extracts to → Selected installation directory
-       ↓
-Creates .env → With all provided credentials
-       ↓
-Downloads model → From AWS S3 (optional, ~30 GB)
-       ↓
-User launches → RFQ_Application.exe
-       ↓
-Future updates → Via built-in update manager (from private repo)
-```
-
-## 🔧 Script Details
-
-### setup.iss
-
-**Purpose**: Inno Setup installer script that creates the Windows installer.
-
-**Features**:
-- Directory selection
-- GitHub token input (mandatory)
-- AWS credentials input
-- Model download option and path selection
-- Database password configuration
-- Calls `download_and_install.ps1` to perform actual installation
-- Creates desktop shortcut
-
-**Compilation**:
 ```powershell
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
+dotnet publish RfqInstaller\RfqInstaller.csproj
 ```
 
-### download_and_install.ps1
+This only takes effect on `publish`, not `build`. Output lands at
+`RfqInstaller\bin\x64\Release\net8.0-windows\win-x64\publish\RfqInstaller.exe`.
 
-**Purpose**: PowerShell script that performs the actual installation (called by the installer).
+## Testing
 
-**Features**:
-- Downloads components from private GitHub repo
-- Validates prerequisites (PowerShell version, disk space)
-- Extracts components to installation directory
-- Configures .env with all provided credentials
-- Downloads model from AWS S3 (optional)
-- Creates desktop shortcut
-- Provides progress indicators
+See [`new-installer/test-environments/README.md`](new-installer/test-environments/README.md) for
+reproducible test scenarios (Windows Sandbox for a clean-machine install; Hyper-V + checkpoints for
+upgrade paths, including installing on top of an existing legacy-installer install).
 
-**Parameters**:
-- `-InstallPath`: Installation directory
-- `-GitHubToken`: GitHub Personal Access Token (mandatory)
-- `-OverwriteExisting`: Skip overwrite prompt
-- `-ModelPath`: Model download directory (optional)
-- `-AWSKey`, `-AWSSecret`, `-AWSRegion`: AWS credentials (optional)
-- `-SettingsPassword`, `-SuperUserPassword`, `-RFQUserPassword`: Database passwords
+## Known gaps
 
-## 🔐 Security
-
-- **No secrets in installer**: Never include GitHub PAT or passwords in the installer
-- **User-provided**: All credentials (GitHub token, AWS credentials, database passwords) are provided by user during installation
-- **Local storage**: Credentials stored in `.env` file locally (not in repo or installer)
-- **Private repo access**: Installer downloads from private GitHub repo using user-provided token
-
-## 📚 Documentation
-
-- `USER_QUICK_START.md` - End-user installation guide
-- This file - Developer/maintainer reference
-
-## 🆘 Troubleshooting
-
-### Compilation Issues
-
-**Problem**: Inno Setup compiler not found
-**Solution**: Install Inno Setup 6.x from https://jrsoftware.org/isdl.php
-
-**Problem**: Compilation errors in setup.iss
-**Solution**: 
-- Check syntax in setup.iss
-- Verify all referenced files exist
-- Check Inno Setup compiler output for specific errors
-
-### Installation Issues
-
-**Problem**: Installer fails to download components
-**Solution**:
-- Verify GitHub token is correct
-- Check internet connection
-- Ensure private repo access with the token
-
-**Problem**: Model download fails
-**Solution**:
-- Verify AWS credentials are correct
-- Check AWS S3 bucket permissions
-- Ensure sufficient disk space (~30 GB for model)
-
-**Problem**: Installation fails
-**Solution**:
-- Check logs in installation directory
-- Verify disk space (4 GB minimum for app, 30 GB for model)
-- Ensure PowerShell 5.1+ is installed
-- Check antivirus settings
-
-## 🔗 Related
-
-- Main build script: `../build_windows_exe.ps1`
-- Component upload script: `../push_windows_exe_components.ps1`
-- Update manager: `../../backend/main/windows_update_manager.py`
-
-## 📞 Support
-
-For issues with:
-- **Installation scripts**: Check this directory
-- **Build process**: See `windows/README.md`
-- **Updates**: See `../../backend/main/windows_update_manager.py`
-
+The license/download service (`license-broker/`) is not deployed yet — `LicenseBrokerClient` in the
+new installer is an intentional placeholder. See
+[`new-installer/OLD_VS_NEW.md`](new-installer/OLD_VS_NEW.md) for this and other open items.
