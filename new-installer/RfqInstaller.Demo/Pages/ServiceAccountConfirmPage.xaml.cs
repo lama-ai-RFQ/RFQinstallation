@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using RfqInstaller.Core.Security;
 using RfqInstaller.Demo.Logging;
 using RfqInstaller.Demo.Models;
@@ -25,7 +26,13 @@ public partial class ServiceAccountConfirmPage : UserControl, IWizardPage
         _state = state;
         _onNavigateTo = onNavigateTo;
         ShowUnconfirmedHeader();
+        if (!_state.ServiceAccountConfirmed)
+        {
+            WaitingPanel.Visibility = Visibility.Visible;
+        }
     }
+
+    private bool _credentialPromptOpen;
 
     private void ServiceAccountConfirmPage_Loaded(object sender, RoutedEventArgs e)
     {
@@ -45,19 +52,37 @@ public partial class ServiceAccountConfirmPage : UserControl, IWizardPage
         ConfirmedPanel.Visibility = Visibility.Collapsed;
         NeededPanel.Visibility = Visibility.Collapsed;
 
+        // CredUI blocks the UI thread. Defer it until this page, the footer, and the rail have
+        // actually painted — otherwise Next from Advanced opens the Windows dialog while the
+        // wizard is still visually on Advanced options.
+        Dispatcher.BeginInvoke(PromptWindows, DispatcherPriority.ApplicationIdle);
+    }
+
+    private void PromptWindows()
+    {
+        if (_credentialPromptOpen)
+        {
+            return;
+        }
+
+        _credentialPromptOpen = true;
         var owner = Window.GetWindow(this);
         var hwnd = owner is not null ? new WindowInteropHelper(owner).Handle : IntPtr.Zero;
 
         WindowsAccountCredentials? credentials;
         try
         {
-            credentials = Application.Current.Dispatcher.Invoke(() => WindowsCredentialPrompt.Request(hwnd));
+            credentials = WindowsCredentialPrompt.Request(hwnd);
         }
         catch (Exception ex)
         {
             var logPath = InstallerLog.Write("asking Windows for the service account", ex);
             ShowNeeded($"Windows couldn't show the account/password dialog ({InstallerLog.FormatUserDetail(ex)}). Details were saved to {logPath}.");
             return;
+        }
+        finally
+        {
+            _credentialPromptOpen = false;
         }
 
         if (credentials is null)
