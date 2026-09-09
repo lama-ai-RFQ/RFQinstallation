@@ -24,6 +24,8 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
         {
             PasswordMaskedBox.Password = _state.SettingsPassword;
             PasswordPlainBox.Text = _state.SettingsPassword;
+            UpdatePasswordMask(PasswordMaskedBox, _state.SettingsPassword);
+            UpdatePasswordMask(ConfirmMaskedBox, _confirmValue);
         }
 
         UpdateStrengthUi();
@@ -42,6 +44,7 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
 
         _state.SettingsPassword = value;
         ErrorText.Visibility = Visibility.Collapsed;
+        UpdatePasswordMask(PasswordMaskedBox, value);
         UpdateStrengthUi();
         UpdateMismatch();
     }
@@ -58,6 +61,7 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
         }
 
         _confirmValue = value;
+        UpdatePasswordMask(ConfirmMaskedBox, value);
         UpdateMismatch();
     }
 
@@ -84,6 +88,9 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
         {
             _suppressSync = false;
         }
+
+        UpdatePasswordMask(PasswordMaskedBox, _state.SettingsPassword);
+        UpdatePasswordMask(ConfirmMaskedBox, _confirmValue);
 
         PasswordMaskedBox.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
         PasswordPlainBox.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
@@ -112,9 +119,16 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
             _suppressSync = false;
         }
 
+        UpdatePasswordMask(PasswordMaskedBox, generated);
+        UpdatePasswordMask(ConfirmMaskedBox, generated);
         ErrorText.Visibility = Visibility.Collapsed;
         UpdateStrengthUi();
         UpdateMismatch();
+    }
+
+    private static void UpdatePasswordMask(PasswordBox box, string password)
+    {
+        box.Tag = string.IsNullOrEmpty(password) ? string.Empty : new string('\u2022', password.Length);
     }
 
     private void CopyPasswordButton_Click(object sender, RoutedEventArgs e)
