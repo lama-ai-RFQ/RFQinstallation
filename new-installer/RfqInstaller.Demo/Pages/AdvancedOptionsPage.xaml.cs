@@ -246,12 +246,13 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         ServiceAccountHelp.Text = _state.ServiceAccount switch
         {
             ServiceAccountKind.CurrentUser =>
-                "Recommended. Windows will separately ask you to confirm this account's own password on the next page — a one-time step for the service to log on as this account, unrelated to administrator rights.",
+                "Recommended. Windows will ask for this account's password on the next page (not a PIN) so the service can log on as you.",
             ServiceAccountKind.NetworkService =>
                 "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
             _ =>
                 "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
         };
+        ServiceAccountHelp.Foreground = (Brush)FindResource("TextSecondaryBrush");
     }
 
     private void CleanReinstallCheck_Changed(object sender, RoutedEventArgs e) => _state.CleanReinstall = CleanReinstallCheck.IsChecked == true;

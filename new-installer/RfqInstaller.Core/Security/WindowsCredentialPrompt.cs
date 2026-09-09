@@ -20,21 +20,56 @@ public static class WindowsCredentialPrompt
     private const int WtsCurrentSession = -1;
     private const int WtsUserName = 5;
     private const int ErrorCancelled = 1223;
+    private const int ErrorLogonFailure = 1326;
+    private const int Logon32LogonInteractive = 2;
+    private const int Logon32LogonNetwork = 3;
+    private const int Logon32LogonBatch = 4;
+    private const int Logon32LogonService = 5;
+    private const int Logon32LogonNetworkCleartext = 8;
+    private const int Logon32ProviderDefault = 0;
+    private const int Logon32ProviderWinNt50 = 3;
     private const int MaxUserName = 513;
     private const int MaxDomain = 337;
-    private const int MaxPassword = 256;
+    private const int MaxPassword = 512;
 
     public static WindowsAccountCredentials? Request(IntPtr ownerHwnd, string? suggestedAccount = null)
     {
-        var account = string.IsNullOrWhiteSpace(suggestedAccount)
+        var account = AccountForPrompt(string.IsNullOrWhiteSpace(suggestedAccount)
             ? CurrentLogonName()
-            : suggestedAccount;
+            : suggestedAccount);
 
+        var previousFailed = false;
+        while (true)
+        {
+            var entered = PromptOnce(ownerHwnd, account, previousFailed);
+            if (entered is null)
+            {
+                return null;
+            }
+
+            // Keep the local Windows user on the next prompt. Do not pack
+            // MicrosoftAccount\email, and do not rewrite ANASTASIA\anast to .\anast
+            // until the password has been accepted.
+            account = AccountForPrompt(entered.AccountName);
+            if (TryValidateLogon(entered, out var logonError))
+            {
+                return entered with { AccountName = ToServiceAccountName(entered.AccountName) };
+            }
+
+            DiagnoseFailedLogon(entered, logonError);
+            previousFailed = true;
+        }
+    }
+
+    private static WindowsAccountCredentials? PromptOnce(IntPtr ownerHwnd, string account, bool previousFailed)
+    {
         var info = new CredUiInfo
         {
             cbSize = Marshal.SizeOf<CredUiInfo>(),
             hwndParent = ownerHwnd,
-            pszMessageText = "Enter the password for this account so the service can use Windows Credential Manager.",
+            pszMessageText = previousFailed
+                ? $"The password was not accepted. Enter the Windows password for {account} (not a PIN)."
+                : $"Enter the Windows password for {account} (not a PIN).",
             pszCaptionText = "Windows Security",
             hbmBanner = IntPtr.Zero,
         };
@@ -43,6 +78,8 @@ public static class WindowsCredentialPrompt
         uint authPackage = 0;
         var save = false;
 
+        // dwAuthError must stay 0. A real Win32 error makes this dialog drop the user
+        // tile and replace our message with Windows's Microsoft-account error text.
         var result = CredUIPromptForWindowsCredentials(
             ref info,
             0,
@@ -79,6 +116,108 @@ public static class WindowsCredentialPrompt
         }
     }
 
+    private static bool TryValidateLogon(WindowsAccountCredentials credentials, out int win32Error)
+    {
+        win32Error = ErrorLogonFailure;
+        SplitAccount(credentials.AccountName, out var domain, out var user);
+
+        foreach (var logonType in new[]
+                 {
+                     Logon32LogonNetworkCleartext,
+                     Logon32LogonInteractive,
+                     Logon32LogonService,
+                     Logon32LogonBatch,
+                     Logon32LogonNetwork,
+                 })
+        {
+            foreach (var provider in new[] { Logon32ProviderDefault, Logon32ProviderWinNt50 })
+            {
+                foreach (var (tryDomain, tryUser) in LogonIdentities(domain, user))
+                {
+                    if (LogonUser(tryUser, tryDomain, credentials.Password, logonType, provider, out var token))
+                    {
+                        CloseHandle(token);
+                        win32Error = 0;
+                        return true;
+                    }
+
+                    win32Error = Marshal.GetLastWin32Error();
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<(string? Domain, string User)> LogonIdentities(string domain, string user)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        bool Take(string? tryDomain, string tryUser)
+        {
+            return !string.IsNullOrEmpty(tryUser) && seen.Add($"{tryDomain ?? "<null>"}\\{tryUser}");
+        }
+
+        foreach (var email in MicrosoftAccountProbe.Emails())
+        {
+            if (Take("MicrosoftAccount", email))
+            {
+                yield return ("MicrosoftAccount", email);
+            }
+
+            if (Take(null, email))
+            {
+                yield return (null, email);
+            }
+        }
+
+        foreach (var tryDomain in new[] { domain, ".", Environment.MachineName, "MicrosoftAccount" })
+        {
+            if (string.IsNullOrEmpty(tryDomain) || !Take(tryDomain, user))
+            {
+                continue;
+            }
+
+            yield return (tryDomain, user);
+        }
+    }
+
+    /// <summary>
+    /// Pack the local Windows user for the dialog. MicrosoftAccount\email is only used
+    /// inside LogonUser, never as the name shown/prefilled in Windows Security.
+    /// </summary>
+    private static string AccountForPrompt(string account)
+    {
+        SplitAccount(account, out var domain, out var user);
+        if (user.Contains('@', StringComparison.Ordinal)
+            || domain.Equals("MicrosoftAccount", StringComparison.OrdinalIgnoreCase)
+            || domain.Equals("AzureAD", StringComparison.OrdinalIgnoreCase))
+        {
+            return CurrentLogonName();
+        }
+
+        return string.IsNullOrWhiteSpace(account) ? CurrentLogonName() : account.Trim();
+    }
+
+    private static void SplitAccount(string account, out string domain, out string user)
+    {
+        var slash = account.LastIndexOf('\\');
+        if (slash > 0 && slash < account.Length - 1)
+        {
+            domain = account[..slash];
+            user = account[(slash + 1)..];
+            if (domain == ".")
+            {
+                domain = Environment.MachineName;
+            }
+
+            return;
+        }
+
+        domain = Environment.UserDomainName;
+        user = account;
+    }
+
     private static void ZeroAndFree(IntPtr buffer, uint size)
     {
         if (buffer == IntPtr.Zero)
@@ -96,15 +235,31 @@ public static class WindowsCredentialPrompt
 
     private static WindowsAccountCredentials Unpack(IntPtr buffer, uint size)
     {
-        var userLen = MaxUserName;
-        var domainLen = MaxDomain;
-        var passwordLen = MaxPassword;
-        var user = new StringBuilder(userLen);
-        var domain = new StringBuilder(domainLen);
-        var password = new StringBuilder(passwordLen);
+        foreach (var flags in new[] { CredPackGenericCredentials, 0u })
+        {
+            if (TryUnpack(buffer, size, flags, out var credentials) &&
+                credentials is not null &&
+                !string.IsNullOrEmpty(credentials.Password))
+            {
+                return credentials;
+            }
+        }
+
+        throw new InvalidOperationException($"Could not read the Windows credentials (error {Marshal.GetLastWin32Error()}).");
+    }
+
+    private static bool TryUnpack(IntPtr buffer, uint size, uint flags, out WindowsAccountCredentials? credentials)
+    {
+        credentials = null;
+        var user = new StringBuilder(MaxUserName);
+        var domain = new StringBuilder(MaxDomain);
+        var password = new StringBuilder(MaxPassword);
+        var userLen = user.Capacity;
+        var domainLen = domain.Capacity;
+        var passwordLen = password.Capacity;
 
         if (!CredUnPackAuthenticationBuffer(
-                CredPackGenericCredentials,
+                flags,
                 buffer,
                 size,
                 user,
@@ -114,68 +269,50 @@ public static class WindowsCredentialPrompt
                 password,
                 ref passwordLen))
         {
-            throw new InvalidOperationException($"Could not read the Windows credentials (error {Marshal.GetLastWin32Error()}).");
+            return false;
         }
 
         var userName = user.ToString();
         var domainName = domain.ToString();
-        var account = string.IsNullOrEmpty(domainName) || userName.Contains('\\', StringComparison.Ordinal)
+        var packed = string.IsNullOrEmpty(domainName) || userName.Contains('\\', StringComparison.Ordinal)
             ? userName
             : $"{domainName}\\{userName}";
 
-        return new WindowsAccountCredentials(ToServiceAccountName(account), password.ToString());
+        credentials = new WindowsAccountCredentials(packed.Trim(), password.ToString());
+        return true;
     }
 
     private static string CurrentLogonName()
     {
         var local = FirstLocalUserName(SessionUserName(), Environment.UserName);
         var domain = Environment.UserDomainName;
-        return string.IsNullOrWhiteSpace(domain) ? local : $"{domain}\\{local}";
+        return string.IsNullOrWhiteSpace(domain) ? $".\\{local}" : $"{domain}\\{local}";
     }
 
     /// <summary>
-    /// Preserves whatever the admin actually entered/confirmed in the dialog — "DOMAIN\user",
-    /// ".\user", or a bare "user" (treated as local, same convention the old installer's
-    /// "DOMAIN\User (or .\User)" prompt used) — instead of collapsing every account to a local
-    /// one. A real domain account must stay a domain account, or the service logon will fail on
-    /// a domain-joined machine. Only Microsoft Account / Azure AD / UPN identities are rejected
-    /// here, since those genuinely cannot be used as a classic Windows service logon account at
-    /// all (falling back silently to *some* account would be worse than being explicit about it).
+    /// Matches the old installer: local / Microsoft-linked accounts become ".\user" (NSSM's
+    /// preferred form). Domain accounts stay "DOMAIN\user".
     /// </summary>
     private static string ToServiceAccountName(string account)
     {
         var trimmed = account.Trim();
+        SplitAccount(trimmed, out var domain, out var user);
 
-        if (IsIncompatibleIdentity(trimmed))
+        if (string.IsNullOrWhiteSpace(user) || user.Contains('@', StringComparison.Ordinal))
         {
-            return FallbackAccountName();
+            user = FirstLocalUserName(SessionUserName(), Environment.UserName);
+            domain = Environment.MachineName;
         }
 
-        if (trimmed.Contains('\\', StringComparison.Ordinal))
+        if (domain.Equals("MicrosoftAccount", StringComparison.OrdinalIgnoreCase)
+            || domain.Equals("AzureAD", StringComparison.OrdinalIgnoreCase)
+            || domain.Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)
+            || domain == ".")
         {
-            return trimmed; // "DOMAIN\user" or ".\user" exactly as entered.
+            return $".\\{user}";
         }
 
-        return $".\\{trimmed}"; // bare "user" -- assume local, matching the old ".\User" convention.
-    }
-
-    private static string FallbackAccountName()
-    {
-        var local = FirstLocalUserName(SessionUserName(), Environment.UserName);
-        var domain = Environment.UserDomainName;
-        return string.IsNullOrWhiteSpace(domain) ? $".\\{local}" : $"{domain}\\{local}";
-    }
-
-    private static bool IsIncompatibleIdentity(string account)
-    {
-        var slash = account.LastIndexOf('\\');
-        var domain = slash > 0 ? account[..slash] : null;
-        var name = slash >= 0 ? account[(slash + 1)..] : account;
-
-        return name.Contains('@', StringComparison.Ordinal)
-            || (domain is not null &&
-                (domain.Equals("MicrosoftAccount", StringComparison.OrdinalIgnoreCase)
-                 || domain.Equals("AzureAD", StringComparison.OrdinalIgnoreCase)));
+        return $"{domain}\\{user}";
     }
 
     private static string FirstLocalUserName(params string?[] candidates)
@@ -254,6 +391,41 @@ public static class WindowsCredentialPrompt
         return buffer;
     }
 
+    private static void DiagnoseFailedLogon(WindowsAccountCredentials credentials, int win32Error)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "RFQ Application Setup");
+            Directory.CreateDirectory(dir);
+            var emails = string.Join(", ", MicrosoftAccountProbe.Emails());
+            var line =
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] service-account: typed={credentials.AccountName}; " +
+                $"passwordChars={credentials.Password.Length}; emails=[{emails}]; win32={win32Error} {FormatWin32(win32Error)}" +
+                Environment.NewLine;
+            File.AppendAllText(Path.Combine(dir, "installer.log"), line);
+        }
+        catch
+        {
+            // Diagnostics must never break the prompt.
+        }
+    }
+
+    private static string FormatWin32(int error)
+    {
+        var buffer = new StringBuilder(512);
+        var length = FormatMessage(
+            0x00001000 /* FORMAT_MESSAGE_FROM_SYSTEM */,
+            IntPtr.Zero,
+            (uint)error,
+            0,
+            buffer,
+            buffer.Capacity,
+            IntPtr.Zero);
+        return length == 0 ? string.Empty : buffer.ToString().Trim();
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CredUiInfo
     {
@@ -306,4 +478,26 @@ public static class WindowsCredentialPrompt
         string pszPassword,
         IntPtr pPackedCredentials,
         ref int pcbPackedCredentials);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LogonUser(
+        string lpszUsername,
+        string? lpszDomain,
+        string lpszPassword,
+        int dwLogonType,
+        int dwLogonProvider,
+        out IntPtr phToken);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int FormatMessage(
+        uint dwFlags,
+        IntPtr lpSource,
+        uint dwMessageId,
+        uint dwLanguageId,
+        StringBuilder lpBuffer,
+        int nSize,
+        IntPtr arguments);
 }
