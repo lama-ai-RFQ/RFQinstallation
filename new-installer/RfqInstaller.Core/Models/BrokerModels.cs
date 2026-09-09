@@ -28,7 +28,13 @@ public class PackageComponent
     public string? Sha256 { get; init; }
 }
 
-/// <summary>Response from the license-broker HTTPS API: validates the key and hands back short-lived, scoped download URLs plus install-time config — replacing what used to be a manually-typed GitHub token + AWS key/secret/region.</summary>
+/// <summary>
+/// PLACEHOLDER SHAPE — this is a best guess at what the not-yet-built license/download service
+/// will return (validated key → download URLs + install-time config), kept only so the rest of
+/// the install flow (component download/extract, model download, .env config) has something to
+/// compile against. <see cref="Networking.LicenseBrokerClient"/> never actually populates this
+/// yet. Expect these fields to change once the real API contract is provided.
+/// </summary>
 public class BrokerResponse
 {
     public bool Valid { get; init; }

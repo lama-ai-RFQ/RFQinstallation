@@ -200,6 +200,14 @@ public class InstallOrchestrator
             ["WINDOWS"] = "true",
             ["LOCAL_DATABASE"] = "1",
             ["CONTAINER"] = "0",
+            // The private Postgres instance runs on its own port (PostgresBinariesConfig.DefaultPort),
+            // deliberately not 5432 — the app's own default (backend/config/database.py) is 5432, so
+            // this must always be written or the app connects to nothing.
+            ["DB_PORT"] = dbPort.ToString(),
+            // Written unconditionally (not just after a download) since plan.ModelPath is decided by
+            // the wizard up front either way — matches what the old installer did for both the
+            // "downloaded now" and "skipped, keep existing" cases.
+            ["MODEL_PATH"] = plan.ModelPath,
         };
 
         if (effectivelyUseCredentialManager)

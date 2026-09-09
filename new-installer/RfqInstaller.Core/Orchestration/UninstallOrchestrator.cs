@@ -52,6 +52,15 @@ public class UninstallOrchestrator
                 .ConfigureAwait(false);
         }
 
+        progress.Report("Removing desktop shortcut...");
+        // Matches the exact name/location InstallOrchestrator.CreateDesktopShortcut used — only
+        // ever created for Standalone installs, but harmless to check unconditionally here.
+        var shortcutPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "RFQ Application.lnk");
+        if (File.Exists(shortcutPath))
+        {
+            File.Delete(shortcutPath);
+        }
+
         progress.Report("Removing Add/Remove Programs entry...");
         UninstallRegistration.Unregister();
 
