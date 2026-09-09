@@ -1,0 +1,74 @@
+<UserControl x:Class="RfqInstaller.Pages.AdvancedOptionsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="600">
+    <ScrollViewer Style="{StaticResource ModernScrollViewerStyle}"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel MaxWidth="560" HorizontalAlignment="Left">
+            <TextBlock Text="Advanced options" Style="{StaticResource PageTitleStyle}"/>
+            <TextBlock Style="{StaticResource PageSubtitleStyle}">
+                Sensible defaults are already selected. Only change these if you know you need to.
+            </TextBlock>
+
+            <TextBlock Text="Server URL (used for OAuth redirects)" Style="{StaticResource FieldLabelStyle}" Margin="0,28,0,6"/>
+            <TextBox x:Name="ServerUrlTextBox" Style="{StaticResource ModernTextBoxStyle}" TextChanged="ServerUrlTextBox_TextChanged"/>
+
+            <TextBlock Text="Azure config encryption key" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <TextBlock x:Name="EncryptionKeyHelp" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+            <StackPanel x:Name="EncryptionKeyChoicePanel">
+                <RadioButton x:Name="AutoKeyRadio" GroupName="EncryptionKey" Content="Generate automatically (recommended)"
+                             Style="{StaticResource ModernRadioButtonStyle}" Checked="AutoKeyRadio_Checked" Margin="0,0,0,6"/>
+                <RadioButton x:Name="CustomKeyRadio" GroupName="EncryptionKey" Content="Keep the existing key (recommended)"
+                             Style="{StaticResource ModernRadioButtonStyle}" Checked="CustomKeyRadio_Checked"/>
+                <Grid x:Name="CustomKeyRow" Margin="0,8,0,0" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="CustomKeyTextBox" Grid.Column="0" Style="{StaticResource ModernTextBoxStyle}"
+                             Tag="Base64-encoded key" TextChanged="CustomKeyTextBox_TextChanged"/>
+                    <Button x:Name="CopyKeyButton" Grid.Column="1" Height="40" Content="Copy" Margin="10,0,0,0"
+                            Style="{StaticResource SecondaryButtonStyle}" Click="CopyKeyButton_Click"/>
+                </Grid>
+                <TextBlock x:Name="GenerateNewWarning" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"
+                           Foreground="{StaticResource DangerBrush}" Visibility="Collapsed"
+                           Text="Generating a new key will make secrets already stored in the database unreadable. This cannot be undone."/>
+            </StackPanel>
+            <TextBlock x:Name="EncryptionKeyError" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap"
+                       FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"/>
+
+            <TextBlock Text="Where should passwords be stored?" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <RadioButton x:Name="CredentialManagerRadio" GroupName="PasswordStorage" Content="Windows Credential Manager (recommended, more secure)"
+                         Style="{StaticResource ModernRadioButtonStyle}" Checked="CredentialManagerRadio_Checked" Margin="0,0,0,6"/>
+            <RadioButton x:Name="EnvFileRadio" GroupName="PasswordStorage" Content=".env file (less secure, but portable)"
+                         Style="{StaticResource ModernRadioButtonStyle}" Checked="EnvFileRadio_Checked"/>
+            <TextBlock x:Name="PasswordStorageHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+            <StackPanel x:Name="ServiceAccountSection">
+                <TextBlock Text="Service account" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+                <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,0,0,8" TextWrapping="Wrap">
+                    Which Windows identity the background service uses. Does not need to be an administrator
+                    account, even for Current User.
+                </TextBlock>
+                <ComboBox x:Name="ServiceAccountCombo" Style="{StaticResource ModernComboBoxStyle}"
+                          SelectionChanged="ServiceAccountCombo_SelectionChanged">
+                    <ComboBoxItem Content="Current User (recommended)"/>
+                    <ComboBoxItem Content="Network Service"/>
+                    <ComboBoxItem Content="Local System"/>
+                </ComboBox>
+                <TextBlock x:Name="ServiceAccountHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <TextBlock Text="Reinstalling" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <CheckBox x:Name="CleanReinstallCheck" Content="Delete previously downloaded files and start fresh"
+                      Style="{StaticResource ModernCheckBoxStyle}" Checked="CleanReinstallCheck_Changed" Unchecked="CleanReinstallCheck_Changed"/>
+            <CheckBox x:Name="CleanupAfterCheck" Content="Delete temporary download files after installing"
+                      Style="{StaticResource ModernCheckBoxStyle}" Margin="0,8,0,0"
+                      Checked="CleanupAfterCheck_Changed" Unchecked="CleanupAfterCheck_Changed"/>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
