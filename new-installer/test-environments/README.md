@@ -100,34 +100,55 @@ One-time setup, from a `clean` checkpoint:
 3. `.\hyperv\Push-LegacyInstaller.ps1 -Credential (Get-Credential)` — copies
    `download_and_install.ps1` and `setup_database_auto.ps1` from the repo root into
    `C:\LegacyInstaller` on the guest.
-4. In the `vmconnect.exe` console (not scripted — see why below), run:
+4. In the `vmconnect.exe` console (not scripted — see why below), run **one** of the two variants
+   below, depending on which starting state you want to checkpoint. The encryption key is entirely
+   `download_and_install.ps1`'s own concern (`-AzureKeyGenerate` / `-AzureKeyCustom`, both default
+   to unset) — **not** `setup_database_auto.ps1`, which only ever touches the DB/credentials, never
+   the key.
+
+   **Variant A — with an Azure encryption key** (the common case: most real customers have one):
+   ```powershell
+   cd C:\LegacyInstaller
+   .\download_and_install.ps1 -InstallPath "C:\Program Files\RFQ Application" `
+       -GitHubToken <your PAT> -AWSKey <key> -AWSSecret <secret> -AzureKeyGenerate -NonInteractive
+   ```
+
+   **Variant B — without one** (older/edge-case installs that never got one set):
    ```powershell
    cd C:\LegacyInstaller
    .\download_and_install.ps1 -InstallPath "C:\Program Files\RFQ Application" `
        -GitHubToken <your PAT> -AWSKey <key> -AWSSecret <secret> -NonInteractive
    ```
-   Type the GitHub PAT / AWS key+secret directly into the console rather than saving them into
-   any script or file in this repo — `Push-LegacyInstaller.ps1` deliberately stops short of
-   running this step for that reason. `-InstallPath` must be set explicitly to match what the
+   Leaving out `-AzureKeyGenerate`/`-AzureKeyCustom` writes `AZURE_CONFIG_ENCRYPTION_KEY=` empty —
+   this is what the script does by default, so it's easy to end up here without meaning to.
+
+   Either way: type the GitHub PAT / AWS key+secret directly into the console rather than saving
+   them into any script or file in this repo — `Push-LegacyInstaller.ps1` deliberately stops short
+   of running this step for that reason. `-InstallPath` must be set explicitly to match what the
    real Inno installer would have used (`{autopf}\RFQ Application` = `C:\Program Files\RFQ
    Application`); the script's own bare default is `%LOCALAPPDATA%\RFQApplication`, which would
    land somewhere the new installer's "existing install" detection won't be looking.
 5. Still in the console: `cd "C:\Program Files\RFQ Application"; .\setup_database_auto.ps1` —
-   creates the DB/user against the Postgres from step 2, writes the encryption key to `.env`, and
-   stores `RFQApplication_SQL_SUPER_USER` / `RFQApplication_RFQ_USER_PASSWORD` in Credential
-   Manager.
-6. `.\hyperv\New-Checkpoint.ps1 -CheckpointName existing-legacy-installer`
+   creates the DB/user against the Postgres from step 2, and stores
+   `RFQApplication_SQL_SUPER_USER` / `RFQApplication_RFQ_USER_PASSWORD` in Credential Manager. Does
+   not touch the encryption key either way.
+6. `.\hyperv\New-Checkpoint.ps1 -CheckpointName existing-legacy-installer-with-key` (Variant A) or
+   `-CheckpointName existing-legacy-installer-no-key` (Variant B).
 
-From then on, testing against it is the same loop as Scenario 2 — `Restore-Scenario.ps1
--CheckpointName existing-legacy-installer`, `Push-ToGuest.ps1` to drop in the *new* installer
-build, `vmconnect.exe` to run it, `Collect-Diagnostics.ps1` to pull the report back.
+From then on, testing against either is the same loop as Scenario 2 —
+`Restore-Scenario.ps1 -CheckpointName existing-legacy-installer-with-key` (or `-no-key`),
+`Push-ToGuest.ps1` to drop in the *new* installer build, `vmconnect.exe` to run it — on
+`AdvancedOptionsPage`, Variant A should show "keep the existing key (recommended)" already
+selected, Variant B should behave like a first install and generate one — then
+`Collect-Diagnostics.ps1` to pull the report back.
 
 ## Not built yet
 
-Everything above only covers scenarios 1, 4/5, and the legacy-installer variant from the original
-list (empty; all-existing with old or same model, from either installer generation). The rest —
-no-Postgres-but-DB-present, missing/corrupted encryption key, expired license, non-admin
-elevation, domain-joined `DOMAIN\user`, disk-space exhaustion, port conflicts — are just more
+Everything above only covers scenarios 1, 4/5, and the legacy-installer variant (with and without
+an existing encryption key) from the original list (empty; all-existing with old or same model,
+from either installer generation). The rest — no-Postgres-but-DB-present, corrupted (not just
+missing) encryption key, expired license, non-admin elevation, domain-joined `DOMAIN\user`,
+disk-space exhaustion, port conflicts — are just more
 checkpoint names off the same `hyperv/` scripts (revert to `clean` or `existing-*`, provision the
 specific broken state by hand, checkpoint it, reuse). Ask when you want the next batch scaffolded.
 
