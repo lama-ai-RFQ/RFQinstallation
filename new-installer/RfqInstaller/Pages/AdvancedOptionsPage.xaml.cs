@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -49,6 +50,15 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
         CleanReinstallCheck.IsChecked = _state.CleanReinstall;
         CleanupAfterCheck.IsChecked = _state.CleanupAfterInstall;
+
+        // Same detection signal as the encryption-key section above (an .env at this install path
+        // means something was already installed here) — old installer showed this page/its
+        // checkboxes unconditionally, even on a totally fresh machine, which read as confusing
+        // "reinstall" language with nothing to reinstall over. Only show it when it actually applies.
+        ReinstallingSection.Visibility = File.Exists(Path.Combine(_state.InstallPath, ".env"))
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         UpdateCredentialManagerAvailability();
         UpdateHelpText();
     }

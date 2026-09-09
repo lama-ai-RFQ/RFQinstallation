@@ -30,51 +30,16 @@ Summary of work on `feature/new-windows-installer`.
 | Uninstall                  | Inno uninstaller                                                                 | Dedicated WPF uninstaller; can view stored DB/settings passwords from Credential Manager or `.env`  |
 
 
-## Bugs found in a 2026-09-10 audit, fixed same day
+## Open items / suggestions
 
-- **`.env` was missing `DB_PORT`.** The private Postgres instance runs on port 55432
-  (`PostgresBinariesConfig.DefaultPort`, chosen specifically to not collide with any pre-existing
-  system Postgres on 5432) — but `ConfigureApplication` took the real port as a parameter and never
-  wrote it anywhere, so `RFQautomation/backend/config/database.py`'s own default of 5432 silently
-  took over. Every install would have the app trying to reach a port nothing listens on. Fixed:
-  `DB_PORT` is now written from the actual provisioned port.
-- **`.env` was missing `MODEL_PATH`.** Left at the literal placeholder text from `env.template`
-  (`your_model_path_here`) regardless of where the model actually was/would be. Since that literal
-  string isn't empty, `RFQautomation/backend/language_models/hf_language_model.py` used it directly
-  instead of falling back to its own path-resolution logic, then failed the `os.path.exists` check —
-  silently, just a log warning, no hard error. A customer who accepted the default "download model
-  now" ended up with a fully downloaded model the app could never find. Fixed: `MODEL_PATH` is now
-  always written from `plan.ModelPath` (known up front regardless of whether the model downloads
-  now or later, unlike the old installer which discovered it only after downloading).
-- **Desktop shortcut wasn't removed on uninstall.** Inno tracked and auto-removed it; the new
-  `UninstallOrchestrator` stopped services and unregistered Add/Remove Programs but left
-  `RFQ Application.lnk` on the Desktop pointing at a now-deleted install directory. Fixed.
-
-Not fixed, left as a conscious choice to revisit: the old installer also copied `README.md` /
-`USER_QUICK_START.md` into the install directory (`setup.iss`'s `[Files]`); the new installer
-doesn't. Nothing at runtime reads these (checked), so it's a documentation-availability gap for the
-customer, not a functional one — worth a decision, not urgent.
-
-## Open gap found 2026-09-10: the installed app needs these credentials *after* install too
-
-The old installer's `.env` write wasn't only for the one-time bootstrap download — several things
-the **already-installed app** does on an ongoing basis read the same values back out of `.env` at
-runtime:
-
-- `AWS_KEY` / `AWS_SECRET` / `AWS_REGION` — read by `RFQautomation/backend/services/aws_downloader_service.py`,
-  used by OCR models, sentence-transformer models, and the parts/cage-codes databases (see
-  `backend/main/backend.py`, many call sites) to download/update those artifacts on demand, not
-  just at install time.
-- `GITHUB_PAT` / `GITHUB_USERNAME` — read by `RFQautomation/windows/updater/windows_updater_pkg/main.py`
-  for the Windows updater's own update checks.
-
-`InstallOrchestrator.ConfigureApplication` writes neither. Right now a real install ships whatever
-literal placeholder text sits in `env.template` (`GITHUB_PAT=your_github_token_here`, no `AWS_KEY`/
-`AWS_SECRET` lines at all) — meaning these ongoing app features are silently non-functional after a
-new-installer install, even though the install itself appears to succeed. This was **not** part of
-the original license-broker plan, which only considered the one-time install-time download; it
-needs the same "outside API, license-gated" thinking applied to *ongoing* runtime credentials, not
-just the initial download. Whoever designs the real service should account for this.
+- License/download service not built yet — `LicenseBrokerClient` is an intentional placeholder (see "Download auth" row above)
+- Installed app needs `AWS_KEY`/`AWS_SECRET`/`AWS_REGION` and `GITHUB_PAT`/`GITHUB_USERNAME` on an ongoing basis (OCR/model/database downloads, updater), not just at install time — new installer doesn't provision these yet
+- `README.md` / `USER_QUICK_START.md` no longer copied into the install directory (docs-only, nothing reads them at runtime)
+- The server URL shown in the installer is a bare `localhost` — doesn't look like what a customer will actually see/use, and doesn't surface the port at all
+- Add a revocation check to the license broker (no way to invalidate a leaked/issued key today)
+- Settings password: no way to reset it from inside the app if forgotten
+- Uninstaller
+- Dark mode
 
 ## Fixes & polish on the new installer
 
@@ -115,3 +80,8 @@ just the initial download. Whoever designs the real service should account for t
 - Desktop shortcut checkbox styling
 - Show-password actually shows the password
 - Rename Demo → RFQ Application / `RfqInstaller`
+- `.env` was missing `DB_PORT` (app couldn't reach the private Postgres instance)
+- `.env` was missing a real `MODEL_PATH` (downloaded model was silently unfindable)
+- Desktop shortcut wasn't removed on uninstall
+- Reinstalling over an existing Postgres data directory generated a mismatched new superuser password
+- "Reinstalling" options on Advanced page now only show when an install is actually detected

@@ -17,6 +17,17 @@ public class PostgresProvisioner
 {
     public const string ServiceName = "RFQPostgreSQL";
 
+    /// <summary>
+    /// True when a data directory from a prior install/provision already exists — its superuser
+    /// password was fixed once, during that original <c>initdb</c>, and cannot be changed by
+    /// supplying a different password here (see <see cref="ProvisionAsync"/>: initialization is
+    /// skipped entirely when this is true). Callers must resolve and reuse the real existing
+    /// password rather than generating a new one, or the maintenance connection will fail to
+    /// authenticate against the cluster that's actually there.
+    /// </summary>
+    public static bool IsAlreadyInitialized(string installPath) =>
+        File.Exists(Path.Combine(installPath, "pgdata", "PG_VERSION"));
+
     private readonly HttpDownloader _downloader;
 
     public PostgresProvisioner(HttpDownloader? downloader = null)

@@ -76,7 +76,29 @@ public class InstallOrchestrator
                 .ConfigureAwait(false);
 
             progress.Report(new InstallStepProgress("Generating credentials", 0.4, null));
-            var superUserPassword = PasswordGenerator.Generate();
+            // rfq_user's password is safe to regenerate every run — DatabaseSetup always ALTERs it
+            // to match, so Credential Manager/.env and the real role stay in sync either way. The
+            // postgres superuser is different: if a data directory from a prior install already
+            // exists, its password was fixed once during that original initdb and can't be changed
+            // by generating a new one here — reuse the real existing value instead, or the
+            // maintenance connection below will fail to authenticate against the cluster that's
+            // actually there.
+            string superUserPassword;
+            if (PostgresProvisioner.IsAlreadyInitialized(plan.InstallPath))
+            {
+                var existing = StoredCredentialsResolver.ResolveAll(plan.InstallPath)
+                    .FirstOrDefault(c => c.EnvKey == "SQL_SUPER_USER");
+                superUserPassword = existing?.Value
+                    ?? throw new InvalidOperationException(
+                        "Found an existing PostgreSQL data directory, but its superuser password could not be recovered " +
+                        "from Credential Manager or .env. Delete the 'pgdata' folder under the install path to start a " +
+                        "fresh database, or restore the missing credential before reinstalling.");
+            }
+            else
+            {
+                superUserPassword = PasswordGenerator.Generate();
+            }
+
             var appUserPassword = PasswordGenerator.Generate();
             var settingsPassword = plan.SettingsPassword;
 

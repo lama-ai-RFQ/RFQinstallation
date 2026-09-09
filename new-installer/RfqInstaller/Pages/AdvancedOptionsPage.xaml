@@ -63,12 +63,14 @@
                 <TextBlock x:Name="ServiceAccountHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <TextBlock Text="Reinstalling" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
-            <CheckBox x:Name="CleanReinstallCheck" Content="Delete previously downloaded files and start fresh"
-                      Style="{StaticResource ModernCheckBoxStyle}" Checked="CleanReinstallCheck_Changed" Unchecked="CleanReinstallCheck_Changed"/>
-            <CheckBox x:Name="CleanupAfterCheck" Content="Delete temporary download files after installing"
-                      Style="{StaticResource ModernCheckBoxStyle}" Margin="0,8,0,0"
-                      Checked="CleanupAfterCheck_Changed" Unchecked="CleanupAfterCheck_Changed"/>
+            <StackPanel x:Name="ReinstallingSection">
+                <TextBlock Text="Reinstalling" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+                <CheckBox x:Name="CleanReinstallCheck" Content="Delete previously downloaded files and start fresh"
+                          Style="{StaticResource ModernCheckBoxStyle}" Checked="CleanReinstallCheck_Changed" Unchecked="CleanReinstallCheck_Changed"/>
+                <CheckBox x:Name="CleanupAfterCheck" Content="Delete temporary download files after installing"
+                          Style="{StaticResource ModernCheckBoxStyle}" Margin="0,8,0,0"
+                          Checked="CleanupAfterCheck_Changed" Unchecked="CleanupAfterCheck_Changed"/>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </UserControl>
