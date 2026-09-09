@@ -11,16 +11,15 @@
             shortcut to your desktop for quick access.
         </TextBlock>
 
-        <Border Style="{StaticResource CardBorderStyle}" Margin="0,28,0,0">
-            <CheckBox x:Name="DesktopShortcutCheckBox" Style="{StaticResource ModernCheckBoxStyle}"
-                      Checked="DesktopShortcutCheckBox_Changed" Unchecked="DesktopShortcutCheckBox_Changed">
-                <StackPanel>
-                    <TextBlock Text="Create a desktop shortcut" FontWeight="SemiBold" FontSize="14"
-                               Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="Adds an icon to your desktop that launches RFQ Application."
-                               Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"/>
-                </StackPanel>
-            </CheckBox>
-        </Border>
+        <CheckBox x:Name="DesktopShortcutCheckBox" Style="{StaticResource OptionCardCheckBoxStyle}"
+                  Margin="0,28,0,0"
+                  Checked="DesktopShortcutCheckBox_Changed" Unchecked="DesktopShortcutCheckBox_Changed">
+            <StackPanel>
+                <TextBlock Text="Create a desktop shortcut" FontWeight="SemiBold" FontSize="15"
+                           Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="Adds an icon to your desktop that launches RFQ Application."
+                           TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"/>
+            </StackPanel>
+        </CheckBox>
     </StackPanel>
 </UserControl>

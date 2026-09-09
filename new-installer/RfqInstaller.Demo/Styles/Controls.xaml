@@ -485,6 +485,48 @@
         </Setter>
     </Style>
 
+    <Style x:Key="OptionCardCheckBoxStyle" TargetType="CheckBox">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Padding" Value="18"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <Border x:Name="Bg" Background="{StaticResource CardBackgroundBrush}"
+                            BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1.5"
+                            CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center"/>
+                            <Border Grid.Column="1" x:Name="Box" Width="22" Height="22" CornerRadius="5"
+                                    BorderThickness="2" BorderBrush="{StaticResource BorderStrongBrush}"
+                                    Background="Transparent" VerticalAlignment="Center" Margin="16,0,0,0">
+                                <Path x:Name="Check" Data="M2,6 L5,9.5 L11,2" Stroke="White" StrokeThickness="2"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Visibility="Collapsed"/>
+                            </Border>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                            <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="ScrollBarTrackButtonStyle" TargetType="RepeatButton">
         <Setter Property="OverridesDefaultStyle" Value="True"/>
         <Setter Property="Focusable" Value="False"/>
