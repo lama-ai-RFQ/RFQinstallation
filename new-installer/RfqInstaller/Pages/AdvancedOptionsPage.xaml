@@ -57,7 +57,7 @@
             <StackPanel x:Name="CustomPostgresPasswordPanel" Visibility="Collapsed" Margin="0,8,0,0">
                 <TextBlock x:Name="SuperuserReuseNote" Style="{StaticResource PageSubtitleStyle}"
                            TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"
-                           Text="This folder already has a Postgres data directory, so the existing superuser password will be reused. You can still set the RFQ database user password."/>
+                           Text="This install folder already has a database from a previous setup. The existing postgres superuser password will be reused — it cannot be changed here. You can still set the rfq_user password."/>
                 <StackPanel x:Name="SuperuserPasswordRow">
                     <TextBlock Text="Superuser (postgres)" Style="{StaticResource FieldLabelStyle}" Margin="0,8,0,6"/>
                     <PasswordBox x:Name="SuperuserMaskedBox" Height="40" Style="{StaticResource ModernPasswordBoxStyle}"
