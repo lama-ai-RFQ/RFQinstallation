@@ -283,12 +283,7 @@ public class InstallOrchestrator
         var standaloneArchives = downloaded
             .Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             .ToArray();
-        if (multipartArchives.Length > 0 || standaloneArchives.Length > 0)
-        {
-            // Services only need to be stopped once for the extraction batch. If an archive later
-            // encounters a real file lock, ExtractReplacingLockedFilesAsync checks again on retry.
-            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
-        }
+        var archivesToExtract = new List<string>();
 
         foreach (var firstPart in multipartArchives)
         {
@@ -327,20 +322,14 @@ public class InstallOrchestrator
                     await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
                 }
             }
-            await ExtractReplacingLockedFilesAsync(
-                    () => ZipExtractor.Extract(archivePath, installPath, progress: null, cancellationToken),
-                    Path.GetFileName(archivePath),
-                    installPath,
-                    progress,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            archivesToExtract.Add(archivePath);
         }
 
-        foreach (var archive in standaloneArchives)
+        archivesToExtract.AddRange(standaloneArchives);
+        if (archivesToExtract.Count > 0)
         {
-            await ExtractReplacingLockedFilesAsync(
-                    () => ZipExtractor.Extract(archive, installPath, progress: null, cancellationToken),
-                    Path.GetFileName(archive),
+            await ExtractArchivesFromStagingAsync(
+                    archivesToExtract,
                     installPath,
                     progress,
                     cancellationToken)
@@ -358,33 +347,73 @@ public class InstallOrchestrator
         File.Copy(_bundledUpdaterPath, Path.Combine(installPath, "windows_updater.exe"), overwrite: true);
     }
 
-    private async Task ExtractReplacingLockedFilesAsync(
-        Action extract,
-        string archiveName,
+    private async Task ExtractArchivesFromStagingAsync(
+        IReadOnlyList<string> archivePaths,
         string installPath,
         IProgress<InstallStepProgress> progress,
         CancellationToken cancellationToken)
     {
-        while (true)
+        var stagingRoot = Path.Combine(
+            Path.GetTempPath(),
+            "RfqInstallerExtract",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stagingRoot);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            foreach (var archivePath in archivePaths)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 progress.Report(new InstallStepProgress(
                     "Extracting application files",
                     0.39,
-                    archiveName));
-                extract();
-                return;
+                    Path.GetFileName(archivePath)));
+                ZipExtractor.Extract(archivePath, stagingRoot, progress: null, cancellationToken);
             }
-            catch (Exception ex) when (InstallDirectoryProcesses.IsFileInUse(ex))
+
+            // The old installer extracted away from the live installation, stopped processes once,
+            // then copied the complete staged tree into place. This avoids repeatedly decompressing
+            // an archive while some unrelated live file is locked.
+            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
+            progress.Report(new InstallStepProgress(
+                "Installing application files",
+                0.39,
+                null));
+            CopyDirectoryContents(stagingRoot, installPath, cancellationToken);
+        }
+        finally
+        {
+            if (Directory.Exists(stagingRoot))
             {
-                progress.Report(new InstallStepProgress(
-                    "Waiting for running programs to close",
-                    0.38,
-                    "A file in the install folder is still in use."));
-                await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
+                Directory.Delete(stagingRoot, recursive: true);
             }
+        }
+    }
+
+    private static void CopyDirectoryContents(
+        string sourceDirectory,
+        string destinationDirectory,
+        CancellationToken cancellationToken)
+    {
+        foreach (var directory in Directory.EnumerateDirectories(
+                     sourceDirectory,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relativePath = Path.GetRelativePath(sourceDirectory, directory);
+            Directory.CreateDirectory(Path.Combine(destinationDirectory, relativePath));
+        }
+
+        foreach (var file in Directory.EnumerateFiles(
+                     sourceDirectory,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relativePath = Path.GetRelativePath(sourceDirectory, file);
+            var destinationPath = Path.Combine(destinationDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(file, destinationPath, overwrite: true);
         }
     }
 
@@ -399,6 +428,7 @@ public class InstallOrchestrator
         progress.Report(new InstallStepProgress("Stopping existing RFQ services", 0.38, null));
         await nssm.StopIfExistsAsync(AppServiceName, cancellationToken).ConfigureAwait(false);
         await nssm.StopIfExistsAsync(UpdaterServiceName, cancellationToken).ConfigureAwait(false);
+        await nssm.StopIfExistsAsync(PostgresProvisioner.ServiceName, cancellationToken).ConfigureAwait(false);
 
         while (true)
         {
