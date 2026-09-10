@@ -31,7 +31,17 @@ public static class DatabaseSetup
 
         await using (var connection = new NpgsqlConnection(maintenanceConnString))
         {
-            await OpenWhenReadyAsync(connection, progress, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await OpenWhenReadyAsync(connection, progress, cancellationToken).ConfigureAwait(false);
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.InvalidPassword)
+            {
+                throw new InvalidOperationException(
+                    "PostgreSQL is running, but the stored postgres superuser password does not match this database cluster. " +
+                    "Restore the password originally used to initialize pgdata, or delete pgdata if this is a disposable failed install.",
+                    ex);
+            }
 
             var dbExists = await ScalarBoolAsync(connection, "SELECT 1 FROM pg_database WHERE datname = @n", ("n", DatabaseName), cancellationToken)
                 .ConfigureAwait(false);
@@ -117,13 +127,17 @@ public static class DatabaseSetup
 
     private static bool IsStartupRace(Exception exception)
     {
+        // A server-originated error proves PostgreSQL is already accepting connections. Only its
+        // explicit startup/shutdown states are retryable; authentication and configuration errors
+        // must surface immediately instead of being mislabeled as a 90-second startup timeout.
+        var postgresError = FindPostgresException(exception);
+        if (postgresError is not null)
+        {
+            return postgresError.SqlState is "57P03" or "57P01";
+        }
+
         for (var current = exception; current is not null; current = current.InnerException)
         {
-            if (current is PostgresException postgres && postgres.SqlState is "57P03" or "57P01")
-            {
-                return true;
-            }
-
             if (current is NpgsqlException or System.Net.Sockets.SocketException)
             {
                 return true;
@@ -131,6 +145,19 @@ public static class DatabaseSetup
         }
 
         return false;
+    }
+
+    private static PostgresException? FindPostgresException(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgres)
+            {
+                return postgres;
+            }
+        }
+
+        return null;
     }
 
     private static async Task ExecuteAsync(NpgsqlConnection connection, string sql, CancellationToken cancellationToken)

@@ -29,7 +29,10 @@ public static class StoredCredentialsResolver
 
             if (rawValue != CredentialManagerWriter.Sentinel)
             {
-                results.Add(string.IsNullOrEmpty(rawValue)
+                // Bundled templates contain human-readable your_* placeholders. They are not
+                // recoverable credentials and must never be attempted against an existing cluster.
+                results.Add(string.IsNullOrEmpty(rawValue) ||
+                            rawValue.StartsWith("your_", StringComparison.OrdinalIgnoreCase)
                     ? new StoredCredential(displayName, envKey, null, "not set")
                     : new StoredCredential(displayName, envKey, rawValue, ".env file"));
                 continue;

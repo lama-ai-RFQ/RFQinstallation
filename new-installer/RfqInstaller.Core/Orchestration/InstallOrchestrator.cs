@@ -117,6 +117,11 @@ public class InstallOrchestrator
                 : PasswordGenerator.Generate();
             var settingsPassword = plan.SettingsPassword;
 
+            // initdb makes this password authoritative before the rest of database/application
+            // setup runs. Persist it first so a failure after initdb cannot leave an initialized
+            // pgdata directory whose generated password is lost on Retry.
+            PersistSuperUserPasswordForRecovery(plan, superUserPassword);
+
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));
             var provisioner = new PostgresProvisioner(_downloader);
             var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Setting up database", 0.45, msg)));
@@ -435,8 +440,6 @@ public class InstallOrchestrator
         // it silently can't be read back at runtime, so fall back to .env in that combination
         // rather than producing an install that looks configured but isn't (the wizard's Advanced
         // page already warns about this combination before install starts).
-        var effectivelyUseCredentialManager = plan.UseCredentialManager && plan.ServiceAccount == ServiceAccountKind.CurrentUser;
-
         var envValues = new Dictionary<string, string>
         {
             ["LICENSE_KEY"] = plan.LicenseKey,
@@ -459,23 +462,12 @@ public class InstallOrchestrator
             ["MODEL_PATH"] = DefaultPaths.DefaultModelPath(),
         };
 
-        if (effectivelyUseCredentialManager)
-        {
-            CredentialManagerWriter.TryWrite("RFQApplication_SQL_SUPER_USER", "postgres", superUserPassword);
-            CredentialManagerWriter.TryWrite("RFQApplication_RFQ_USER_PASSWORD", DatabaseSetup.AppUserName, appUserPassword);
-            CredentialManagerWriter.TryWrite("RFQApplication_SETTINGS_PASSWORD", "rfq_app", settingsPassword);
-
-            envValues["SQL_SUPER_USER"] = CredentialManagerWriter.Sentinel;
-            envValues["RFQ_USER_PASSWORD"] = CredentialManagerWriter.Sentinel;
-            envValues["SETTINGS_PASSWORD"] = CredentialManagerWriter.Sentinel;
-        }
-        else
-        {
-            // Explicit, accepted tradeoff: real values in plaintext .env.
-            envValues["SQL_SUPER_USER"] = superUserPassword;
-            envValues["RFQ_USER_PASSWORD"] = appUserPassword;
-            envValues["SETTINGS_PASSWORD"] = settingsPassword;
-        }
+        envValues["SQL_SUPER_USER"] = StoreCredentialOrUsePlaintext(
+            plan, "RFQApplication_SQL_SUPER_USER", "postgres", superUserPassword);
+        envValues["RFQ_USER_PASSWORD"] = StoreCredentialOrUsePlaintext(
+            plan, "RFQApplication_RFQ_USER_PASSWORD", DatabaseSetup.AppUserName, appUserPassword);
+        envValues["SETTINGS_PASSWORD"] = StoreCredentialOrUsePlaintext(
+            plan, "RFQApplication_SETTINGS_PASSWORD", "rfq_app", settingsPassword);
 
         EnvFileWriter.Upsert(plan.InstallPath, envValues);
 
@@ -485,6 +477,32 @@ public class InstallOrchestrator
             license.CustomerId,
             license.Features,
             license.Limits);
+    }
+
+    private static void PersistSuperUserPasswordForRecovery(InstallPlan plan, string password)
+    {
+        var storedValue = StoreCredentialOrUsePlaintext(
+            plan,
+            "RFQApplication_SQL_SUPER_USER",
+            "postgres",
+            password);
+        EnvFileWriter.Upsert(
+            plan.InstallPath,
+            new Dictionary<string, string> { ["SQL_SUPER_USER"] = storedValue });
+    }
+
+    private static string StoreCredentialOrUsePlaintext(
+        InstallPlan plan,
+        string targetName,
+        string userName,
+        string password)
+    {
+        var effectivelyUseCredentialManager =
+            plan.UseCredentialManager && plan.ServiceAccount == ServiceAccountKind.CurrentUser;
+        return effectivelyUseCredentialManager &&
+               CredentialManagerWriter.TryWrite(targetName, userName, password)
+            ? CredentialManagerWriter.Sentinel
+            : password;
     }
 
     private async Task RegisterServicesAsync(InstallPlan plan, string mainExePath, CancellationToken cancellationToken)
