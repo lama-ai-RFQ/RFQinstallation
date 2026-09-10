@@ -10,12 +10,36 @@ namespace RfqInstaller.Core.Config;
 /// </summary>
 public static class EnvFileWriter
 {
+    private static readonly HashSet<string> RetiredDistributionKeys = new(StringComparer.Ordinal)
+    {
+        "AWS_KEY",
+        "AWS_SECRET",
+        "GITHUB_PAT",
+        "GITHUB_USERNAME",
+        "S3_RELEASE_BUCKET",
+        "S3_RELEASE_REGION",
+        "CLOUDFRONT_KEY_PAIR_ID",
+        "CLOUDFRONT_PRIVATE_KEY",
+        "CLOUDFRONT_PRIVATE_KEY_PATH",
+    };
+
     public static void Upsert(string installPath, IReadOnlyDictionary<string, string> values)
     {
         var envPath = Path.Combine(installPath, ".env");
         var lines = File.Exists(envPath)
             ? File.ReadAllLines(envPath).ToList()
             : LoadTemplateLines();
+        lines.RemoveAll(line =>
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith('#') || !trimmed.Contains('='))
+            {
+                return false;
+            }
+
+            var key = trimmed[..trimmed.IndexOf('=')].Trim();
+            return RetiredDistributionKeys.Contains(key);
+        });
 
         var remaining = new Dictionary<string, string>(values, StringComparer.Ordinal);
 

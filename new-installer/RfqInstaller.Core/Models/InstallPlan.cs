@@ -38,6 +38,11 @@ public class InstallPlan
     public required string SettingsPassword { get; init; }
 
     public string ServerUrl { get; init; } = "https://localhost";
+    public string BrokerUrl { get; init; } =
+        Environment.GetEnvironmentVariable("RFQ_LICENSE_BROKER_URL")?.Trim()
+        is { Length: > 0 } configured
+            ? configured
+            : "https://license-api.scint.ai";
     public bool AutoGenerateEncryptionKey { get; init; } = true;
     public string? CustomEncryptionKey { get; init; }
 

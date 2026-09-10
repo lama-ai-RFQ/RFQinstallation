@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RfqInstaller.Core", "RfqIns
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RfqInstaller.Uninstall", "RfqInstaller.Uninstall\RfqInstaller.Uninstall.csproj", "{26F0CE22-95D4-4DC2-83FE-F9BFA982450E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RfqInstaller.Core.Tests", "RfqInstaller.Core.Tests\RfqInstaller.Core.Tests.csproj", "{F2A7C345-E4A4-440D-875C-C773721071EB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{26F0CE22-95D4-4DC2-83FE-F9BFA982450E}.Release|x64.Build.0 = Release|x64
 		{26F0CE22-95D4-4DC2-83FE-F9BFA982450E}.Release|x86.ActiveCfg = Release|x64
 		{26F0CE22-95D4-4DC2-83FE-F9BFA982450E}.Release|x86.Build.0 = Release|x64
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Debug|x64.Build.0 = Debug|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Debug|x86.Build.0 = Debug|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Release|x64.ActiveCfg = Release|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Release|x64.Build.0 = Release|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Release|x86.ActiveCfg = Release|Any CPU
+		{F2A7C345-E4A4-440D-875C-C773721071EB}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

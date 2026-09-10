@@ -44,7 +44,7 @@ public class WizardState
 
     public bool LaunchAfterFinish { get; set; } = true;
 
-    public bool DownloadModelNow { get; set; } = true;
+    public bool DownloadModelNow { get; set; }
 
     public string ModelPath { get; set; } = DefaultPaths.DefaultModelPath();
 

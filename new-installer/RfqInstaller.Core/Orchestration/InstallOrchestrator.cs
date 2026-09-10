@@ -57,11 +57,10 @@ public class InstallOrchestrator
                 return new InstallResult(false, localCheck.Message, null);
             }
 
-            var broker = await _brokerClient.ValidateAndIssueAsync(plan.LicenseKey, cancellationToken).ConfigureAwait(false);
-            if (!broker.Valid)
-            {
-                return new InstallResult(false, broker.Message, null);
-            }
+            var release = await _brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
+                plan.LicenseKey,
+                plan.UpdateChannel,
+                cancellationToken).ConfigureAwait(false);
 
             var downloadCacheDir = Path.Combine(Path.GetTempPath(), "RfqInstallerDownloads");
             if (plan.CleanReinstall && Directory.Exists(downloadCacheDir))
@@ -72,7 +71,7 @@ public class InstallOrchestrator
             Directory.CreateDirectory(plan.InstallPath);
 
             progress.Report(new InstallStepProgress("Downloading application components", 0.1, null));
-            await DownloadAndExtractComponentsAsync(broker.Components, downloadCacheDir, plan.InstallPath, progress, cancellationToken)
+            await DownloadAndExtractComponentsAsync(release, downloadCacheDir, plan.InstallPath, progress, cancellationToken)
                 .ConfigureAwait(false);
 
             progress.Report(new InstallStepProgress("Generating credentials", 0.4, null));
@@ -111,7 +110,14 @@ public class InstallOrchestrator
                 .ConfigureAwait(false);
 
             progress.Report(new InstallStepProgress("Configuring application", 0.65, null));
-            ConfigureApplication(plan, broker, instance.Port, superUserPassword, appUserPassword, settingsPassword);
+            ConfigureApplication(
+                plan,
+                release.Release,
+                localCheck,
+                instance.Port,
+                superUserPassword,
+                appUserPassword,
+                settingsPassword);
 
             progress.Report(new InstallStepProgress("Generating security certificate", 0.7, null));
             SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath);
@@ -132,12 +138,6 @@ public class InstallOrchestrator
             {
                 progress.Report(new InstallStepProgress("Creating desktop shortcut", 0.9, null));
                 CreateDesktopShortcut(mainExePath, plan.InstallPath);
-            }
-
-            if (plan.DownloadModelNow && broker.ModelFiles.Count > 0)
-            {
-                progress.Report(new InstallStepProgress("Downloading AI model", 0.92, null));
-                await DownloadModelAsync(broker.ModelFiles, plan.ModelPath, progress, cancellationToken).ConfigureAwait(false);
             }
 
             if (plan.CleanupAfterInstall && Directory.Exists(downloadCacheDir))
@@ -167,25 +167,104 @@ public class InstallOrchestrator
     }
 
     private async Task DownloadAndExtractComponentsAsync(
-        IReadOnlyList<PackageComponent> components,
+        SignedWindowsRelease release,
         string downloadCacheDir,
         string installPath,
         IProgress<InstallStepProgress> progress,
         CancellationToken cancellationToken)
     {
-        for (var i = 0; i < components.Count; i++)
+        var metadataById = release.Release.Artifacts.ToDictionary(
+            artifact => artifact.ArtifactId,
+            StringComparer.Ordinal);
+        var downloaded = new List<string>();
+        for (var i = 0; i < release.Artifacts.Count; i++)
         {
-            var component = components[i];
-            var zipPath = Path.Combine(downloadCacheDir, $"{component.Name}.zip");
+            var signed = release.Artifacts[i];
+            if (!metadataById.TryGetValue(signed.ArtifactId, out var metadata))
+            {
+                throw new InvalidDataException($"Signed artifact '{signed.ArtifactId}' is absent from the release catalog.");
+            }
+            if (signed.Size != metadata.Size ||
+                !string.Equals(signed.Sha256, metadata.Sha256, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException($"Signed artifact '{signed.ArtifactId}' does not match the release catalog.");
+            }
+            var fileName = Path.GetFileName(metadata.Name);
+            if (!string.Equals(fileName, metadata.Name, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(fileName))
+            {
+                throw new InvalidDataException($"Release artifact '{signed.ArtifactId}' has an unsafe filename.");
+            }
+            var destination = Path.Combine(downloadCacheDir, fileName);
 
             var dlProgress = new Progress<DownloadProgress>(p =>
             {
-                var fraction = 0.1 + 0.3 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) / Math.Max(1, components.Count);
-                progress.Report(new InstallStepProgress("Downloading application components", fraction, component.Name));
+                var fraction = 0.1 + 0.3 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
+                    Math.Max(1, release.Artifacts.Count);
+                progress.Report(new InstallStepProgress("Downloading application components", fraction, fileName));
             });
 
-            await _downloader.DownloadAsync(component.Url, zipPath, component.SizeBytes, dlProgress, cancellationToken).ConfigureAwait(false);
-            ZipExtractor.Extract(zipPath, installPath, progress: null, cancellationToken);
+            await _downloader.DownloadAsync(
+                    signed.Url,
+                    destination,
+                    signed.Size,
+                    dlProgress,
+                    cancellationToken,
+                    expectedSha256: signed.Sha256)
+                .ConfigureAwait(false);
+            downloaded.Add(destination);
+        }
+
+        foreach (var firstPart in downloaded.Where(path => path.EndsWith(".zip.part1", StringComparison.OrdinalIgnoreCase)))
+        {
+            var archivePath = firstPart[..^".part1".Length];
+            var partPrefix = Path.GetFileName(archivePath) + ".part";
+            var partNumbers = downloaded
+                .Select(Path.GetFileName)
+                .Where(name => name is not null && name.StartsWith(partPrefix, StringComparison.OrdinalIgnoreCase))
+                .Select(name => int.TryParse(name![partPrefix.Length..], out var number) ? number : 0)
+                .Where(number => number > 0)
+                .Order()
+                .ToArray();
+            if (partNumbers.Length == 0 ||
+                !partNumbers.SequenceEqual(Enumerable.Range(1, partNumbers[^1])))
+            {
+                throw new InvalidDataException($"Archive '{Path.GetFileName(archivePath)}' has missing or malformed parts.");
+            }
+            await using (var output = new FileStream(
+                             archivePath,
+                             FileMode.Create,
+                             FileAccess.Write,
+                             FileShare.None,
+                             1 << 20,
+                             useAsync: true))
+            {
+                foreach (var partNumber in partNumbers)
+                {
+                    var partPath = $"{archivePath}.part{partNumber}";
+                    await using var input = new FileStream(
+                        partPath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        1 << 20,
+                        useAsync: true);
+                    await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            ZipExtractor.Extract(archivePath, installPath, progress: null, cancellationToken);
+        }
+
+        foreach (var archive in downloaded.Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+        {
+            ZipExtractor.Extract(archive, installPath, progress: null, cancellationToken);
+        }
+
+        var manifest = downloaded.FirstOrDefault(path =>
+            string.Equals(Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase));
+        if (manifest is not null)
+        {
+            File.Copy(manifest, Path.Combine(installPath, "local_manifest.json"), overwrite: true);
         }
 
         File.Copy(_bundledNssmPath, Path.Combine(installPath, "nssm.exe"), overwrite: true);
@@ -194,7 +273,8 @@ public class InstallOrchestrator
 
     private static void ConfigureApplication(
         InstallPlan plan,
-        BrokerResponse broker,
+        WindowsRelease release,
+        LocalLicenseCheck license,
         int dbPort,
         string superUserPassword,
         string appUserPassword,
@@ -213,12 +293,16 @@ public class InstallOrchestrator
 
         var envValues = new Dictionary<string, string>
         {
+            ["LICENSE_KEY"] = plan.LicenseKey,
+            ["RFQ_LICENSE_BROKER_URL"] = plan.BrokerUrl,
+            ["RFQ_UPDATER_SOURCE"] = "aws",
+            ["RFQ_RUNTIME_ASSET_MODE"] = "broker",
             // Older app builds only read AZURE_CONFIG_ENCRYPTION_KEY. Write both to the same
             // value so a leftover RFQ_ placeholder in env.template cannot shadow the real key.
             ["AZURE_CONFIG_ENCRYPTION_KEY"] = encryptionKey,
             ["RFQ_CONFIG_ENCRYPTION_KEY"] = encryptionKey,
-            ["SERVER_URL"] = broker.DefaultServerUrl ?? plan.ServerUrl,
-            ["RFQ_UPDATE_CHANNEL"] = broker.UpdateChannel ?? plan.UpdateChannel,
+            ["SERVER_URL"] = plan.ServerUrl,
+            ["RFQ_UPDATE_CHANNEL"] = release.Channel,
             ["WINDOWS"] = "true",
             ["LOCAL_DATABASE"] = "1",
             ["CONTAINER"] = "0",
@@ -252,7 +336,12 @@ public class InstallOrchestrator
 
         EnvFileWriter.Upsert(plan.InstallPath, envValues);
 
-        UserConfigWriter.WriteLicense(plan.InstallPath, plan.LicenseKey, broker.CustomerId, broker.Features, broker.Limits);
+        UserConfigWriter.WriteLicense(
+            plan.InstallPath,
+            plan.LicenseKey,
+            license.CustomerId,
+            license.Features,
+            license.Limits);
     }
 
     private async Task RegisterServicesAsync(InstallPlan plan, string mainExePath, CancellationToken cancellationToken)

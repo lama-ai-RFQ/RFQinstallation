@@ -47,6 +47,8 @@ upgrade paths, including installing on top of an existing legacy-installer insta
 
 ## Known gaps
 
-The license/download service (`license-broker/`) is not deployed yet — `LicenseBrokerClient` in the
-new installer is an intentional placeholder. See
-[`new-installer/OLD_VS_NEW.md`](new-installer/OLD_VS_NEW.md) for this and other open items.
+The WPF installer uses the central RFQ license broker for activation and
+short-lived, checksum-verified downloads. A complete Windows release catalog
+must be published before an installer build can be used. See
+[`new-installer/OLD_VS_NEW.md`](new-installer/OLD_VS_NEW.md) for remaining
+non-broker items.

@@ -1,5 +1,9 @@
 # License Broker
 
+> **Deprecated reference only.** Do not deploy this SAM application. The
+> supported broker is maintained in `RFQautomation/packages/rfq_license_broker`
+> and deployed from `RFQautomation/infra/aws-license-broker`.
+
 Validates an RFQ Application license key and, if valid, returns short-lived S3
 presigned URLs for the release package and model files, plus install-time
 config. This is what the Windows installer's License Key page calls instead of

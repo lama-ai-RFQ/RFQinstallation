@@ -8,17 +8,18 @@
         <TextBlock Text="AI model download" Style="{StaticResource PageTitleStyle}"/>
         <TextBlock Style="{StaticResource PageSubtitleStyle}">
             RFQ Application uses a local AI model (Mistral-7B) for document extraction. It's a large
-            download — about 30 GB — so you can do it now or later from the application's settings.
+            download — about 30 GB — and the application retrieves it securely after setup.
         </TextBlock>
 
         <StackPanel Margin="0,28,0,0">
             <RadioButton x:Name="NowRadio" GroupName="ModelDownload"
                          Style="{StaticResource OptionCardRadioStyle}"
+                         IsEnabled="False"
                          Checked="NowRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Download the model now (recommended)" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock Text="Download during setup (not available)" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="About 30 GB, typically 30-60 minutes depending on your connection. AI features work as soon as setup finishes."
+                    <TextBlock Text="Install-time model downloads are disabled; no AWS credentials are stored on this computer."
                                Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"/>
                 </StackPanel>
             </RadioButton>
@@ -27,9 +28,9 @@
                          Style="{StaticResource OptionCardRadioStyle}"
                          Checked="LaterRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Skip for now" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock Text="Download securely after setup" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="Finish setup faster; download the model later from within the application."
+                    <TextBlock Text="The application uses your activated license to request a short-lived download URL."
                                Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"/>
                 </StackPanel>
             </RadioButton>
