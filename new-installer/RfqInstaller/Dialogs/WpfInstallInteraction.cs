@@ -31,7 +31,7 @@ public sealed class WpfInstallInteraction : IInstallInteraction
                     list +
                     Environment.NewLine + Environment.NewLine +
                     "Stop them so installation can continue?",
-                    confirmText: "Stop processes",
+                    confirmText: "Stop Processes",
                     dismissText: "Cancel");
             }).Task;
     }
