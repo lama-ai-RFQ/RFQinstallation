@@ -64,7 +64,7 @@
                                     BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1">
                                 <Image Source="/Assets/scint.png" Stretch="Uniform" Margin="5"/>
                             </Border>
-                            <TextBlock Text="RFQ Application" Margin="10,0,0,0" FontSize="15" FontWeight="SemiBold"
+                            <TextBlock Text="Scint" Margin="10,0,0,0" FontSize="15" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <ItemsControl x:Name="RailItemsControl"
