@@ -155,9 +155,9 @@ public partial class MainWindow : Window
         if (!AppDialog.Confirm(
                 this,
                 "Exit setup?",
-                "Are you sure you want to exit?",
+                "Setup is not complete. If you exit now, RFQ Application will not be installed.",
                 confirmText: "Exit",
-                dismissText: "Continue"))
+                dismissText: "Cancel"))
         {
             e.Cancel = true;
         }

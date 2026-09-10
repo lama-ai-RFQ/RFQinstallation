@@ -110,6 +110,9 @@ public class PostgresProvisioner
         await HiddenProcessRunner.RunAsync("sc.exe", new[] { "start", ServiceName }, cancellationToken: cancellationToken)
             .ConfigureAwait(false); // ignore exit code: "already running" is not an error here
 
+        progress?.Report("Waiting for PostgreSQL to accept connections...");
+        await WaitUntilAcceptingConnectionsAsync(binDir, progress, cancellationToken).ConfigureAwait(false);
+
         return new PostgresInstance(binDir, dataDir, PostgresBinariesConfig.DefaultPort, ServiceName, generatedSuperUserPassword);
     }
 
@@ -160,5 +163,48 @@ public class PostgresProvisioner
         var result = await HiddenProcessRunner.RunAsync("sc.exe", new[] { "query", ServiceName }, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         return result.ExitCode == 0;
+    }
+
+    /// <summary>
+    /// <c>sc start</c> returns as soon as SCM accepts the request. Postgres then still
+    /// recovers WAL / starts accepting clients — the same window Docker waits out with
+    /// <c>pg_isready</c>. The old Inno flow never hit this because it used an already-running
+    /// system server.
+    /// </summary>
+    private static async Task WaitUntilAcceptingConnectionsAsync(
+        string binDir,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var pgIsReady = Path.Combine(binDir, "bin", "pg_isready.exe");
+        var port = PostgresBinariesConfig.DefaultPort.ToString();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+        var attempt = 0;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(pgIsReady))
+            {
+                var ready = await HiddenProcessRunner.RunAsync(
+                    pgIsReady,
+                    new[] { "-h", "127.0.0.1", "-p", port },
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (ready.ExitCode == 0)
+                {
+                    return;
+                }
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new InvalidOperationException(
+                    "PostgreSQL started as a Windows service but did not accept connections within 90 seconds.");
+            }
+
+            attempt++;
+            progress?.Report($"Waiting for PostgreSQL to accept connections ({attempt})...");
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+        }
     }
 }

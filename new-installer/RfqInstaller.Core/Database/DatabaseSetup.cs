@@ -31,7 +31,7 @@ public static class DatabaseSetup
 
         await using (var connection = new NpgsqlConnection(maintenanceConnString))
         {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await OpenWhenReadyAsync(connection, progress, cancellationToken).ConfigureAwait(false);
 
             var dbExists = await ScalarBoolAsync(connection, "SELECT 1 FROM pg_database WHERE datname = @n", ("n", DatabaseName), cancellationToken)
                 .ConfigureAwait(false);
@@ -74,7 +74,7 @@ public static class DatabaseSetup
         }.ConnectionString;
 
         await using var dbConnection = new NpgsqlConnection(dbConnString);
-        await dbConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await OpenWhenReadyAsync(dbConnection, progress, cancellationToken).ConfigureAwait(false);
 
         progress?.Report("Setting up schema permissions...");
         await ExecuteAsync(dbConnection, $"ALTER SCHEMA public OWNER TO \"{AppUserName}\"", cancellationToken).ConfigureAwait(false);
@@ -83,6 +83,54 @@ public static class DatabaseSetup
         await ExecuteAsync(dbConnection, $"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"{AppUserName}\"", cancellationToken).ConfigureAwait(false);
         await ExecuteAsync(dbConnection, $"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO \"{AppUserName}\"", cancellationToken).ConfigureAwait(false);
         await ExecuteAsync(dbConnection, $"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO \"{AppUserName}\"", cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task OpenWhenReadyAsync(
+        NpgsqlConnection connection,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+        Exception? lastError = null;
+        var attempt = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (IsStartupRace(ex))
+            {
+                lastError = ex;
+                attempt++;
+                progress?.Report($"Waiting for PostgreSQL to finish starting ({attempt})...");
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        throw new InvalidOperationException(
+            "PostgreSQL did not finish starting in time.",
+            lastError);
+    }
+
+    private static bool IsStartupRace(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgres && postgres.SqlState is "57P03" or "57P01")
+            {
+                return true;
+            }
+
+            if (current is NpgsqlException or System.Net.Sockets.SocketException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static async Task ExecuteAsync(NpgsqlConnection connection, string sql, CancellationToken cancellationToken)
