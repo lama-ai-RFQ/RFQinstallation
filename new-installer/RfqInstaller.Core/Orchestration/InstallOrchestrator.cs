@@ -316,6 +316,7 @@ public class InstallOrchestrator
             }
             await ExtractReplacingLockedFilesAsync(
                     () => ZipExtractor.Extract(archivePath, installPath, progress: null, cancellationToken),
+                    Path.GetFileName(archivePath),
                     installPath,
                     progress,
                     cancellationToken)
@@ -326,6 +327,7 @@ public class InstallOrchestrator
         {
             await ExtractReplacingLockedFilesAsync(
                     () => ZipExtractor.Extract(archive, installPath, progress: null, cancellationToken),
+                    Path.GetFileName(archive),
                     installPath,
                     progress,
                     cancellationToken)
@@ -345,6 +347,7 @@ public class InstallOrchestrator
 
     private async Task ExtractReplacingLockedFilesAsync(
         Action extract,
+        string archiveName,
         string installPath,
         IProgress<InstallStepProgress> progress,
         CancellationToken cancellationToken)
@@ -355,6 +358,10 @@ public class InstallOrchestrator
             await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
             try
             {
+                progress.Report(new InstallStepProgress(
+                    "Extracting application files",
+                    0.39,
+                    archiveName));
                 extract();
                 return;
             }
