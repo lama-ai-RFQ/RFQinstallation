@@ -16,7 +16,9 @@ namespace RfqInstaller.Core.Networking;
 /// </summary>
 public sealed class LicenseBrokerClient : IDisposable
 {
-    private const string ProductionBaseUrl = "https://license-api.scint.ai";
+    // Stage is the only deployed broker hostname today. Flip this to
+    // https://license-api.scint.ai when production DNS is live.
+    private const string DefaultBaseUrl = "https://license-api-stage.scint.ai";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly Regex LogicalIdPattern = new(
         "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
@@ -48,7 +50,7 @@ public sealed class LicenseBrokerClient : IDisposable
         var configuredUrl = string.IsNullOrWhiteSpace(baseUrl)
             ? Environment.GetEnvironmentVariable("RFQ_LICENSE_BROKER_URL")
             : baseUrl;
-        configuredUrl = string.IsNullOrWhiteSpace(configuredUrl) ? ProductionBaseUrl : configuredUrl;
+        configuredUrl = string.IsNullOrWhiteSpace(configuredUrl) ? DefaultBaseUrl : configuredUrl;
         if (!Uri.TryCreate(configuredUrl.TrimEnd('/') + "/", UriKind.Absolute, out var parsedBaseUri) ||
             parsedBaseUri.Scheme != Uri.UriSchemeHttps ||
             string.IsNullOrWhiteSpace(parsedBaseUri.Host) ||
