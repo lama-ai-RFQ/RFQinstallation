@@ -14,7 +14,11 @@ namespace RfqInstaller.Core.Orchestration;
 
 public record InstallStepProgress(string StepName, double FractionComplete, string? Detail);
 
-public record InstallResult(bool Success, string? ErrorMessage, string? MainExecutablePath);
+public record InstallResult(
+    bool Success,
+    string? ErrorMessage,
+    string? MainExecutablePath,
+    Exception? Cause = null);
 
 /// <summary>
 /// Drives the real install sequence end to end — this is what replaces InstallingPage's fake
@@ -162,8 +166,26 @@ public class InstallOrchestrator
         }
         catch (Exception ex)
         {
-            return new InstallResult(false, ex.Message, null);
+            return new InstallResult(false, FormatFailure(ex), null, ex);
         }
+    }
+
+    private static string FormatFailure(Exception exception)
+    {
+        if (exception is BrokerClientException broker)
+        {
+            return broker.Message;
+        }
+
+        var root = exception;
+        while (root.InnerException is not null)
+        {
+            root = root.InnerException;
+        }
+
+        return root == exception
+            ? $"{exception.GetType().Name}: {exception.Message}"
+            : $"{exception.GetType().Name}: {exception.Message}{Environment.NewLine}{root.GetType().Name}: {root.Message}";
     }
 
     private async Task DownloadAndExtractComponentsAsync(

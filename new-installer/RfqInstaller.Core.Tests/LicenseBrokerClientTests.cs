@@ -34,6 +34,30 @@ public sealed class LicenseBrokerClientTests
         Assert.True(handler.ActivationProofWasPresent);
     }
 
+    [Fact]
+    public async Task FailedBrokerResponsesIncludeStatusCodePathAndRequestId()
+    {
+        using var http = new HttpClient(new FailureHandler());
+        using var client = new LicenseBrokerClient(
+            http,
+            "https://license-api.example.test",
+            new MemoryCredentialStore(),
+            maxAttempts: 1);
+
+        var error = await Assert.ThrowsAsync<BrokerClientException>(() =>
+            client.ActivateAndGetSignedWindowsReleaseAsync("RFQ.payload.signature", "customer"));
+
+        Assert.Equal(HttpStatusCode.InternalServerError, error.StatusCode);
+        Assert.Equal("internal_error", error.Code);
+        Assert.Equal("GET", error.Method);
+        Assert.Contains("v1/releases/windows/customer/latest", error.Path);
+        Assert.Equal("license-api.example.test", error.Host);
+        Assert.Equal("req-123", error.RequestId);
+        Assert.Contains("HTTP=500", error.Message);
+        Assert.Contains("RequestId=req-123", error.Message);
+        Assert.Contains("The request could not be completed.", error.Message);
+    }
+
     private sealed class BrokerHandler : HttpMessageHandler
     {
         private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -107,6 +131,50 @@ public sealed class LicenseBrokerClientTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
+    }
+
+    private sealed class FailureHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/v1/activations")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent(
+                        """
+                        {
+                          "access_token":"access-1",
+                          "token_type":"Bearer",
+                          "expires_in":900,
+                          "refresh_token":"refresh-1",
+                          "refresh_expires_in":2592000,
+                          "device_id":"device-1"
+                        }
+                        """,
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
+            Assert.Equal("/v1/releases/windows/customer/latest", path);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "detail":"The request could not be completed.",
+                      "code":"internal_error",
+                      "request_id":"req-123"
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/problem+json"),
+            });
+        }
     }
 
     private sealed class MemoryCredentialStore : ILicenseCredentialStore

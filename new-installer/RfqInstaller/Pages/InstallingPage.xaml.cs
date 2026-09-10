@@ -91,15 +91,17 @@ public partial class InstallingPage : UserControl
         }
         else
         {
-            FailInstall(result.ErrorMessage ?? "An unknown error occurred during installation.");
+            FailInstall(
+                result.ErrorMessage ?? "An unknown error occurred during installation.",
+                result.Cause);
         }
     }
 
-    private void FailInstall(string message)
+    private void FailInstall(string message, Exception? cause = null)
     {
         if (!message.Contains(InstallerLog.LogPath, StringComparison.OrdinalIgnoreCase))
         {
-            InstallerLog.Write("installation stopped", extra: message);
+            InstallerLog.Write("installation stopped", cause, extra: message);
         }
 
         _state.InstallErrorMessage = message;

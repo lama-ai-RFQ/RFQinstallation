@@ -362,11 +362,20 @@ public sealed class LicenseBrokerClient : IDisposable
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new BrokerClientException("Broker transport timed out.");
+                throw new BrokerClientException(
+                    $"Broker transport timed out for {method} {path} on {_baseUri.Host}.",
+                    method: method.Method,
+                    path: path,
+                    host: _baseUri.Host);
             }
             catch (HttpRequestException ex)
             {
-                throw new BrokerClientException($"Broker transport failed: {ex.GetType().Name}.", innerException: ex);
+                throw new BrokerClientException(
+                    FormatTransportFailure(method, path, ex),
+                    method: method.Method,
+                    path: path,
+                    host: _baseUri.Host,
+                    innerException: ex);
             }
 
             using (response)
@@ -378,7 +387,8 @@ public sealed class LicenseBrokerClient : IDisposable
                 }
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw await CreateResponseExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+                    throw await CreateResponseExceptionAsync(method, path, response, cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 try
                 {
@@ -387,23 +397,40 @@ public sealed class LicenseBrokerClient : IDisposable
                         stream,
                         JsonOptions,
                         cancellationToken).ConfigureAwait(false);
-                    return value ?? throw new BrokerClientException("Broker returned an empty JSON response.");
+                    return value ?? throw new BrokerClientException(
+                        $"Broker returned an empty JSON response for {method} {path} on {_baseUri.Host}.",
+                        method: method.Method,
+                        path: path,
+                        host: _baseUri.Host);
                 }
                 catch (JsonException ex)
                 {
-                    throw new BrokerClientException("Broker returned malformed JSON.", innerException: ex);
+                    throw new BrokerClientException(
+                        $"Broker returned malformed JSON for {method} {path} on {_baseUri.Host}.",
+                        method: method.Method,
+                        path: path,
+                        host: _baseUri.Host,
+                        innerException: ex);
                 }
             }
         }
-        throw new BrokerClientException("Broker request attempts were exhausted.");
+        throw new BrokerClientException(
+            $"Broker request attempts were exhausted for {method} {path} on {_baseUri.Host}.",
+            method: method.Method,
+            path: path,
+            host: _baseUri.Host);
     }
 
     private async Task<BrokerClientException> CreateResponseExceptionAsync(
+        HttpMethod method,
+        string path,
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        var detail = $"Broker returned HTTP {(int)response.StatusCode}.";
+        var status = (int)response.StatusCode;
+        var detail = $"Broker returned HTTP {status}.";
         string? code = null;
+        string? requestId = null;
         try
         {
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -416,15 +443,43 @@ public sealed class LicenseBrokerClient : IDisposable
                 detail = problem.Detail;
             }
             code = problem?.Code;
+            requestId = problem?.RequestId;
         }
         catch (JsonException)
         {
             // Fall back to the status-only error; never include an arbitrary response body.
         }
+
+        var message = new StringBuilder()
+            .Append("License broker request failed.")
+            .Append(" Host=").Append(_baseUri.Host)
+            .Append(" Request=").Append(method.Method).Append(' ').Append(path)
+            .Append(" HTTP=").Append(status);
+        if (!string.IsNullOrWhiteSpace(code))
+        {
+            message.Append(" Code=").Append(Redact(code));
+        }
+        if (!string.IsNullOrWhiteSpace(requestId))
+        {
+            message.Append(" RequestId=").Append(Redact(requestId));
+        }
+        message.Append(" Detail=").Append(Redact(detail));
         return new BrokerClientException(
-            Redact(detail),
+            message.ToString(),
             response.StatusCode,
-            code is null ? null : Redact(code));
+            code is null ? null : Redact(code),
+            method: method.Method,
+            path: path,
+            host: _baseUri.Host,
+            requestId: requestId is null ? null : Redact(requestId));
+    }
+
+    private string FormatTransportFailure(HttpMethod method, string path, HttpRequestException ex)
+    {
+        var cause = ex.InnerException?.Message ?? ex.Message;
+        return Redact(
+            $"License broker transport failed. Host={_baseUri.Host} Request={method.Method} {path} " +
+            $"Error={ex.HttpRequestError} Detail={cause}");
     }
 
     private void RememberTokenPair(BrokerTokenResponse tokenPair, DeviceCredentialState state)
@@ -603,6 +658,9 @@ public sealed class LicenseBrokerClient : IDisposable
 
         [JsonPropertyName("code")]
         public string? Code { get; init; }
+
+        [JsonPropertyName("request_id")]
+        public string? RequestId { get; init; }
     }
 }
 
@@ -612,13 +670,25 @@ public sealed class BrokerClientException : Exception
         string message,
         HttpStatusCode? statusCode = null,
         string? code = null,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        string? method = null,
+        string? path = null,
+        string? host = null,
+        string? requestId = null)
         : base(message, innerException)
     {
         StatusCode = statusCode;
         Code = code;
+        Method = method;
+        Path = path;
+        Host = host;
+        RequestId = requestId;
     }
 
     public HttpStatusCode? StatusCode { get; }
     public string? Code { get; }
+    public string? Method { get; }
+    public string? Path { get; }
+    public string? Host { get; }
+    public string? RequestId { get; }
 }
