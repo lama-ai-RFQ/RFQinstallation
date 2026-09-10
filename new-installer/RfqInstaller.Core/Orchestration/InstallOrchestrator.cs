@@ -261,7 +261,9 @@ public class InstallOrchestrator
 
             var dlProgress = new Progress<DownloadProgress>(p =>
             {
-                var fraction = 0.1 + 0.3 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
+                // Reserve 35-40% for staging/extraction so progress never intentionally moves
+                // backwards after the final download callback.
+                var fraction = 0.1 + 0.25 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
                     Math.Max(1, release.Artifacts.Count);
                 progress.Report(new InstallStepProgress("Downloading application components", fraction, fileName));
             });
@@ -365,7 +367,7 @@ public class InstallOrchestrator
                 cancellationToken.ThrowIfCancellationRequested();
                 progress.Report(new InstallStepProgress(
                     "Extracting application files",
-                    0.39,
+                    0.36,
                     Path.GetFileName(archivePath)));
                 ZipExtractor.Extract(archivePath, stagingRoot, progress: null, cancellationToken);
             }

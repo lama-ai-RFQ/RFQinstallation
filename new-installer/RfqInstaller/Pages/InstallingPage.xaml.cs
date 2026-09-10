@@ -65,8 +65,16 @@ public partial class InstallingPage : UserControl
 
         var progress = new Progress<InstallStepProgress>(p =>
         {
-            Progress.Value = p.FractionComplete * 100;
-            PercentText.Text = $"{(int)(p.FractionComplete * 100)}%";
+            var reportedPercent = Math.Clamp(p.FractionComplete * 100, 0, 100);
+            // Progress<T> callbacks are posted asynchronously. A callback from an earlier stage
+            // can therefore arrive after a later one; discard it instead of moving the UI back.
+            if (reportedPercent < Progress.Value)
+            {
+                return;
+            }
+
+            Progress.Value = reportedPercent;
+            PercentText.Text = $"{(int)Math.Round(reportedPercent)}%";
             CurrentStepText.Text = p.StepName;
             DetailText.Text = p.Detail ?? string.Empty;
         });
