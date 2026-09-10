@@ -81,6 +81,30 @@ public class NssmServiceManager
         return result.ExitCode == 0;
     }
 
+    public async Task StopIfExistsAsync(string serviceName, CancellationToken cancellationToken)
+    {
+        if (!await ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        await HiddenProcessRunner.RunAsync("sc.exe", new[] { "stop", serviceName }, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        for (var i = 0; i < 30; i++)
+        {
+            var query = await HiddenProcessRunner.RunAsync("sc.exe", new[] { "query", serviceName }, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            if (query.ExitCode != 0 ||
+                query.StdOut.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task WaitForServiceGoneAsync(string serviceName, CancellationToken cancellationToken)
     {
         for (var i = 0; i < 30; i++)

@@ -6,6 +6,7 @@ using RfqInstaller.Core.Elevation;
 using RfqInstaller.Core.Licensing;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Networking;
+using RfqInstaller.Core.Processes;
 using RfqInstaller.Core.Security;
 using RfqInstaller.Core.Services;
 using RfqInstaller.Core.Shortcuts;
@@ -32,6 +33,7 @@ public class InstallOrchestrator
 
     private readonly LicenseBrokerClient _brokerClient;
     private readonly HttpDownloader _downloader;
+    private readonly IInstallInteraction? _interaction;
     private readonly string _bundledNssmPath;
     private readonly string _bundledUpdaterPath;
     private readonly string? _bundledUninstallerPath;
@@ -41,13 +43,15 @@ public class InstallOrchestrator
         string bundledUpdaterPath,
         string? bundledUninstallerPath = null,
         LicenseBrokerClient? brokerClient = null,
-        HttpDownloader? downloader = null)
+        HttpDownloader? downloader = null,
+        IInstallInteraction? interaction = null)
     {
         _bundledNssmPath = bundledNssmPath;
         _bundledUpdaterPath = bundledUpdaterPath;
         _bundledUninstallerPath = bundledUninstallerPath;
         _brokerClient = brokerClient ?? new LicenseBrokerClient();
         _downloader = downloader ?? new HttpDownloader();
+        _interaction = interaction;
     }
 
     public async Task<InstallResult> RunAsync(InstallPlan plan, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
@@ -274,12 +278,22 @@ public class InstallOrchestrator
                     await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
                 }
             }
-            ZipExtractor.Extract(archivePath, installPath, progress: null, cancellationToken);
+            await ExtractReplacingLockedFilesAsync(
+                    () => ZipExtractor.Extract(archivePath, installPath, progress: null, cancellationToken),
+                    installPath,
+                    progress,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         foreach (var archive in downloaded.Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
         {
-            ZipExtractor.Extract(archive, installPath, progress: null, cancellationToken);
+            await ExtractReplacingLockedFilesAsync(
+                    () => ZipExtractor.Extract(archive, installPath, progress: null, cancellationToken),
+                    installPath,
+                    progress,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var manifest = downloaded.FirstOrDefault(path =>
@@ -291,6 +305,85 @@ public class InstallOrchestrator
 
         File.Copy(_bundledNssmPath, Path.Combine(installPath, "nssm.exe"), overwrite: true);
         File.Copy(_bundledUpdaterPath, Path.Combine(installPath, "windows_updater.exe"), overwrite: true);
+    }
+
+    private async Task ExtractReplacingLockedFilesAsync(
+        Action extract,
+        string installPath,
+        IProgress<InstallStepProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                extract();
+                return;
+            }
+            catch (Exception ex) when (InstallDirectoryProcesses.IsFileInUse(ex))
+            {
+                progress.Report(new InstallStepProgress(
+                    "Waiting for running programs to close",
+                    0.38,
+                    "A file in the install folder is still in use."));
+            }
+        }
+    }
+
+    private async Task EnsureInstallFilesUnlockedAsync(
+        string installPath,
+        IProgress<InstallStepProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        var nssm = File.Exists(_bundledNssmPath)
+            ? new NssmServiceManager(_bundledNssmPath)
+            : new NssmServiceManager("nssm.exe");
+        progress.Report(new InstallStepProgress("Stopping existing RFQ services", 0.38, null));
+        await nssm.StopIfExistsAsync(AppServiceName, cancellationToken).ConfigureAwait(false);
+        await nssm.StopIfExistsAsync(UpdaterServiceName, cancellationToken).ConfigureAwait(false);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var running = InstallDirectoryProcesses.Find(installPath);
+            if (running.Count == 0)
+            {
+                return;
+            }
+
+            progress.Report(new InstallStepProgress(
+                "Waiting for running programs to close",
+                0.38,
+                string.Join(", ", running.Select(process => process.Name).Distinct(StringComparer.OrdinalIgnoreCase))));
+
+            if (_interaction is null)
+            {
+                InstallDirectoryProcesses.Stop(running);
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                running = InstallDirectoryProcesses.Find(installPath);
+                if (running.Count > 0)
+                {
+                    throw new IOException(
+                        "The install folder is still in use by: " +
+                        string.Join(", ", running.Select(process => $"{process.Name} ({process.Id})")) +
+                        ". Close RFQ Application and try again.");
+                }
+
+                return;
+            }
+
+            var confirmed = await _interaction.ConfirmStopRunningProcessesAsync(running, cancellationToken)
+                .ConfigureAwait(false);
+            if (!confirmed)
+            {
+                throw new OperationCanceledException("Installation was cancelled because running programs were not closed.");
+            }
+
+            InstallDirectoryProcesses.Stop(running);
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static void ConfigureApplication(
