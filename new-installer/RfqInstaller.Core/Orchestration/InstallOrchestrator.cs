@@ -277,7 +277,20 @@ public class InstallOrchestrator
             downloaded.Add(destination);
         }
 
-        foreach (var firstPart in downloaded.Where(path => path.EndsWith(".zip.part1", StringComparison.OrdinalIgnoreCase)))
+        var multipartArchives = downloaded
+            .Where(path => path.EndsWith(".zip.part1", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var standaloneArchives = downloaded
+            .Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (multipartArchives.Length > 0 || standaloneArchives.Length > 0)
+        {
+            // Services only need to be stopped once for the extraction batch. If an archive later
+            // encounters a real file lock, ExtractReplacingLockedFilesAsync checks again on retry.
+            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var firstPart in multipartArchives)
         {
             var archivePath = firstPart[..^".part1".Length];
             var partPrefix = Path.GetFileName(archivePath) + ".part";
@@ -323,7 +336,7 @@ public class InstallOrchestrator
                 .ConfigureAwait(false);
         }
 
-        foreach (var archive in downloaded.Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+        foreach (var archive in standaloneArchives)
         {
             await ExtractReplacingLockedFilesAsync(
                     () => ZipExtractor.Extract(archive, installPath, progress: null, cancellationToken),
@@ -355,7 +368,6 @@ public class InstallOrchestrator
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
             try
             {
                 progress.Report(new InstallStepProgress(
@@ -371,6 +383,7 @@ public class InstallOrchestrator
                     "Waiting for running programs to close",
                     0.38,
                     "A file in the install folder is still in use."));
+                await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
             }
         }
     }
