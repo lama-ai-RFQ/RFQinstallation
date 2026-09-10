@@ -14,13 +14,6 @@ public class LocalLicenseCheck
     public Dictionary<string, int> Limits { get; init; } = new();
 }
 
-public sealed class ModelFileEntry
-{
-    public required string RelativePath { get; init; }
-    public required string Url { get; init; }
-    public long SizeBytes { get; init; }
-}
-
 /// <summary>One downloadable piece of the release (matches local_manifest.json's per-component "files" entries, e.g. app-executable / core-dependencies / assets).</summary>
 public sealed class PackageComponent
 {
@@ -158,8 +151,6 @@ public sealed class BrokerResponse
 
     /// <summary>Pre-signed HTTPS URLs for each release component archive (app-executable, core-dependencies, assets, ...).</summary>
     public List<PackageComponent> Components { get; init; } = new();
-    /// <summary>Pre-signed HTTPS URLs for each LLM model file, if the license entitles model download.</summary>
-    public List<ModelFileEntry> ModelFiles { get; init; } = new();
 
     public string? DefaultServerUrl { get; init; }
     public string? UpdateChannel { get; init; }

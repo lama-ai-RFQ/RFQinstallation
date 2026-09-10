@@ -36,11 +36,6 @@
                                    Foreground="{StaticResource TextPrimaryBrush}"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                        <TextBlock Text="AI model" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
-                        <TextBlock x:Name="ModelSummary" FontWeight="SemiBold" TextWrapping="NoWrap"
-                                   Foreground="{StaticResource TextPrimaryBrush}"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <TextBlock Text="Encryption key" Width="160" Foreground="{StaticResource TextSecondaryBrush}"/>
                         <TextBlock x:Name="EncryptionKeySummary" FontWeight="SemiBold" TextWrapping="Wrap"
                                    Foreground="{StaticResource TextPrimaryBrush}"/>

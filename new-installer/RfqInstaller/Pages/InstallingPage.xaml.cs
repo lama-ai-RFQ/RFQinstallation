@@ -115,8 +115,6 @@ public partial class InstallingPage : UserControl
         InstallPath = _state.InstallPath,
         CreateDesktopShortcut = _state.CreateDesktopShortcut,
         LaunchAfterFinish = _state.LaunchAfterFinish,
-        DownloadModelNow = _state.DownloadModelNow,
-        ModelPath = _state.ModelPath,
         CleanReinstall = _state.CleanReinstall,
         CleanupAfterInstall = _state.CleanupAfterInstall,
         SettingsPassword = _state.SettingsPassword,

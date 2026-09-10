@@ -16,7 +16,7 @@ public static class InstallerDebug
 
     /// <summary>
     /// Wizard pages to jump over while <see cref="Enabled"/> is true.
-    /// Example later: <c>WizardStep.License, WizardStep.ModelDownload</c>.
+    /// Example later: <c>WizardStep.License, WizardStep.Advanced</c>.
     /// </summary>
     public static IReadOnlySet<WizardStep> SkipSteps { get; } = Enabled
         ? new HashSet<WizardStep>

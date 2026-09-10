@@ -30,10 +30,6 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
             ShortcutRow.Visibility = Visibility.Collapsed;
         }
 
-        ModelSummary.Text = state.DownloadModelNow
-            ? $"Download now (~30 GB) to {state.ModelPath}"
-            : "Skip for now";
-
         EncryptionKeySummary.Text = state.AutoGenerateEncryptionKey
             ? EncryptionKeyResolver.ResolveFromInstallPath(state.InstallPath) is not null
                 ? "Generate a new key (existing database secrets will be unreadable)"

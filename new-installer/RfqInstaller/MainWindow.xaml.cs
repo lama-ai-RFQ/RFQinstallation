@@ -21,7 +21,7 @@ public partial class MainWindow : Window
         "License Key",
         "Setup Options",
         "Security",
-        "Model & Advanced",
+        "Advanced",
         "Ready to Install",
         "Installing",
         "Finish"
@@ -382,8 +382,7 @@ public partial class MainWindow : Window
             ? WizardStep.DesktopShortcut
             : WizardStep.SettingsPassword,
         WizardStep.DesktopShortcut => WizardStep.SettingsPassword,
-        WizardStep.SettingsPassword => WizardStep.ModelDownload,
-        WizardStep.ModelDownload => WizardStep.Advanced,
+        WizardStep.SettingsPassword => WizardStep.Advanced,
         // Only Current User needs Windows to confirm an account/password — Network Service and
         // Local System need no credential at all, so there's nothing to confirm for them.
         WizardStep.Advanced => NeedsServiceAccountConfirm()
@@ -404,8 +403,7 @@ public partial class MainWindow : Window
         WizardStep.SettingsPassword => _state.Mode == InstallMode.Standalone
             ? WizardStep.DesktopShortcut
             : WizardStep.InstallLocation,
-        WizardStep.ModelDownload => WizardStep.SettingsPassword,
-        WizardStep.Advanced => WizardStep.ModelDownload,
+        WizardStep.Advanced => WizardStep.SettingsPassword,
         WizardStep.ServiceAccountConfirm => WizardStep.Advanced,
         WizardStep.ReadyToInstall => NeedsServiceAccountConfirm()
             ? WizardStep.ServiceAccountConfirm
@@ -442,7 +440,6 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => new InstallModePage(_state),
         WizardStep.InstallLocation => new InstallLocationPage(_state),
         WizardStep.DesktopShortcut => new DesktopShortcutPage(_state),
-        WizardStep.ModelDownload => new ModelDownloadPage(_state),
         WizardStep.SettingsPassword => new SettingsPasswordPage(_state),
         WizardStep.Advanced => new AdvancedOptionsPage(_state),
         WizardStep.ServiceAccountConfirm => new ServiceAccountConfirmPage(_state, GoTo),
@@ -508,7 +505,6 @@ public partial class MainWindow : Window
         WizardStep.InstallMode => "setup options page",
         WizardStep.InstallLocation => "install location page",
         WizardStep.DesktopShortcut => "desktop shortcut page",
-        WizardStep.ModelDownload => "AI model download page",
         WizardStep.SettingsPassword => "Settings password page",
         WizardStep.Advanced => "Advanced options page",
         WizardStep.ServiceAccountConfirm => "Windows account confirmation page",
@@ -569,7 +565,6 @@ public partial class MainWindow : Window
         WizardStep.InstallLocation => 2,
         WizardStep.DesktopShortcut => 2,
         WizardStep.SettingsPassword => 3,
-        WizardStep.ModelDownload => 4,
         WizardStep.Advanced => 4,
         WizardStep.ServiceAccountConfirm => 5, // conditional step; shares Ready to Install's slot rather than its own label so the rail doesn't visually "skip" a step when it doesn't apply
         WizardStep.ReadyToInstall => 5,

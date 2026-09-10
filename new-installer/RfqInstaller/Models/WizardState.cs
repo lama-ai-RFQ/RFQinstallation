@@ -1,5 +1,3 @@
-using RfqInstaller.Core.Config;
-
 namespace RfqInstaller.Models;
 
 public enum InstallMode
@@ -22,7 +20,6 @@ public enum WizardStep
     InstallMode,
     InstallLocation,
     DesktopShortcut,
-    ModelDownload,
     SettingsPassword,
     Advanced,
     ServiceAccountConfirm,
@@ -43,10 +40,6 @@ public class WizardState
     public bool CreateDesktopShortcut { get; set; } = true;
 
     public bool LaunchAfterFinish { get; set; } = true;
-
-    public bool DownloadModelNow { get; set; }
-
-    public string ModelPath { get; set; } = DefaultPaths.DefaultModelPath();
 
     public bool CleanReinstall { get; set; } = true;
 

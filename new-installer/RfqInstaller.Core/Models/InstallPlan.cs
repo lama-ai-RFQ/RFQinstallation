@@ -24,9 +24,6 @@ public class InstallPlan
     public bool CreateDesktopShortcut { get; init; } = true;
     public bool LaunchAfterFinish { get; init; } = true;
 
-    public bool DownloadModelNow { get; init; } = true;
-    public required string ModelPath { get; init; }
-
     public bool CleanReinstall { get; init; }
     public bool CleanupAfterInstall { get; init; } = true;
 

@@ -310,10 +310,7 @@ public class InstallOrchestrator
             // deliberately not 5432 — the app's own default (backend/config/database.py) is 5432, so
             // this must always be written or the app connects to nothing.
             ["DB_PORT"] = dbPort.ToString(),
-            // Written unconditionally (not just after a download) since plan.ModelPath is decided by
-            // the wizard up front either way — matches what the old installer did for both the
-            // "downloaded now" and "skipped, keep existing" cases.
-            ["MODEL_PATH"] = plan.ModelPath,
+            ["MODEL_PATH"] = DefaultPaths.DefaultModelPath(),
         };
 
         if (effectivelyUseCredentialManager)
@@ -392,27 +389,5 @@ public class InstallOrchestrator
         var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var shortcutPath = Path.Combine(desktop, "RFQ Application.lnk");
         ShellShortcut.Create(shortcutPath, mainExePath, installPath, mainExePath, "RFQ Application");
-    }
-
-    private async Task DownloadModelAsync(
-        IReadOnlyList<ModelFileEntry> modelFiles,
-        string modelPath,
-        IProgress<InstallStepProgress> progress,
-        CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(modelPath);
-        for (var i = 0; i < modelFiles.Count; i++)
-        {
-            var file = modelFiles[i];
-            var destination = Path.Combine(modelPath, file.RelativePath);
-
-            var dlProgress = new Progress<DownloadProgress>(p =>
-            {
-                var fraction = 0.92 + 0.08 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) / Math.Max(1, modelFiles.Count);
-                progress.Report(new InstallStepProgress("Downloading AI model", fraction, file.RelativePath));
-            });
-
-            await _downloader.DownloadAsync(file.Url, destination, file.SizeBytes, dlProgress, cancellationToken).ConfigureAwait(false);
-        }
     }
 }
