@@ -36,6 +36,10 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
                 : "Generate automatically"
             : "Reuse existing key";
 
+        PostgresPasswordsSummary.Text = state.AutoGeneratePostgresPasswords
+            ? "Generate automatically"
+            : "Set during setup";
+
         var credentialManagerWillActuallyWork = state.UseCredentialManager
             && (state.Mode == InstallMode.Standalone || state.ServiceAccount == ServiceAccountKind.CurrentUser);
         PasswordStorageSummary.Text = credentialManagerWillActuallyWork

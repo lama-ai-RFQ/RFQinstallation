@@ -130,6 +130,13 @@ public partial class InstallingPage : UserControl
         ServerUrl = _state.ServerUrl,
         AutoGenerateEncryptionKey = _state.AutoGenerateEncryptionKey,
         CustomEncryptionKey = string.IsNullOrWhiteSpace(_state.CustomEncryptionKey) ? null : _state.CustomEncryptionKey,
+        AutoGeneratePostgresPasswords = _state.AutoGeneratePostgresPasswords,
+        CustomSqlSuperUserPassword = string.IsNullOrWhiteSpace(_state.CustomSqlSuperUserPassword)
+            ? null
+            : _state.CustomSqlSuperUserPassword,
+        CustomRfqUserPassword = string.IsNullOrWhiteSpace(_state.CustomRfqUserPassword)
+            ? null
+            : _state.CustomRfqUserPassword,
         UseCredentialManager = _state.UseCredentialManager,
         ServiceAccount = _state.ServiceAccount switch
         {

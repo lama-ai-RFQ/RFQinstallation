@@ -43,9 +43,18 @@ public class InstallPlan
     public bool AutoGenerateEncryptionKey { get; init; } = true;
     public string? CustomEncryptionKey { get; init; }
 
+    /// <summary>Default true. When false, <see cref="CustomSqlSuperUserPassword"/> and
+    /// <see cref="CustomRfqUserPassword"/> are used instead of generated values (an existing
+    /// pgdata cluster still keeps its original superuser password).</summary>
+    public bool AutoGeneratePostgresPasswords { get; init; } = true;
+
+    public string? CustomSqlSuperUserPassword { get; init; }
+
+    public string? CustomRfqUserPassword { get; init; }
+
     /// <summary>
     /// Explicit choice: Windows Credential Manager (recommended) or a plaintext .env file. Applies
-    /// to all three generated passwords. Only actually usable with ServiceAccount == CurrentUser —
+    /// to the database and Settings passwords. Only actually usable with ServiceAccount == CurrentUser —
     /// InstallOrchestrator falls back to .env automatically (with a warning surfaced earlier in the
     /// wizard) for Network Service/Local System, since Credential Manager cannot be read by them.
     /// </summary>

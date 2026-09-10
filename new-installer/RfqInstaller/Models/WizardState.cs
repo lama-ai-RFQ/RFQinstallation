@@ -60,7 +60,16 @@ public class WizardState
 
     public string CustomEncryptionKey { get; set; } = string.Empty;
 
-    /// <summary>Explicit choice: Windows Credential Manager (recommended) or a plaintext .env file — applies to all three generated passwords.</summary>
+    /// <summary>Default: generate the private Postgres superuser and rfq_user passwords.</summary>
+    public bool AutoGeneratePostgresPasswords { get; set; } = true;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string CustomSqlSuperUserPassword { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string CustomRfqUserPassword { get; set; } = string.Empty;
+
+    /// <summary>Explicit choice: Windows Credential Manager (recommended) or a plaintext .env file — applies to the database and Settings passwords.</summary>
     public bool UseCredentialManager { get; set; } = true;
 
     public ServiceAccountKind ServiceAccount { get; set; } = ServiceAccountKind.CurrentUser;

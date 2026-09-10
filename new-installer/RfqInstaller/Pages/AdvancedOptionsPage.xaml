@@ -41,6 +41,45 @@
             <TextBlock x:Name="EncryptionKeyError" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap"
                        FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"/>
 
+            <TextBlock Text="PostgreSQL passwords" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
+            <TextBlock Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,0,0,8">
+                The installer creates a private Postgres instance for the app. Leave this on
+                automatic unless you need to set the passwords yourself.
+            </TextBlock>
+            <RadioButton x:Name="AutoPostgresPasswordRadio" GroupName="PostgresPasswords"
+                         Content="Generate automatically (recommended)"
+                         Style="{StaticResource ModernRadioButtonStyle}"
+                         Checked="AutoPostgresPasswordRadio_Checked" Margin="0,0,0,6"/>
+            <RadioButton x:Name="CustomPostgresPasswordRadio" GroupName="PostgresPasswords"
+                         Content="Set my own passwords"
+                         Style="{StaticResource ModernRadioButtonStyle}"
+                         Checked="CustomPostgresPasswordRadio_Checked"/>
+            <StackPanel x:Name="CustomPostgresPasswordPanel" Visibility="Collapsed" Margin="0,8,0,0">
+                <TextBlock x:Name="SuperuserReuseNote" Style="{StaticResource PageSubtitleStyle}"
+                           TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"
+                           Text="This folder already has a Postgres data directory, so the existing superuser password will be reused. You can still set the RFQ database user password."/>
+                <StackPanel x:Name="SuperuserPasswordRow">
+                    <TextBlock Text="Superuser (postgres)" Style="{StaticResource FieldLabelStyle}" Margin="0,8,0,6"/>
+                    <PasswordBox x:Name="SuperuserMaskedBox" Height="40" Style="{StaticResource ModernPasswordBoxStyle}"
+                                 PasswordChanged="SuperuserMaskedBox_PasswordChanged"/>
+                    <TextBox x:Name="SuperuserPlainBox" Height="40" Style="{StaticResource ModernTextBoxStyle}"
+                             Visibility="Collapsed" Tag="Superuser password"
+                             TextChanged="SuperuserPlainBox_TextChanged"/>
+                </StackPanel>
+                <TextBlock Text="RFQ database user (rfq_user)" Style="{StaticResource FieldLabelStyle}" Margin="0,16,0,6"/>
+                <PasswordBox x:Name="RfqUserMaskedBox" Height="40" Style="{StaticResource ModernPasswordBoxStyle}"
+                             PasswordChanged="RfqUserMaskedBox_PasswordChanged"/>
+                <TextBox x:Name="RfqUserPlainBox" Height="40" Style="{StaticResource ModernTextBoxStyle}"
+                         Visibility="Collapsed" Tag="RFQ database user password"
+                         TextChanged="RfqUserPlainBox_TextChanged"/>
+                <CheckBox x:Name="ShowPostgresPasswordsCheck" Content="Show passwords"
+                          Style="{StaticResource ModernCheckBoxStyle}" Margin="0,8,0,0"
+                          Checked="ShowPostgresPasswordsCheck_Changed"
+                          Unchecked="ShowPostgresPasswordsCheck_Changed"/>
+                <TextBlock x:Name="PostgresPasswordError" Foreground="{StaticResource DangerBrush}"
+                           TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+
             <TextBlock Text="Where should passwords be stored?" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
             <RadioButton x:Name="CredentialManagerRadio" GroupName="PasswordStorage" Content="Windows Credential Manager (recommended, more secure)"
                          Style="{StaticResource ModernRadioButtonStyle}" Checked="CredentialManagerRadio_Checked" Margin="0,0,0,6"/>

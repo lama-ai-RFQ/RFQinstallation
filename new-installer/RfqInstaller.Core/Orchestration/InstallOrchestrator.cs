@@ -101,12 +101,20 @@ public class InstallOrchestrator
                         "from Credential Manager or .env. Delete the 'pgdata' folder under the install path to start a " +
                         "fresh database, or restore the missing credential before reinstalling.");
             }
+            else if (!plan.AutoGeneratePostgresPasswords &&
+                     !string.IsNullOrWhiteSpace(plan.CustomSqlSuperUserPassword))
+            {
+                superUserPassword = plan.CustomSqlSuperUserPassword;
+            }
             else
             {
                 superUserPassword = PasswordGenerator.Generate();
             }
 
-            var appUserPassword = PasswordGenerator.Generate();
+            var appUserPassword = !plan.AutoGeneratePostgresPasswords &&
+                                  !string.IsNullOrWhiteSpace(plan.CustomRfqUserPassword)
+                ? plan.CustomRfqUserPassword
+                : PasswordGenerator.Generate();
             var settingsPassword = plan.SettingsPassword;
 
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using RfqInstaller.Core.Config;
+using RfqInstaller.Core.Database;
 using RfqInstaller.Dialogs;
 using RfqInstaller.Models;
 
@@ -12,9 +13,13 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 {
     private static readonly SolidColorBrush WarningBrush = new(Color.FromRgb(0x8A, 0x00, 0x00));
 
+    private const int MinPostgresPasswordLength = 8;
+
     private readonly WizardState _state;
     private readonly string? _existingEncryptionKey;
+    private readonly bool _existingPostgresCluster;
     private bool _suppressKeyEvents;
+    private bool _suppressPostgresPasswordEvents;
     private bool _generateNewConfirmed;
 
     public AdvancedOptionsPage(WizardState state)
@@ -22,10 +27,12 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         InitializeComponent();
         _state = state;
         _existingEncryptionKey = EncryptionKeyResolver.ResolveFromInstallPath(_state.InstallPath);
+        _existingPostgresCluster = PostgresProvisioner.IsAlreadyInitialized(_state.InstallPath);
 
         ServerUrlTextBox.Text = _state.ServerUrl;
 
         ApplyEncryptionKeyUi();
+        ApplyPostgresPasswordUi();
 
         if (_state.UseCredentialManager)
         {
@@ -190,6 +197,156 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         }
     }
 
+    private void ApplyPostgresPasswordUi()
+    {
+        SuperuserReuseNote.Visibility = _existingPostgresCluster ? Visibility.Visible : Visibility.Collapsed;
+        SuperuserPasswordRow.Visibility = _existingPostgresCluster ? Visibility.Collapsed : Visibility.Visible;
+
+        if (_state.AutoGeneratePostgresPasswords)
+        {
+            AutoPostgresPasswordRadio.IsChecked = true;
+            CustomPostgresPasswordPanel.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            CustomPostgresPasswordRadio.IsChecked = true;
+            CustomPostgresPasswordPanel.Visibility = Visibility.Visible;
+            RestorePostgresPasswordBoxes();
+        }
+    }
+
+    private void AutoPostgresPasswordRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        if (AutoPostgresPasswordRadio is null)
+        {
+            return;
+        }
+
+        _state.AutoGeneratePostgresPasswords = true;
+        if (CustomPostgresPasswordPanel is not null)
+        {
+            CustomPostgresPasswordPanel.Visibility = Visibility.Collapsed;
+        }
+
+        HidePostgresPasswordError();
+    }
+
+    private void CustomPostgresPasswordRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        if (CustomPostgresPasswordRadio is null)
+        {
+            return;
+        }
+
+        _state.AutoGeneratePostgresPasswords = false;
+        CustomPostgresPasswordPanel.Visibility = Visibility.Visible;
+        RestorePostgresPasswordBoxes();
+        HidePostgresPasswordError();
+    }
+
+    private void SuperuserMaskedBox_PasswordChanged(object sender, RoutedEventArgs e) =>
+        OnSuperuserPasswordChanged(SuperuserMaskedBox.Password);
+
+    private void SuperuserPlainBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        OnSuperuserPasswordChanged(SuperuserPlainBox.Text);
+
+    private void OnSuperuserPasswordChanged(string value)
+    {
+        if (_suppressPostgresPasswordEvents)
+        {
+            return;
+        }
+
+        _state.CustomSqlSuperUserPassword = value;
+        UpdatePasswordMask(SuperuserMaskedBox, value);
+        HidePostgresPasswordError();
+    }
+
+    private void RfqUserMaskedBox_PasswordChanged(object sender, RoutedEventArgs e) =>
+        OnRfqUserPasswordChanged(RfqUserMaskedBox.Password);
+
+    private void RfqUserPlainBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        OnRfqUserPasswordChanged(RfqUserPlainBox.Text);
+
+    private void OnRfqUserPasswordChanged(string value)
+    {
+        if (_suppressPostgresPasswordEvents)
+        {
+            return;
+        }
+
+        _state.CustomRfqUserPassword = value;
+        UpdatePasswordMask(RfqUserMaskedBox, value);
+        HidePostgresPasswordError();
+    }
+
+    private void ShowPostgresPasswordsCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        var show = ShowPostgresPasswordsCheck.IsChecked == true;
+        RestorePostgresPasswordBoxes();
+        SuperuserMaskedBox.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
+        SuperuserPlainBox.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        RfqUserMaskedBox.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
+        RfqUserPlainBox.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RestorePostgresPasswordBoxes()
+    {
+        _suppressPostgresPasswordEvents = true;
+        try
+        {
+            SuperuserPlainBox.Text = _state.CustomSqlSuperUserPassword;
+            SuperuserMaskedBox.Password = _state.CustomSqlSuperUserPassword;
+            RfqUserPlainBox.Text = _state.CustomRfqUserPassword;
+            RfqUserMaskedBox.Password = _state.CustomRfqUserPassword;
+        }
+        finally
+        {
+            _suppressPostgresPasswordEvents = false;
+        }
+
+        UpdatePasswordMask(SuperuserMaskedBox, _state.CustomSqlSuperUserPassword);
+        UpdatePasswordMask(RfqUserMaskedBox, _state.CustomRfqUserPassword);
+    }
+
+    private static void UpdatePasswordMask(PasswordBox box, string password)
+    {
+        box.Tag = string.IsNullOrEmpty(password) ? string.Empty : new string('\u2022', password.Length);
+    }
+
+    private void HidePostgresPasswordError()
+    {
+        if (PostgresPasswordError is not null)
+        {
+            PostgresPasswordError.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private bool ValidatePostgresPasswords()
+    {
+        if (_state.AutoGeneratePostgresPasswords)
+        {
+            return true;
+        }
+
+        if (!_existingPostgresCluster &&
+            _state.CustomSqlSuperUserPassword.Trim().Length < MinPostgresPasswordLength)
+        {
+            PostgresPasswordError.Text = $"The postgres superuser password must be at least {MinPostgresPasswordLength} characters.";
+            PostgresPasswordError.Visibility = Visibility.Visible;
+            return false;
+        }
+
+        if (_state.CustomRfqUserPassword.Trim().Length < MinPostgresPasswordLength)
+        {
+            PostgresPasswordError.Text = $"The rfq_user password must be at least {MinPostgresPasswordLength} characters.";
+            PostgresPasswordError.Visibility = Visibility.Visible;
+            return false;
+        }
+
+        return true;
+    }
+
     private void CredentialManagerRadio_Checked(object sender, RoutedEventArgs e)
     {
         _state.UseCredentialManager = true;
@@ -271,6 +428,11 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
     public bool Validate()
     {
+        if (!ValidatePostgresPasswords())
+        {
+            return false;
+        }
+
         if (_existingEncryptionKey is null)
         {
             _state.AutoGenerateEncryptionKey = true;
