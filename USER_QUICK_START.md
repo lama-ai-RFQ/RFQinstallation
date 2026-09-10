@@ -91,7 +91,8 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass
 **Problem**: "Failed to download" error
 **Solution**: 
 - Check internet connection
-- Verify GitHub token is correct
+- Allow HTTPS access to `license-api.scint.ai` and `downloads.scint.ai`
+- Re-run activation with the license key if this device was replaced or restored
 - Try again in a few minutes
 
 ### Application Won't Start
@@ -106,13 +107,13 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass
 **Problem**: "Unknown" version shown
 **Solution**: 
 1. Open `%LOCALAPPDATA%\RFQApplication\.env`
-2. Check `GITHUB_PAT=your_token_here` is correct
+2. Check `RFQ_UPDATER_SOURCE=aws` and `RFQ_LICENSE_BROKER_URL=https://license-api.scint.ai`
 3. Restart application
 
 **Problem**: Update download fails
 **Solution**:
-1. Verify GitHub token hasn't expired
-2. Check internet connection
+1. Check connectivity to `license-api.scint.ai` and `downloads.scint.ai`
+2. Reactivate the device if the activation was revoked or its local state was lost
 3. Try manual update (re-run installer)
 
 ## Uninstalling

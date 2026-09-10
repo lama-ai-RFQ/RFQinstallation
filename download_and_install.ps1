@@ -1,9 +1,13 @@
 # RFQ Application - Windows Installation Script
-# Downloads and installs the RFQ application from GitHub releases
+# Activates a license and installs entitled artifacts through the RFQ broker
 # This script is for first-time installation only
 
 param(
     [string]$InstallPath = "$env:LOCALAPPDATA\RFQApplication",
+    [string]$LicenseKeyFile = "",
+    [string]$BrokerUrl = "https://license-api.scint.ai",
+    [ValidateSet("aws", "s3", "s3_cloudfront", "cloudfront", "legacy_github", "legacy_client_cloudfront")]
+    [string]$UpdaterSource = "aws",
     [string]$GitHubToken = "",
     [switch]$NonInteractive,
     [switch]$Help,
@@ -45,6 +49,15 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 # Set error action preference to continue so we can handle errors gracefully
 $ErrorActionPreference = "Continue"
+
+# Customer AWS/S3/CloudFront spellings all use the broker. Credential-bearing
+# rollback paths require explicit legacy names and never act as fallbacks.
+switch ($UpdaterSource.ToLowerInvariant()) {
+    { $_ -in @("aws", "s3", "s3_cloudfront", "cloudfront") } { $UpdaterSource = "aws"; break }
+    "legacy_github" { $UpdaterSource = "legacy_github"; break }
+    "legacy_client_cloudfront" { $UpdaterSource = "legacy_client_cloudfront"; break }
+    default { throw "Unsupported updater source: $UpdaterSource" }
+}
 
 # Enforce TLS 1.2 for all HTTPS connections. Older .NET Framework versions
 # (4.5 and below) default to SSL3/TLS1.0 which CloudFront and GitHub reject.
@@ -128,6 +141,53 @@ function Write-Warning {
 function Write-Error-Custom { 
     $message = $args -join " "
     Write-Log $message "Red"
+}
+
+function Ensure-RfqLicenseClientDependencies {
+    & python -c "import cryptography, requests" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+    $requirements = Join-Path $PSScriptRoot "rfq_license_client_bootstrap\requirements.txt"
+    if (-not (Test-Path $requirements)) {
+        throw "License client dependencies are unavailable and bundled requirements are missing"
+    }
+    Write-Info "  Installing bundled license client dependencies..."
+    & python -m pip install --disable-pip-version-check --no-input -r $requirements
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not install license client dependencies"
+    }
+}
+
+function Invoke-RfqLicenseClient {
+    param([string[]]$Arguments)
+
+    $bootstrapPath = Join-Path $PSScriptRoot "rfq_license_client_bootstrap"
+    $previousPythonPath = $env:PYTHONPATH
+    try {
+        if (Test-Path $bootstrapPath) {
+            $env:PYTHONPATH = if ($previousPythonPath) {
+                "$bootstrapPath;$previousPythonPath"
+            } else {
+                $bootstrapPath
+            }
+        }
+        $output = & python -m rfq_license_client.cli --base-url $BrokerUrl @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+        $text = ($output | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            throw "License broker client returned no response"
+        }
+        $payload = $text | ConvertFrom-Json
+        if ($exitCode -ne 0 -or -not $payload.ok) {
+            $message = if ($payload.error.message) { $payload.error.message } else { "request failed" }
+            throw "License broker request failed: $message"
+        }
+        return $payload.result
+    }
+    finally {
+        $env:PYTHONPATH = $previousPythonPath
+    }
 }
 
 # Exit with error and pause
@@ -935,13 +995,56 @@ $S3LatestPayload = $null
 $s3Candidate = $null
 $githubCandidate = $null
 $githubError = $null
+$LicenseKey = ""
+
+if ($UpdaterSource -eq "aws") {
+    Write-Info "`n[4/8] Activating license and resolving entitled release..."
+    try {
+        if ([string]::IsNullOrWhiteSpace($LicenseKeyFile) -or -not (Test-Path $LicenseKeyFile)) {
+            throw "A license key file is required for broker installation"
+        }
+        Ensure-RfqLicenseClientDependencies
+        $LicenseKey = (Get-Content -Path $LicenseKeyFile -Raw).Trim()
+        if ([string]::IsNullOrWhiteSpace($LicenseKey)) {
+            throw "The license key file is empty"
+        }
+        $null = Invoke-RfqLicenseClient @("activate", "--license-key-file", $LicenseKeyFile)
+        $catalog = Invoke-RfqLicenseClient @(
+            "latest", "--platform", "windows", "--channel", $UpdateChannel.ToLower()
+        )
+        if ([string]::IsNullOrWhiteSpace([string]$catalog.release_id)) {
+            throw "Broker release catalog did not include a release ID"
+        }
+        $brokerAssets = @()
+        foreach ($artifact in $catalog.artifacts) {
+            $brokerAssets += [pscustomobject]@{
+                name = $artifact.name
+                artifact_id = $artifact.artifact_id
+                size = $artifact.size
+                sha256 = $artifact.sha256
+                source = "broker"
+            }
+        }
+        $Version = [string]$catalog.version
+        $Release = [pscustomobject]@{
+            release_id = [string]$catalog.release_id
+            tag_name = $Version
+            assets = $brokerAssets
+        }
+        $script:ReleaseSource = "broker"
+        Write-Success "[OK] License activated; entitled release: $Version"
+    }
+    finally {
+        Remove-Item -Path $LicenseKeyFile -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # Read S3 config from params, env, or .env file
 $s3Bucket = $S3ReleaseBucket
 $s3Region = $S3ReleaseRegion
 $s3AwsKey = $AWSKey
 $s3AwsSecret = $AWSSecret
-if ([string]::IsNullOrWhiteSpace($s3Bucket) -and (Test-Path (Join-Path $InstallPath ".env"))) {
+if ($UpdaterSource -ne "aws" -and [string]::IsNullOrWhiteSpace($s3Bucket) -and (Test-Path (Join-Path $InstallPath ".env"))) {
     $envContent = Get-Content (Join-Path $InstallPath ".env") -Raw -ErrorAction SilentlyContinue
     if ($envContent -match "S3_RELEASE_BUCKET\s*=\s*([^\r\n]+)") { $s3Bucket = $matches[1].Trim() }
     if ([string]::IsNullOrWhiteSpace($s3Region) -and $envContent -match "S3_RELEASE_REGION\s*=\s*([^\r\n]+)") { $s3Region = $matches[1].Trim() }
@@ -952,7 +1055,7 @@ if ([string]::IsNullOrWhiteSpace($s3Region)) { $s3Region = if (![string]::IsNull
 
 Write-Info "`n[4/8] Checking authentication..."
 
-if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace($s3AwsKey) -and ![string]::IsNullOrWhiteSpace($s3AwsSecret)) {
+if ($UpdaterSource -eq "legacy_client_cloudfront" -and ![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace($s3AwsKey) -and ![string]::IsNullOrWhiteSpace($s3AwsSecret)) {
     Write-Info "  S3 release bucket configured: $s3Bucket (region: $s3Region)"
 
     if (-not (Ensure-PythonAwsDependencies)) {
@@ -1012,16 +1115,21 @@ if (![string]::IsNullOrWhiteSpace($s3Bucket) -and ![string]::IsNullOrWhiteSpace(
     }
 }
 
-$githubResult = Get-GithubLatestCandidate $GITHUB_API $GITHUB_REPO $GitHubToken
-$githubCandidate = $githubResult.Candidate
-$githubError = $githubResult.Error
+if ($UpdaterSource -eq "legacy_github") {
+    $githubResult = Get-GithubLatestCandidate $GITHUB_API $GITHUB_REPO $GitHubToken
+    $githubCandidate = $githubResult.Candidate
+    $githubError = $githubResult.Error
+}
 
 if ($null -ne $githubError -and $null -ne $s3Candidate) {
     Write-Warning "  GitHub latest candidate unavailable ($githubError); continuing with S3 candidate if available"
 }
 
-$selectedRelease = Resolve-ReleaseSource $s3Candidate $githubCandidate $UpdateChannel
-if ($null -ne $selectedRelease) {
+$selectedRelease = if ($UpdaterSource -eq "aws") { $null } else { Resolve-ReleaseSource $s3Candidate $githubCandidate $UpdateChannel }
+if ($script:ReleaseSource -eq "broker") {
+    Write-Success "[OK] Using broker release: $Version"
+}
+elseif ($null -ne $selectedRelease) {
     $script:ReleaseSource = $selectedRelease.Source
     $Version = $selectedRelease.Version
     $Release = $selectedRelease.Release
@@ -1072,7 +1180,7 @@ else {
 if (!$Headers) { $Headers = @{} }
 
 # GitHub fallback (or primary if no S3 config)
-if ($script:ReleaseSource -ne "s3") {
+if ($script:ReleaseSource -eq "github") {
     if (!$GitHubToken) {
         Write-Log "" "Yellow"
         Write-Log "GitHub Personal Access Token Required" "Yellow"
@@ -1108,7 +1216,7 @@ if ($script:ReleaseSource -ne "s3") {
 # Get latest release
 Write-Info "`n[5/8] Checking for latest installation package..."
 
-if ($script:ReleaseSource -ne "s3") {
+if ($script:ReleaseSource -eq "github") {
     $ReleaseUrl = "$GITHUB_API/$GITHUB_REPO/releases/latest"
 
     try {
@@ -1173,8 +1281,10 @@ if ($script:ReleaseSource -ne "s3") {
 
         Exit-WithError
     }
-} else {
+} elseif ($script:ReleaseSource -eq "s3") {
     Write-Success "[OK] Using S3 release: $Version"
+} else {
+    Write-Success "[OK] Using broker release: $Version"
 }
 
 # Download component-based installation package
@@ -1201,7 +1311,14 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
     Write-Info "  Downloading manifest..."
     $ManifestPath = Join-Path $env:TEMP "manifest.json"
     try {
-        if ($script:ReleaseSource -eq "s3") {
+        if ($script:ReleaseSource -eq "broker") {
+            $null = Invoke-RfqLicenseClient @(
+                "download",
+                "--release-id", $Release.release_id,
+                "--artifact-id", $ManifestAsset.artifact_id,
+                "--output", $ManifestPath
+            )
+        } elseif ($script:ReleaseSource -eq "s3") {
             # Resolve S3 key — may be a full S3 URL or a relative path from latest.json
             $manifestUrl = $ManifestAsset.url
             if ($manifestUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
@@ -1364,7 +1481,12 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
             $Asset = $null
             $SourceTag = $Version
 
-            if ($script:ReleaseSource -eq "s3") {
+            if ($script:ReleaseSource -eq "broker") {
+                $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
+                if ($Asset) {
+                    Write-Info "    Found entitled broker artifact: $Filename"
+                }
+            } elseif ($script:ReleaseSource -eq "s3") {
                 # S3: all assets are already in the Release object
                 $Asset = Find-AssetInRelease -ReleaseObj $Release -Filename $Filename
                 if ($Asset) {
@@ -1466,7 +1588,14 @@ if ($ENABLE_STEP_6_DOWNLOAD) {
 
                 $downloadStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-                if ($script:ReleaseSource -eq "s3") {
+                if ($script:ReleaseSource -eq "broker") {
+                    $null = Invoke-RfqLicenseClient @(
+                        "download",
+                        "--release-id", $Release.release_id,
+                        "--artifact-id", $Asset.artifact_id,
+                        "--output", $FilePath
+                    )
+                } elseif ($script:ReleaseSource -eq "s3") {
                     # Resolve S3 key — may be a full S3 URL or a relative path from latest.json
                     $assetUrl = $Asset.url
                     if ($assetUrl -match "https://([^.]+)\.s3(?:\.[^.]+)?\.amazonaws\.com/(.+)") {
@@ -2235,8 +2364,13 @@ if (Test-Path $EnvTemplatePath) {
         $EnvContent = $EnvContent -replace "SETTINGS_PASSWORD=.*", "SETTINGS_PASSWORD=$SettingsPassword"
     }
     
-    $EnvContent = $EnvContent -replace "GITHUB_PAT=.*", "GITHUB_PAT=$GitHubToken"
-    $EnvContent = $EnvContent -replace "GITHUB_USERNAME=.*", "GITHUB_USERNAME=RFQdebugging"
+    if ($UpdaterSource -eq "legacy_github") {
+        $EnvContent = $EnvContent -replace "GITHUB_PAT=.*", "GITHUB_PAT=$GitHubToken"
+        $EnvContent = $EnvContent -replace "GITHUB_USERNAME=.*", "GITHUB_USERNAME=RFQdebugging"
+    }
+    $EnvContent = $EnvContent -replace "LICENSE_KEY=.*", "LICENSE_KEY=$LicenseKey"
+    $EnvContent = $EnvContent -replace "RFQ_LICENSE_BROKER_URL=.*", "RFQ_LICENSE_BROKER_URL=$BrokerUrl"
+    $EnvContent = $EnvContent -replace "RFQ_UPDATER_SOURCE=.*", "RFQ_UPDATER_SOURCE=$UpdaterSource"
     $EnvContent = $EnvContent -replace "CONTAINER=.*", "CONTAINER=0"
     # Only update MODEL_PATH if we have a value (preserve existing if empty)
     if (![string]::IsNullOrWhiteSpace($ModelPathForEnv)) {
@@ -2250,19 +2384,28 @@ if (Test-Path $EnvTemplatePath) {
     $EnvContent = $EnvContent -replace "RFQ_UPDATE_CHANNEL=.*", "RFQ_UPDATE_CHANNEL=$UpdateChannel"
     # REQUESTS_CA_BUNDLE is left empty by default - user will fill it in if needed for GCC High
     # Only update AWS credentials if they are non-empty
-    if (![string]::IsNullOrWhiteSpace($AWSKey)) {
+    if ($UpdaterSource -ne "aws" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
         $EnvContent = $EnvContent -replace "AWS_KEY=.*", "AWS_KEY=$AWSKey"
     }
-    if (![string]::IsNullOrWhiteSpace($AWSSecret)) {
+    if ($UpdaterSource -ne "aws" -and ![string]::IsNullOrWhiteSpace($AWSSecret)) {
         $EnvContent = $EnvContent -replace "AWS_SECRET=.*", "AWS_SECRET=$AWSSecret"
     }
-    if (![string]::IsNullOrWhiteSpace($AWSRegion)) {
+    if ($UpdaterSource -ne "aws" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
         $EnvContent = $EnvContent -replace "AWS_REGION=.*", "AWS_REGION=$AWSRegion"
     }
     
     # Add if they don't exist
-    if ($EnvContent -notmatch "GITHUB_USERNAME") {
+    if ($UpdaterSource -eq "legacy_github" -and $EnvContent -notmatch "GITHUB_USERNAME") {
         $EnvContent += "`nGITHUB_USERNAME=RFQdebugging"
+    }
+    if ($EnvContent -notmatch "LICENSE_KEY") {
+        $EnvContent += "`nLICENSE_KEY=$LicenseKey"
+    }
+    if ($EnvContent -notmatch "RFQ_LICENSE_BROKER_URL") {
+        $EnvContent += "`nRFQ_LICENSE_BROKER_URL=$BrokerUrl"
+    }
+    if ($EnvContent -notmatch "RFQ_UPDATER_SOURCE") {
+        $EnvContent += "`nRFQ_UPDATER_SOURCE=$UpdaterSource"
     }
     if ($EnvContent -notmatch "SQL_SUPER_USER") {
         if ($UseCredentialManagerForPasswords) {
@@ -2323,21 +2466,23 @@ if (Test-Path $EnvTemplatePath) {
         $EnvContent += "`n# SSL Certificate Configuration (for GCC High and government cloud environments)`n# Path to CA bundle file for SSL certificate verification`n# Leave empty if not using GCC High or if using system default certificates`nREQUESTS_CA_BUNDLE="
     }
     # Only add AWS credentials if they are non-empty
-    if ($EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
+    if ($UpdaterSource -ne "aws" -and $EnvContent -notmatch "AWS_KEY" -and ![string]::IsNullOrWhiteSpace($AWSKey)) {
         $EnvContent += "`nAWS_KEY=$AWSKey"
     }
-    if ($EnvContent -notmatch "AWS_SECRET" -and ![string]::IsNullOrWhiteSpace($AWSSecret)) {
+    if ($UpdaterSource -ne "aws" -and $EnvContent -notmatch "AWS_SECRET" -and ![string]::IsNullOrWhiteSpace($AWSSecret)) {
         $EnvContent += "`nAWS_SECRET=$AWSSecret"
     }
-    if ($EnvContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
+    if ($UpdaterSource -ne "aws" -and $EnvContent -notmatch "AWS_REGION" -and ![string]::IsNullOrWhiteSpace($AWSRegion)) {
         $EnvContent += "`nAWS_REGION=$AWSRegion"
     }
     # Always write S3_RELEASE_BUCKET (defaults to rfq-distribution-us)
-    $EnvContent = $EnvContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
-    if ($EnvContent -notmatch "S3_RELEASE_BUCKET") {
-        $EnvContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
+    if ($UpdaterSource -ne "aws") {
+        $EnvContent = $EnvContent -replace "# ?S3_RELEASE_BUCKET=.*", "S3_RELEASE_BUCKET=$S3ReleaseBucket"
+        if ($EnvContent -notmatch "S3_RELEASE_BUCKET") {
+            $EnvContent += "`nS3_RELEASE_BUCKET=$S3ReleaseBucket"
+        }
     }
-    if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
+    if ($UpdaterSource -ne "aws" -and ![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
         $EnvContent = $EnvContent -replace "# ?S3_RELEASE_REGION=.*", "S3_RELEASE_REGION=$S3ReleaseRegion"
         if ($EnvContent -notmatch "S3_RELEASE_REGION") {
             $EnvContent += "`nS3_RELEASE_REGION=$S3ReleaseRegion"
@@ -2431,9 +2576,10 @@ else {
 # RFQ Application Configuration
 # Generated by installer on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 
-# GitHub Authentication (for updates)
-GITHUB_PAT=$GitHubToken
-GITHUB_USERNAME=RFQdebugging
+# License broker
+LICENSE_KEY=$LicenseKey
+RFQ_LICENSE_BROKER_URL=$BrokerUrl
+RFQ_UPDATER_SOURCE=$UpdaterSource
 
 # Application Mode
 APP_MODE=fastapi
@@ -2480,7 +2626,7 @@ RFQ_UPDATE_CHANNEL=$UpdateChannel
 "@
     
     # Add AWS Configuration section only if credentials are provided
-    if (![string]::IsNullOrWhiteSpace($AWSKey) -or ![string]::IsNullOrWhiteSpace($AWSSecret) -or ![string]::IsNullOrWhiteSpace($AWSRegion)) {
+    if ($UpdaterSource -ne "aws" -and (![string]::IsNullOrWhiteSpace($AWSKey) -or ![string]::IsNullOrWhiteSpace($AWSSecret) -or ![string]::IsNullOrWhiteSpace($AWSRegion))) {
         $EnvContent += "`n"
         $EnvContent += "# AWS Configuration (for model download)`n"
         if (![string]::IsNullOrWhiteSpace($AWSKey)) {
@@ -2495,7 +2641,7 @@ RFQ_UPDATE_CHANNEL=$UpdateChannel
     }
 
     # Add S3 Release Bucket if provided
-    if (![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
+    if ($UpdaterSource -ne "aws" -and ![string]::IsNullOrWhiteSpace($S3ReleaseBucket)) {
         $EnvContent += "`n# S3 Release Bucket (enables S3-based updates instead of GHCR)`n"
         $EnvContent += "S3_RELEASE_BUCKET=$S3ReleaseBucket`n"
         if (![string]::IsNullOrWhiteSpace($S3ReleaseRegion)) {
@@ -2518,7 +2664,12 @@ Write-Info "`nModel download..."
 $downloadModel = 'n'
 $modelBasePath = ""
 
-if ($SkipModelDownload) {
+if ($UpdaterSource -eq "aws") {
+    Write-Info "Legacy direct-S3 model download is disabled for broker installations"
+    $downloadModel = 'n'
+    $script:SkippedSteps += "Model download (not present in broker runtime registry)"
+}
+elseif ($SkipModelDownload) {
     # Installer explicitly requested to skip download - don't prompt
     Write-Info "Model download skipped as requested by installer"
     $downloadModel = 'n'

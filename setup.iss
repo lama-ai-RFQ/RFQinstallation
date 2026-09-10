@@ -50,6 +50,8 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 ; Include the PowerShell installation script
 Source: "download_and_install.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "aws_helpers.py"; DestDir: "{tmp}"; Flags: ignoreversion
+Source: "..\packages\rfq_license_client\rfq_license_client\*"; DestDir: "{tmp}\rfq_license_client_bootstrap\rfq_license_client"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\packages\rfq_license_client\requirements.txt"; DestDir: "{tmp}\rfq_license_client_bootstrap"; Flags: ignoreversion
 ; Include any other necessary files
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "USER_QUICK_START.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -86,10 +88,7 @@ var
   ServiceInfoLabel: TLabel;
   CleanReinstallPage: TInputOptionWizardPage;
   CleanupCheckbox: TCheckBox;
-  GitHubTokenPage: TInputQueryWizardPage;
-  AWSKeyPage: TInputQueryWizardPage;
-  AWSSecretPage: TInputQueryWizardPage;
-  AWSRegionPage: TInputQueryWizardPage;
+  LicenseKeyPage: TInputQueryWizardPage;
   ModelDownloadPage: TInputOptionWizardPage;
   ModelPathPage: TInputDirWizardPage;
   SettingsPasswordPage: TInputQueryWizardPage;
@@ -102,7 +101,6 @@ var
   ServiceAccountPage: TInputOptionWizardPage;
   ServiceAccountWarningLabel: TLabel;
   // Password visibility checkboxes
-  AWSSecretShowCheck: TNewCheckBox;
   SettingsPasswordShowCheck: TNewCheckBox;
   SuperUserPasswordShowCheck: TNewCheckBox;
   RFQUserPasswordShowCheck: TNewCheckBox;
@@ -110,11 +108,6 @@ var
   SettingsPasswordAlreadyStoredCheck: TNewCheckBox;
   SuperUserPasswordAlreadyStoredCheck: TNewCheckBox;
   RFQUserPasswordAlreadyStoredCheck: TNewCheckBox;
-
-procedure AWSSecretShowCheckClick(Sender: TObject);
-begin
-  AWSSecretPage.Edits[0].Password := not AWSSecretShowCheck.Checked;
-end;
 
 procedure SettingsPasswordShowCheckClick(Sender: TObject);
 begin
@@ -833,43 +826,14 @@ begin
   CleanupCheckbox.Caption := 'Cleanup download directory after extraction (recommended - saves disk space)';
   CleanupCheckbox.Checked := True;  // Default to cleanup enabled
   
-  // Create GitHub Token page - appears AFTER service info page
-  GitHubTokenPage := CreateInputQueryPage(CleanReinstallPage.ID,
-    'GitHub Authentication', 'GitHub Personal Access Token Required',
-    'The installation package is in a private repository and requires authentication.' + #13#10 +
-    'Please enter your GitHub Personal Access Token:');
-  GitHubTokenPage.Add('GitHub Token:', False);
-
-  // Create AWS credentials pages
-  AWSKeyPage := CreateInputQueryPage(GitHubTokenPage.ID,
-    'AWS Credentials', 'AWS S3 Access Required',
-    'The application requires downloading a language model from AWS S3.' + #13#10 +
-    'Please enter your AWS credentials:');
-  AWSKeyPage.Add('AWS Access Key ID:', False);
-  
-  // Create AWS Secret page (using TInputQueryWizardPage with password masking)
-  AWSSecretPage := CreateInputQueryPage(AWSKeyPage.ID,
-    'AWS Secret Key', 'AWS Secret Access Key',
-    'Please enter your AWS Secret Access Key:');
-  AWSSecretPage.Add('AWS Secret Access Key:', True);  // True = password field (masked)
-  
-  // Add "Show password" checkbox
-  AWSSecretShowCheck := TNewCheckBox.Create(WizardForm);
-  AWSSecretShowCheck.Parent := AWSSecretPage.Surface;
-  AWSSecretShowCheck.Top := AWSSecretPage.Edits[0].Top + AWSSecretPage.Edits[0].Height + ScaleY(8);
-  AWSSecretShowCheck.Left := AWSSecretPage.Edits[0].Left;
-  AWSSecretShowCheck.Height := ScaleY(24);
-  AWSSecretShowCheck.Caption := '&Show password';
-  AWSSecretShowCheck.OnClick := @AWSSecretShowCheckClick;
-  
-  AWSRegionPage := CreateInputQueryPage(AWSSecretPage.ID,
-    'AWS Region', 'AWS Region Configuration',
-    'Please enter your AWS Region (default: us-east-1):');
-  AWSRegionPage.Add('AWS Region:', False);
-  AWSRegionPage.Values[0] := 'us-east-1';
+  LicenseKeyPage := CreateInputQueryPage(CleanReinstallPage.ID,
+    'RFQ License', 'Activate this device',
+    'Enter the RFQ license key supplied by your software provider.' + #13#10 +
+    'The installer uses it to activate this device and securely download entitled files.');
+  LicenseKeyPage.Add('License Key:', True);
 
   // Create model download option page
-  ModelDownloadPage := CreateInputOptionPage(AWSRegionPage.ID,
+  ModelDownloadPage := CreateInputOptionPage(LicenseKeyPage.ID,
     'Model Download', 'Download Language Model',
     'The application requires the LLM (language model).' + #13#10 +
     'This is a LARGE download (~30 GB) and may take 30-60 minutes depending on your internet connection.',
@@ -1035,10 +999,7 @@ end;
 procedure LoadExistingEnvValues();
 var
   EnvFilePath: String;
-  ExistingGitHubToken: String;
-  ExistingAWSKey: String;
-  ExistingAWSSecret: String;
-  ExistingAWSRegion: String;
+  ExistingLicenseKey: String;
   ExistingModelPath: String;
   ExistingServerURL: String;
   ExistingSettingsPassword: String;
@@ -1057,10 +1018,7 @@ begin
   Log('Found existing .env file at: ' + EnvFilePath);
   
   // Read values from existing .env file
-  ExistingGitHubToken := ReadEnvValue(EnvFilePath, 'GITHUB_PAT');
-  ExistingAWSKey := ReadEnvValue(EnvFilePath, 'AWS_KEY');
-  ExistingAWSSecret := ReadEnvValue(EnvFilePath, 'AWS_SECRET');
-  ExistingAWSRegion := ReadEnvValue(EnvFilePath, 'AWS_REGION');
+  ExistingLicenseKey := ReadEnvValue(EnvFilePath, 'LICENSE_KEY');
   ExistingModelPath := ReadEnvValue(EnvFilePath, 'MODEL_PATH');
   ExistingServerURL := ReadEnvValue(EnvFilePath, 'SERVER_URL');
   ExistingSettingsPassword := ReadEnvValue(EnvFilePath, 'SETTINGS_PASSWORD');
@@ -1077,28 +1035,10 @@ begin
   end;
   
   // Pre-populate input pages with existing values
-  if ExistingGitHubToken <> '' then
+  if ExistingLicenseKey <> '' then
   begin
-    GitHubTokenPage.Values[0] := ExistingGitHubToken;
-    Log('Loaded GitHub token from .env');
-  end;
-  
-  if ExistingAWSKey <> '' then
-  begin
-    AWSKeyPage.Values[0] := ExistingAWSKey;
-    Log('Loaded AWS Key from .env');
-  end;
-  
-  if ExistingAWSSecret <> '' then
-  begin
-    AWSSecretPage.Values[0] := ExistingAWSSecret;
-    Log('Loaded AWS Secret from .env');
-  end;
-  
-  if ExistingAWSRegion <> '' then
-  begin
-    AWSRegionPage.Values[0] := ExistingAWSRegion;
-    Log('Loaded AWS Region from .env');
+    LicenseKeyPage.Values[0] := ExistingLicenseKey;
+    Log('Loaded license key from .env');
   end;
   
   if ExistingModelPath <> '' then
@@ -1142,10 +1082,7 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   InstallPath: String;
-  GitHubToken: String;
-  AWSKey: String;
-  AWSSecret: String;
-  AWSRegion: String;
+  LicenseKey: String;
   ModelDownload: Boolean;
   ModelPath: String;
   ScriptPath: String;
@@ -1194,40 +1131,18 @@ begin
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'CleanupAfterInstall', 'False');
   end;
   
-  // Validate GitHub token is mandatory
-  if CurPageID = GitHubTokenPage.ID then
+  // A license key is the only distribution credential supplied by customers.
+  if CurPageID = LicenseKeyPage.ID then
   begin
-    GitHubToken := Trim(GitHubTokenPage.Values[0]);
-    if (GitHubToken = '') then
+    LicenseKey := Trim(LicenseKeyPage.Values[0]);
+    if LicenseKey = '' then
     begin
-      MsgBox('GitHub Personal Access Token is required to continue.' + #13#10 + #13#10 +
-             'Please enter a valid GitHub token (starts with ghp_...).' + #13#10 + #13#10 +
-             'The software provider should supply you with a GitHub Personal Access Token.' + #13#10 +
-             'Please contact your software provider if you do not have a token.',
+      MsgBox('An RFQ license key is required to activate this device and download the installer.',
              mbError, MB_OK);
       Result := False;
       Exit;
     end;
-    // Store GitHub token to registry
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
-  end;
-  
-  // Store AWS Key to registry when leaving AWS Key page
-  if CurPageID = AWSKeyPage.ID then
-  begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKeyPage.Values[0]);
-  end;
-  
-  // Store AWS Secret to registry when leaving AWS Secret page
-  if CurPageID = AWSSecretPage.ID then
-  begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecretPage.Values[0]);
-  end;
-  
-  // Store AWS Region to registry when leaving AWS Region page
-  if CurPageID = AWSRegionPage.ID then
-  begin
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegionPage.Values[0]);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'LicenseKey', LicenseKey);
   end;
   
   // Validate AWS credentials if model download is selected
@@ -1241,19 +1156,6 @@ begin
     else
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'False');
     
-    if ModelDownload then
-    begin
-      AWSKey := Trim(AWSKeyPage.Values[0]);
-      AWSSecret := Trim(AWSSecretPage.Values[0]);
-      if (AWSKey = '') or (AWSSecret = '') then
-      begin
-        MsgBox('AWS credentials are required for model download.' + #13#10 + #13#10 +
-               'Please go back and enter your AWS Access Key ID and Secret Access Key.',
-               mbError, MB_OK);
-        Result := False;
-        Exit;
-      end;
-    end;
   end;
   
   if CurPageID = ModelPathPage.ID then
@@ -1262,10 +1164,7 @@ begin
     // {app} is now available since directory selection page has been shown
     InstallPath := ExpandConstant('{app}');
     
-    GitHubToken := GitHubTokenPage.Values[0];
-    AWSKey := AWSKeyPage.Values[0];
-    AWSSecret := AWSSecretPage.Values[0];
-    AWSRegion := AWSRegionPage.Values[0];
+    LicenseKey := LicenseKeyPage.Values[0];
     ModelDownload := ModelDownloadPage.SelectedValueIndex = 0;
     ModelPath := ModelPathPage.Values[0];
     
@@ -1273,10 +1172,7 @@ begin
       ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
     
     // Store values in registry for the PowerShell script to read
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
-    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'LicenseKey', LicenseKey);
     // Convert boolean to string manually
     if ModelDownload then
       RegWriteStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelDownload', 'True')
@@ -1407,9 +1303,9 @@ function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   
-  // Skip model path page if not downloading model
-  if PageID = ModelPathPage.ID then
-    Result := ModelDownloadPage.SelectedValueIndex <> 0;
+  // The legacy direct-S3 model is not in the broker runtime registry.
+  if (PageID = ModelDownloadPage.ID) or (PageID = ModelPathPage.ID) then
+    Result := True;
   
   // Skip Azure key input page if auto-generate is selected
   if PageID = AzureKeyInputPage.ID then
@@ -1430,10 +1326,7 @@ end;
 function GetPowerShellParams(Param: String): String;
 var
   InstallPath: String;
-  GitHubToken: String;
-  AWSKey: String;
-  AWSSecret: String;
-  AWSRegion: String;
+  LicenseKey: String;
   ModelDownload: Boolean;
   ModelPath: String;
   SettingsPassword: String;
@@ -1459,16 +1352,14 @@ var
   SuperUserPasswordAlreadyStored: Boolean;
   RFQUserPasswordAlreadyStored: Boolean;
   Params: String;
+  LicenseKeyFile: String;
 begin
   // Get installation path
   InstallPath := ExpandConstant('{app}');
   
   // Always read from registry since that's where values are stored during wizard
   // Pages may not be accessible during the [Run] section
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'GitHubToken', GitHubToken);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSKey', AWSKey);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSSecret', AWSSecret);
-  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'AWSRegion', AWSRegion);
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'LicenseKey', LicenseKey);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'ModelPath', ModelPath);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SettingsPassword', SettingsPassword);
   RegQueryStringValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'SuperUserPassword', SuperUserPassword);
@@ -1531,10 +1422,6 @@ begin
   if ModelPath = '' then
     ModelPath := ExpandConstant('{userdocs}\RFQ_Models');
   
-  // If AWSRegion is empty, use default
-  if AWSRegion = '' then
-    AWSRegion := 'us-east-1';
-  
   // If ServerURL is empty, use default
   if ServerURL = '' then
     ServerURL := 'https://localhost';
@@ -1546,7 +1433,12 @@ begin
   // Build PowerShell command parameters
   Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + ExpandConstant('{tmp}\download_and_install.ps1') + '"';
   Params := Params + ' -InstallPath "' + InstallPath + '"';
-  Params := Params + ' -GitHubToken "' + GitHubToken + '"';
+  LicenseKeyFile := ExpandConstant('{tmp}\rfq-license.key');
+  if not SaveStringToFile(LicenseKeyFile, LicenseKey, False) then
+    RaiseException('Could not create the temporary license activation file.');
+  RegDeleteValue(HKEY_CURRENT_USER, 'Software\RFQApplication\Installer', 'LicenseKey');
+  Params := Params + ' -LicenseKeyFile "' + LicenseKeyFile + '"';
+  Params := Params + ' -BrokerUrl "https://license-api.scint.ai" -UpdaterSource "aws"';
   Params := Params + ' -OverwriteExisting';
   
   // Add Clean Reinstall flag
@@ -1593,27 +1485,10 @@ begin
   else if AzureKeyCustom <> '' then
     Params := Params + ' -AzureKeyCustom "' + AzureKeyCustom + '"';
   
-  // Always pass AWS credentials to save to .env (even if not downloading model now)
-  // Note: Credentials are passed via registry to avoid command-line escaping issues
-  // The PowerShell script will read them from registry if command-line params fail
-  if AWSKey <> '' then
-    Params := Params + ' -AWSKey "' + AWSKey + '"';
-  if AWSSecret <> '' then
-    Params := Params + ' -AWSSecret "' + AWSSecret + '"';
-  if AWSRegion <> '' then
-    Params := Params + ' -AWSRegion "' + AWSRegion + '"';
-  
   // Add model download options
-  if ModelDownload then
-  begin
-    // User chose to download - pass model path
-    Params := Params + ' -ModelPath "' + ModelPath + '"';
-  end
-  else
-  begin
-    // User chose to skip download - tell script not to prompt
-    Params := Params + ' -SkipModelDownload';
-  end;
+  // The legacy large-model S3 flow is not part of the broker registry.
+  // Keep an existing MODEL_PATH, but do not ask customers for AWS credentials.
+  Params := Params + ' -SkipModelDownload';
   
   Result := Params;
 end;
