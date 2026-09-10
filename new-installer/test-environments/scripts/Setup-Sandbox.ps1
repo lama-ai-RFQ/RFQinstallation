@@ -28,10 +28,8 @@ Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList
     "-NoProfile", "-Command", "net user `"$env:USERNAME`" `"$sandboxAccountPassword`""
 )
 
-# --- Fill these in before launching the sandbox if you need a real install to complete ---
-# (see new-installer/test-environments/README.md - both are still REPLACE-ME placeholders
-# in the shipped code as of the last ship-todo review). Leave blank to let the installer fail
-# loudly at that step instead, which is fine if you're only testing pages before it.
+# Optional overrides. A licensed install talks to the stage broker by default and signs
+# postgres.windows.binaries from there. Set these only when testing without the broker.
 $env:RFQ_LICENSE_BROKER_URL = ""
 $env:RFQ_POSTGRES_BINARIES_URL = ""
 $env:RFQ_POSTGRES_BINARIES_SHA256 = ""

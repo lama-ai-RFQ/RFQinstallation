@@ -10,11 +10,9 @@ tool that actually fits each:
 | **All existing** — Postgres + working DB + encryption key + model already installed **by an older build of this same new installer** | Hyper-V VM + checkpoints (`hyperv/`) | Needs to *keep* state between runs. Sandbox can't — it forgets everything on close, which would mean redoing a ~30GB model download before every single test. A checkpoint captures that state once and restores it in seconds. |
 | **Legacy-installed** — same end state, but built by the **old Inno installer** (`download_and_install.ps1` + `setup_database_auto.ps1`), not the new one | Hyper-V VM + checkpoints (`hyperv/`) | This is the real customer-upgrade path — every existing customer's machine got into "has Postgres + DB + key" via the *old* installer, not a prior build of the new one. It also exercises code written specifically for this: `EncryptionKeyResolver` (comment references INFA-130) reads the key back out of a plain `.env`, and the new installer's Credential Manager targets (`RFQApplication_SQL_SUPER_USER`, `RFQApplication_RFQ_USER_PASSWORD`, `RFQApplication_SETTINGS_PASSWORD`) are byte-identical names to what the old `download_and_install.ps1` already writes — confirmed by reading both, not assumed. Scenario 2 above never touches that compatibility code path at all. |
 
-Both scenarios still need `RFQ_LICENSE_BROKER_URL`, `RFQ_POSTGRES_BINARIES_URL`, and
-`RFQ_POSTGRES_BINARIES_SHA256` pointed at something real before an install can fully complete —
-these are still `REPLACE-ME` placeholders in the shipped code (see the ship-todo memory / project
-notes). Fine to leave blank if you're only testing wizard pages up to that point; the installer is
-supposed to fail loudly there, not silently.
+A licensed install signs PostgreSQL binaries from the broker (`postgres.windows.binaries`).
+`RFQ_POSTGRES_BINARIES_URL` / `RFQ_POSTGRES_BINARIES_SHA256` remain optional local overrides.
+Leave them blank unless you are testing without the broker.
 
 ## Scenario 1 — Empty (Windows Sandbox)
 

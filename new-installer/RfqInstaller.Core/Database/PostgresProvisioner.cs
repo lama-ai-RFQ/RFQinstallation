@@ -1,4 +1,5 @@
 using RfqInstaller.Core.Archive;
+using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Networking;
 using RfqInstaller.Core.Processes;
 
@@ -39,20 +40,44 @@ public class PostgresProvisioner
         string installPath,
         string generatedSuperUserPassword,
         IProgress<string>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SignedArtifact? binaries = null)
     {
         var binDir = Path.Combine(installPath, "pgsql");
         var dataDir = Path.Combine(installPath, "pgdata");
 
         if (!File.Exists(Path.Combine(binDir, "bin", "postgres.exe")))
         {
+            var url = binaries?.Url ?? PostgresBinariesConfig.DownloadUrl;
+            var sha256 = binaries?.Sha256 ?? PostgresBinariesConfig.Sha256;
+            long? size = binaries is { Size: > 0 } ? binaries.Size : null;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                throw new InvalidOperationException(
+                    "PostgreSQL binaries are not available. Activate a license so the installer can " +
+                    $"sign '{PostgresBinariesConfig.RuntimeAssetId}', or set RFQ_POSTGRES_BINARIES_URL.");
+            }
+
             progress?.Report("Downloading PostgreSQL engine...");
             var zipPath = Path.Combine(Path.GetTempPath(), $"rfq-postgres-{PostgresBinariesConfig.Version}.zip");
-            await _downloader.DownloadAsync(PostgresBinariesConfig.DownloadUrl, zipPath, expectedSizeBytes: null, progress: null, cancellationToken)
+            await _downloader.DownloadAsync(
+                    url,
+                    zipPath,
+                    size,
+                    progress: null,
+                    cancellationToken,
+                    expectedSha256: sha256)
                 .ConfigureAwait(false);
 
             progress?.Report("Extracting PostgreSQL engine...");
-            ZipExtractor.Extract(zipPath, binDir, progress: null, cancellationToken);
+            // EDB's portable zip has pgsql/ at the archive root. Extract into the install
+            // folder so postgres.exe lands at {install}\pgsql\bin\postgres.exe.
+            ZipExtractor.Extract(zipPath, installPath, progress: null, cancellationToken);
+            if (!File.Exists(Path.Combine(binDir, "bin", "postgres.exe")))
+            {
+                throw new InvalidOperationException(
+                    "The PostgreSQL zip did not contain pgsql/bin/postgres.exe.");
+            }
         }
 
         var pgCtl = Path.Combine(binDir, "bin", "pg_ctl.exe");

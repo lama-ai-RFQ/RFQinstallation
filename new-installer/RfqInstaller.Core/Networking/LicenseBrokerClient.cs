@@ -159,6 +159,34 @@ public sealed class LicenseBrokerClient : IDisposable
         return response;
     }
 
+    public async Task<SignedArtifactResponse> SignRuntimeAssetsAsync(
+        IEnumerable<string> assetIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(assetIds);
+        var ids = assetIds.ToArray();
+        if (ids.Length is < 1 or > 32 || ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
+        {
+            throw new ArgumentException("Between 1 and 32 unique runtime asset IDs are required.", nameof(assetIds));
+        }
+        foreach (var id in ids)
+        {
+            ValidateLogicalId(id, nameof(assetIds));
+        }
+
+        var response = await AuthorizedRequestAsync<SignedArtifactResponse>(
+            HttpMethod.Post,
+            "v1/downloads/sign",
+            new Dictionary<string, object>
+            {
+                ["runtime_asset_ids"] = ids,
+            },
+            retryable: true,
+            cancellationToken).ConfigureAwait(false);
+        ValidateSignedArtifacts(response, expectedReleaseId: null, ids);
+        return response;
+    }
+
     public async Task<SignedWindowsRelease> ActivateAndGetSignedWindowsReleaseAsync(
         string licenseKey,
         string channel = "customer",
@@ -577,10 +605,13 @@ public sealed class LicenseBrokerClient : IDisposable
 
     private static void ValidateSignedArtifacts(
         SignedArtifactResponse response,
-        string releaseId,
+        string? expectedReleaseId,
         IReadOnlyCollection<string> requestedIds)
     {
-        if (response.ReleaseId != releaseId ||
+        var releaseIdMatches = expectedReleaseId is null
+            ? string.IsNullOrEmpty(response.ReleaseId)
+            : response.ReleaseId == expectedReleaseId;
+        if (!releaseIdMatches ||
             response.Artifacts.Count != requestedIds.Count ||
             response.Artifacts.Select(artifact => artifact.ArtifactId)
                 .ToHashSet(StringComparer.Ordinal)

@@ -123,7 +123,7 @@ public sealed class SignedArtifact
 public sealed class SignedArtifactResponse
 {
     [JsonPropertyName("release_id")]
-    public required string ReleaseId { get; init; }
+    public string? ReleaseId { get; init; }
 
     [JsonPropertyName("artifacts")]
     public List<SignedArtifact> Artifacts { get; init; } = new();

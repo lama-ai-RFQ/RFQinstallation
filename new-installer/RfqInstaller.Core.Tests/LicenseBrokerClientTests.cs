@@ -58,10 +58,32 @@ public sealed class LicenseBrokerClientTests
         Assert.Contains("The request could not be completed.", error.Message);
     }
 
+    [Fact]
+    public async Task SignsRuntimeAssetsWithoutAReleaseId()
+    {
+        var handler = new BrokerHandler();
+        using var http = new HttpClient(handler);
+        using var client = new LicenseBrokerClient(
+            http,
+            "https://license-api.example.test",
+            new MemoryCredentialStore(),
+            maxAttempts: 1);
+
+        await client.ActivateAsync("RFQ.payload.signature");
+        var signed = await client.SignRuntimeAssetsAsync(new[] { "postgres.windows.binaries" });
+
+        Assert.Null(signed.ReleaseId);
+        Assert.Single(signed.Artifacts);
+        Assert.Equal("postgres.windows.binaries", signed.Artifacts[0].ArtifactId);
+        Assert.Equal("https://downloads.example.test/postgres.zip?Policy=signed", signed.Artifacts[0].Url);
+        Assert.True(handler.RuntimeSignWasRequested);
+    }
+
     private sealed class BrokerHandler : HttpMessageHandler
     {
         private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         public bool ActivationProofWasPresent { get; private set; }
+        public bool RuntimeSignWasRequested { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -110,6 +132,22 @@ public sealed class LicenseBrokerClientTests
             }
             if (path == "/v1/downloads/sign")
             {
+                var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                if (body.RootElement.TryGetProperty("runtime_asset_ids", out var runtimeIds))
+                {
+                    RuntimeSignWasRequested = runtimeIds[0].GetString() == "postgres.windows.binaries";
+                    return Json(HttpStatusCode.OK, $$"""
+                        {
+                          "artifacts":[{
+                            "artifact_id":"postgres.windows.binaries",
+                            "url":"https://downloads.example.test/postgres.zip?Policy=signed",
+                            "size":8,
+                            "sha256":"{{Sha}}",
+                            "expires_at":4102444800
+                          }]
+                        }
+                        """);
+                }
                 return Json(HttpStatusCode.OK, $$"""
                     {
                       "release_id":"customer:windows:v1.2.3",

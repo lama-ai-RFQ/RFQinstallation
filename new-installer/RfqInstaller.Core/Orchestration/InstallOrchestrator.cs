@@ -112,7 +112,14 @@ public class InstallOrchestrator
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));
             var provisioner = new PostgresProvisioner(_downloader);
             var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Setting up database", 0.45, msg)));
-            var instance = await provisioner.ProvisionAsync(plan.InstallPath, superUserPassword, pgProgress, cancellationToken)
+            var postgresBinaries = await ResolvePostgresBinariesAsync(plan.InstallPath, cancellationToken)
+                .ConfigureAwait(false);
+            var instance = await provisioner.ProvisionAsync(
+                    plan.InstallPath,
+                    superUserPassword,
+                    pgProgress,
+                    cancellationToken,
+                    postgresBinaries)
                 .ConfigureAwait(false);
             await DatabaseSetup.EnsureDatabaseAndUserAsync(instance.Port, superUserPassword, appUserPassword, pgProgress, cancellationToken)
                 .ConfigureAwait(false);
@@ -190,6 +197,22 @@ public class InstallOrchestrator
         return root == exception
             ? $"{exception.GetType().Name}: {exception.Message}"
             : $"{exception.GetType().Name}: {exception.Message}{Environment.NewLine}{root.GetType().Name}: {root.Message}";
+    }
+
+    private async Task<SignedArtifact?> ResolvePostgresBinariesAsync(
+        string installPath,
+        CancellationToken cancellationToken)
+    {
+        if (File.Exists(Path.Combine(installPath, "pgsql", "bin", "postgres.exe")) ||
+            !string.IsNullOrWhiteSpace(PostgresBinariesConfig.DownloadUrl))
+        {
+            return null;
+        }
+
+        var signed = await _brokerClient.SignRuntimeAssetsAsync(
+            new[] { PostgresBinariesConfig.RuntimeAssetId },
+            cancellationToken).ConfigureAwait(false);
+        return signed.Artifacts[0];
     }
 
     private async Task DownloadAndExtractComponentsAsync(

@@ -1,18 +1,20 @@
 namespace RfqInstaller.Core.Database;
 
 /// <summary>
-/// Pins the exact portable PostgreSQL "binaries zip" the installer downloads (from
-/// https://www.enterprisedb.com/download-postgresql-binaries or a mirror you control) so it never
-/// depends on a system-wide PostgreSQL install or PATH. There is no safe built-in default here —
-/// like <see cref="Networking.LicenseBrokerClient.BaseUrl"/>, this must be verified and pinned by
-/// the team before shipping a build (URL, exact version, and SHA-256 of the zip you tested with).
+/// Pins the portable PostgreSQL binaries zip the installer provisions under
+/// <c>{install}\pgsql</c>. Production downloads go through the license broker as
+/// <see cref="RuntimeAssetId"/>; <see cref="DownloadUrl"/> is only an override
+/// for local/sandbox testing.
 /// </summary>
 public static class PostgresBinariesConfig
 {
-    public static string Version { get; set; } = "16.4-1";
-    public static string DownloadUrl { get; set; } =
-        Environment.GetEnvironmentVariable("RFQ_POSTGRES_BINARIES_URL")
-        ?? "https://REPLACE-ME/postgresql-16.4-1-windows-x64-binaries.zip";
+    public const string RuntimeAssetId = "postgres.windows.binaries";
+
+    public static string Version { get; set; } = "16.15-3";
+
+    public static string? DownloadUrl { get; set; } =
+        Environment.GetEnvironmentVariable("RFQ_POSTGRES_BINARIES_URL");
+
     public static string? Sha256 { get; set; } =
         Environment.GetEnvironmentVariable("RFQ_POSTGRES_BINARIES_SHA256");
 
