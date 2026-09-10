@@ -110,6 +110,11 @@ public partial class InstallingPage : UserControl
         ProgressPanel.Visibility = Visibility.Collapsed;
         ErrorText.Text = message;
         ErrorPanel.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(() =>
+        {
+            RetryButton.Focus();
+            RetryButton.BringIntoView();
+        });
     }
 
     private InstallPlan BuildInstallPlan() => new()

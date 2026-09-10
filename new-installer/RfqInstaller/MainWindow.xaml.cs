@@ -570,6 +570,12 @@ public partial class MainWindow : Window
                 NextButton.Content = "Next";
                 break;
         }
+
+        FooterBar.Visibility = BackButton.Visibility == Visibility.Visible
+            || CancelButton.Visibility == Visibility.Visible
+            || NextButton.Visibility == Visibility.Visible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private static int RailIndexFor(WizardStep step) => step switch

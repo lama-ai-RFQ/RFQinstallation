@@ -46,16 +46,18 @@ public static class DatabaseSetup
             if (!userExists)
             {
                 progress?.Report($"Creating database user '{AppUserName}'...");
-                await using var cmd = new NpgsqlCommand($"CREATE USER \"{AppUserName}\" WITH PASSWORD @p", connection);
-                cmd.Parameters.AddWithValue("p", appUserPassword);
-                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                await ExecuteAsync(
+                    connection,
+                    $"CREATE USER \"{AppUserName}\" WITH PASSWORD {QuoteLiteral(appUserPassword)}",
+                    cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 progress?.Report($"Updating password for '{AppUserName}'...");
-                await using var cmd = new NpgsqlCommand($"ALTER USER \"{AppUserName}\" WITH PASSWORD @p", connection);
-                cmd.Parameters.AddWithValue("p", appUserPassword);
-                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                await ExecuteAsync(
+                    connection,
+                    $"ALTER USER \"{AppUserName}\" WITH PASSWORD {QuoteLiteral(appUserPassword)}",
+                    cancellationToken).ConfigureAwait(false);
             }
 
             await ExecuteAsync(connection, $"GRANT ALL PRIVILEGES ON DATABASE \"{DatabaseName}\" TO \"{AppUserName}\"", cancellationToken)
@@ -87,6 +89,16 @@ public static class DatabaseSetup
     {
         await using var cmd = new NpgsqlCommand(sql, connection);
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// CREATE/ALTER USER cannot take bind parameters for PASSWORD. Escape as a SQL string literal
+    /// the same way the old setup_database_auto.ps1 script did.
+    /// </summary>
+    private static string QuoteLiteral(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
     }
 
     private static async Task<bool> ScalarBoolAsync(NpgsqlConnection connection, string sql, (string Name, object Value) param, CancellationToken cancellationToken)
