@@ -1,0 +1,24 @@
+<Configuration>
+  <VGpu>Disable</VGpu>
+  <Networking>Enable</Networking>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\Users\anast\PycharmProjects\RFQinstallation\new-installer\RfqInstaller\bin\x64\Release\net8.0-windows\win-x64\publish</HostFolder>
+      <SandboxFolder>C:\RFQBuild</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\Users\anast\PycharmProjects\RFQinstallation\new-installer\test-environments\scripts</HostFolder>
+      <SandboxFolder>C:\RFQScripts</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\Users\anast\PycharmProjects\RFQinstallation\new-installer\test-environments\output</HostFolder>
+      <SandboxFolder>C:\RFQTestOutput</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\RFQScripts\Setup-Sandbox.ps1</Command>
+  </LogonCommand>
+</Configuration>

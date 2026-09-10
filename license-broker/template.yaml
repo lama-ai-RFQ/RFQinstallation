@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  License-broker API for the RFQ Application Windows installer. Validates a
+  license key and returns short-lived S3 presigned URLs for the release
+  package/model files plus install-time config. Read-only against the
+  existing distribution buckets -- no write permissions, no customer data
+  stored.
+
+Parameters:
+  ReleaseBucketName:
+    Type: String
+    Description: S3 bucket holding release packages (existing distribution bucket, e.g. rfq-distribution-us)
+  ModelBucketName:
+    Type: String
+    Default: rfq-models
+    Description: S3 bucket holding the LLM model files
+  DefaultServerUrl:
+    Type: String
+    Default: https://localhost
+  UpdateChannel:
+    Type: String
+    Default: customer
+
+Resources:
+  LicenseBrokerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: rfq-license-broker
+      Runtime: python3.12
+      Handler: lambda_handler.handler
+      CodeUri: .
+      MemorySize: 256
+      Timeout: 15
+      Environment:
+        Variables:
+          RELEASE_BUCKET: !Ref ReleaseBucketName
+          MODEL_BUCKET: !Ref ModelBucketName
+          DEFAULT_SERVER_URL: !Ref DefaultServerUrl
+          UPDATE_CHANNEL: !Ref UpdateChannel
+          URL_EXPIRY_SECONDS: '3600'
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ReleaseBucketName
+        - S3ReadPolicy:
+            BucketName: !Ref ModelBucketName
+      Events:
+        ValidateAndIssue:
+          Type: Api
+          Properties:
+            Path: /validate-and-issue
+            Method: post
+            RestApiId: !Ref LicenseBrokerApi
+
+  LicenseBrokerApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      # Public endpoint by design -- the license key itself is the auth. Consider adding
+      # AWS WAF (rate limiting) in front of this in production to slow down brute-force
+      # guessing of license keys.
+      Cors:
+        AllowMethods: "'POST'"
+        AllowOrigin: "'*'"
+
+Outputs:
+  LicenseBrokerUrl:
+    Description: Base URL to configure as RfqInstaller.Core.Networking.LicenseBrokerClient.BaseUrl
+    Value: !Sub "https://${LicenseBrokerApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
