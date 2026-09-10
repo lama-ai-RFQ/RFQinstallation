@@ -13,7 +13,8 @@
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource AppBackgroundBrush}"
-        FontFamily="Segoe UI Variable Text, Segoe UI">
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        Closing="MainWindow_Closing">
     <Border BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>

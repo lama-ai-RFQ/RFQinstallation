@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -30,6 +31,7 @@ public partial class MainWindow : Window
     private readonly WizardState _state = new();
     private WizardStep _current = WizardStep.Welcome;
     private bool _fatalReported;
+    private bool _forceClose;
     private string? _elevationReadySignalPath;
 
     public MainWindow()
@@ -141,17 +143,30 @@ public partial class MainWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
-    private void Cancel_Click(object sender, RoutedEventArgs e)
+    private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
-        if (AppDialog.Confirm(
-            this,
-            "Cancel setup?",
-            "Are you sure you want to cancel RFQ Application setup?",
-            confirmText: "Cancel setup",
-            dismissText: "Continue"))
+        if (_forceClose || _current is WizardStep.Finish or WizardStep.Failed)
         {
-            Close();
+            return;
         }
+
+        if (!AppDialog.Confirm(
+                this,
+                "Exit setup?",
+                "Are you sure you want to exit?",
+                confirmText: "Exit",
+                dismissText: "Continue"))
+        {
+            e.Cancel = true;
+        }
+    }
+
+    private void ForceClose()
+    {
+        _forceClose = true;
+        Close();
     }
 
     private void Back_Click(object sender, RoutedEventArgs e)
@@ -194,7 +209,7 @@ public partial class MainWindow : Window
                 switch (HandleElevationIfNeeded(WizardStep.InstallLocation))
                 {
                     case ElevationOutcome.RelaunchedElevated:
-                        Close();
+                        ForceClose();
                         return;
                     case ElevationOutcome.Declined:
                         // Stay on InstallMode — Standalone is right there to switch to, or Next tries again.
@@ -206,7 +221,7 @@ public partial class MainWindow : Window
                 switch (HandleElevationIfNeeded(GetNext(_current)))
                 {
                     case ElevationOutcome.RelaunchedElevated:
-                        Close();
+                        ForceClose();
                         return;
                     case ElevationOutcome.Declined:
                         return;
@@ -343,7 +358,7 @@ public partial class MainWindow : Window
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_state.ServerUrl) { UseShellExecute = true });
         }
 
-        Close();
+        ForceClose();
     }
 
     private WizardStep GetNext(WizardStep current)
@@ -494,7 +509,7 @@ public partial class MainWindow : Window
                 // The log is the remaining record.
             }
 
-            Close();
+            ForceClose();
         }
     }
 
