@@ -7,6 +7,7 @@ using RfqInstaller.Core.Licensing;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Networking;
 using RfqInstaller.Core.Processes;
+using RfqInstaller.Core.Releases;
 using RfqInstaller.Core.Security;
 using RfqInstaller.Core.Services;
 using RfqInstaller.Core.Shortcuts;
@@ -35,19 +36,16 @@ public class InstallOrchestrator
     private readonly HttpDownloader _downloader;
     private readonly IInstallInteraction? _interaction;
     private readonly string _bundledNssmPath;
-    private readonly string _bundledUpdaterPath;
     private readonly string? _bundledUninstallerPath;
 
     public InstallOrchestrator(
         string bundledNssmPath,
-        string bundledUpdaterPath,
         string? bundledUninstallerPath = null,
         LicenseBrokerClient? brokerClient = null,
         HttpDownloader? downloader = null,
         IInstallInteraction? interaction = null)
     {
         _bundledNssmPath = bundledNssmPath;
-        _bundledUpdaterPath = bundledUpdaterPath;
         _bundledUninstallerPath = bundledUninstallerPath;
         _brokerClient = brokerClient;
         _downloader = downloader ?? new HttpDownloader();
@@ -355,7 +353,32 @@ public class InstallOrchestrator
         }
 
         File.Copy(_bundledNssmPath, Path.Combine(installPath, "nssm.exe"), overwrite: true);
-        File.Copy(_bundledUpdaterPath, Path.Combine(installPath, "windows_updater.exe"), overwrite: true);
+        InstallUpdaterFromRelease(release.Release.Artifacts, downloaded, installPath);
+    }
+
+    internal static void InstallUpdaterFromRelease(
+        IEnumerable<ReleaseArtifact> catalogArtifacts,
+        IEnumerable<string> downloadedPaths,
+        string installPath)
+    {
+        var updaterArtifact = ReleaseUpdaterArtifact.Select(catalogArtifacts)
+            ?? throw new InvalidDataException(
+                "The Windows release catalog does not include a windows updater executable. " +
+                "Publish the current windows_updater release artifact into this channel's catalog.");
+
+        var downloadedName = ReleaseUpdaterArtifact.DownloadedFileName(updaterArtifact);
+        var updaterDownload = downloadedPaths.FirstOrDefault(path =>
+            string.Equals(Path.GetFileName(path), downloadedName, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(updaterDownload) || !File.Exists(updaterDownload))
+        {
+            throw new InvalidDataException(
+                $"The signed updater artifact '{updaterArtifact.ArtifactId}' was not downloaded.");
+        }
+
+        File.Copy(
+            updaterDownload,
+            Path.Combine(installPath, ReleaseUpdaterArtifact.InstalledFileName),
+            overwrite: true);
     }
 
     private async Task ExtractArchivesFromStagingAsync(

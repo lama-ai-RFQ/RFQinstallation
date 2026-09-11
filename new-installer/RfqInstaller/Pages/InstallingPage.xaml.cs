@@ -60,7 +60,6 @@ public partial class InstallingPage : UserControl
         var baseDirectory = AppContext.BaseDirectory;
         var orchestrator = new InstallOrchestrator(
             Path.Combine(baseDirectory, "Bundled", "nssm.exe"),
-            Path.Combine(baseDirectory, "Bundled", "windows_updater.exe"),
             interaction: new WpfInstallInteraction());
 
         var progress = new Progress<InstallStepProgress>(p =>
