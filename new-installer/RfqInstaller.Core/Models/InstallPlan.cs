@@ -39,7 +39,7 @@ public class InstallPlan
         Environment.GetEnvironmentVariable("RFQ_LICENSE_BROKER_URL")?.Trim()
         is { Length: > 0 } configured
             ? configured
-            : "https://license-api-stage.scint.ai";
+            : "https://license-api.scint.ai";
     public bool AutoGenerateEncryptionKey { get; init; } = true;
     public string? CustomEncryptionKey { get; init; }
 

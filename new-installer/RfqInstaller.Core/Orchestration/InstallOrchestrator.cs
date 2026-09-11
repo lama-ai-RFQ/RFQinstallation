@@ -31,7 +31,7 @@ public class InstallOrchestrator
     private const string AppServiceName = "RFQapplication";
     private const string UpdaterServiceName = "RFQUpdaterService";
 
-    private readonly LicenseBrokerClient _brokerClient;
+    private readonly LicenseBrokerClient? _brokerClient;
     private readonly HttpDownloader _downloader;
     private readonly IInstallInteraction? _interaction;
     private readonly string _bundledNssmPath;
@@ -49,13 +49,18 @@ public class InstallOrchestrator
         _bundledNssmPath = bundledNssmPath;
         _bundledUpdaterPath = bundledUpdaterPath;
         _bundledUninstallerPath = bundledUninstallerPath;
-        _brokerClient = brokerClient ?? new LicenseBrokerClient();
+        _brokerClient = brokerClient;
         _downloader = downloader ?? new HttpDownloader();
         _interaction = interaction;
     }
 
     public async Task<InstallResult> RunAsync(InstallPlan plan, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
     {
+        using var ownedBrokerClient = _brokerClient is null
+            ? new LicenseBrokerClient(baseUrl: plan.BrokerUrl)
+            : null;
+        var brokerClient = _brokerClient ?? ownedBrokerClient!;
+
         try
         {
             progress.Report(new InstallStepProgress("Validating license key", 0.0, null));
@@ -65,7 +70,7 @@ public class InstallOrchestrator
                 return new InstallResult(false, localCheck.Message, null);
             }
 
-            var release = await _brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
+            var release = await brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
                 plan.LicenseKey,
                 plan.UpdateChannel,
                 cancellationToken).ConfigureAwait(false);
@@ -125,7 +130,10 @@ public class InstallOrchestrator
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));
             var provisioner = new PostgresProvisioner(_downloader);
             var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Setting up database", 0.45, msg)));
-            var postgresBinaries = await ResolvePostgresBinariesAsync(plan.InstallPath, cancellationToken)
+            var postgresBinaries = await ResolvePostgresBinariesAsync(
+                    brokerClient,
+                    plan.InstallPath,
+                    cancellationToken)
                 .ConfigureAwait(false);
             var instance = await provisioner.ProvisionAsync(
                     plan.InstallPath,
@@ -213,6 +221,7 @@ public class InstallOrchestrator
     }
 
     private async Task<SignedArtifact?> ResolvePostgresBinariesAsync(
+        LicenseBrokerClient brokerClient,
         string installPath,
         CancellationToken cancellationToken)
     {
@@ -222,7 +231,7 @@ public class InstallOrchestrator
             return null;
         }
 
-        var signed = await _brokerClient.SignRuntimeAssetsAsync(
+        var signed = await brokerClient.SignRuntimeAssetsAsync(
             new[] { PostgresBinariesConfig.RuntimeAssetId },
             cancellationToken).ConfigureAwait(false);
         return signed.Artifacts[0];

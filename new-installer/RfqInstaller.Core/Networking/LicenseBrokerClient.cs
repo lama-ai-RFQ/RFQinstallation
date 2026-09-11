@@ -16,9 +16,7 @@ namespace RfqInstaller.Core.Networking;
 /// </summary>
 public sealed class LicenseBrokerClient : IDisposable
 {
-    // Stage is the only deployed broker hostname today. Flip this to
-    // https://license-api.scint.ai when production DNS is live.
-    private const string DefaultBaseUrl = "https://license-api-stage.scint.ai";
+    private const string DefaultBaseUrl = "https://license-api.scint.ai";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly Regex LogicalIdPattern = new(
         "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
