@@ -15,6 +15,7 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,13 +27,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Bundled, proven tools the orchestrator copies into the install directory — no PATH/silent-install dependency. -->
-    <Content Include="..\..\nssm.exe">
-      <Link>Bundled\nssm.exe</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-    </Content>
+    <!-- Bundled, proven tools the orchestrator copies into the install directory — no PATH/silent-install dependency.
+         Embedded rather than shipped beside the exe so the single downloaded RfqInstaller.exe is self-sufficient;
+         BundledTools extracts it at install time. -->
+    <EmbeddedResource Include="..\..\nssm.exe" LogicalName="Bundled.nssm.exe" />
   </ItemGroup>
 
 </Project>

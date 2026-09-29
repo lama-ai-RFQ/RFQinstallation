@@ -57,9 +57,8 @@ public partial class InstallingPage : UserControl
         _cts = new CancellationTokenSource();
 
         var plan = BuildInstallPlan();
-        var baseDirectory = AppContext.BaseDirectory;
         var orchestrator = new InstallOrchestrator(
-            Path.Combine(baseDirectory, "Bundled", "nssm.exe"),
+            BundledTools.ExtractNssm(),
             interaction: new WpfInstallInteraction());
 
         var progress = new Progress<InstallStepProgress>(p =>
