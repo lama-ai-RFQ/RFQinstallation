@@ -116,6 +116,25 @@ public class PostgresProvisioner
         return new PostgresInstance(binDir, dataDir, PostgresBinariesConfig.DefaultPort, ServiceName, generatedSuperUserPassword);
     }
 
+    /// <summary>
+    /// Brings an already-initialized cluster back up (binaries, service registration, start, wait)
+    /// without touching its data or passwords. initdb is skipped for an initialized cluster, which
+    /// is the only step that uses the superuser password, so none is needed here.
+    /// </summary>
+    public Task<PostgresInstance> StartExistingAsync(
+        string installPath,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken,
+        SignedArtifact? binaries = null)
+    {
+        if (!IsAlreadyInitialized(installPath))
+        {
+            throw new InvalidOperationException($"No PostgreSQL data directory was found in {Path.Combine(installPath, "pgdata")}.");
+        }
+
+        return ProvisionAsync(installPath, string.Empty, progress, cancellationToken, binaries);
+    }
+
     private static async Task InitializeDataDirectoryAsync(string initDbExe, string dataDir, string superUserPassword, CancellationToken cancellationToken)
     {
         var pwFile = Path.GetTempFileName();
