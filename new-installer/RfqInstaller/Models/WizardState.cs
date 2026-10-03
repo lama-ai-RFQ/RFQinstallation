@@ -1,3 +1,5 @@
+using RfqInstaller.Core.Orchestration;
+
 namespace RfqInstaller.Models;
 
 public enum InstallMode
@@ -31,6 +33,21 @@ public enum WizardStep
 
 public class WizardState
 {
+    /// <summary>
+    /// True when the admin chose Repair on the Welcome page. The wizard then goes Welcome → Ready
+    /// to Repair → Installing → Finish, and the license key, mode and path come from the existing
+    /// install instead of being asked for.
+    /// </summary>
+    public bool Repair { get; set; }
+
+    /// <summary>Shown on the Ready to Repair page; from <see cref="UseExistingInstall"/>.</summary>
+    public string? ExistingVersion { get; set; }
+
+    public string? ExistingServiceAccountName { get; set; }
+
+    /// <summary>Optional on the Ready to Repair page; see <see cref="RfqInstaller.Core.Models.RepairPlan.RepairDatabase"/>.</summary>
+    public bool RepairDatabase { get; set; }
+
     public string LicenseKey { get; set; } = string.Empty;
 
     public InstallMode Mode { get; set; } = InstallMode.WindowsService;
@@ -105,4 +122,19 @@ public class WizardState
     public string? FatalErrorDetail { get; set; }
 
     public string? FatalErrorLogPath { get; set; }
+
+    /// <summary>
+    /// Points the wizard at an install found on this machine. Used for Repair, and also as the
+    /// defaults for a normal install so "Install" over an existing copy starts from its folder and mode.
+    /// </summary>
+    public void UseExistingInstall(ExistingInstallation existing, bool repair)
+    {
+        Repair = repair;
+        InstallPath = existing.InstallPath;
+        Mode = existing.Mode == RfqInstaller.Core.Models.InstallMode.WindowsService
+            ? InstallMode.WindowsService
+            : InstallMode.Standalone;
+        ExistingVersion = existing.InstalledVersion;
+        ExistingServiceAccountName = existing.ServiceAccountName;
+    }
 }

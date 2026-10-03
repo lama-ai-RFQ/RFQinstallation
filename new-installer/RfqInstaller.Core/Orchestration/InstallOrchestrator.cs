@@ -73,7 +73,7 @@ public class InstallOrchestrator
                 plan.UpdateChannel,
                 cancellationToken).ConfigureAwait(false);
 
-            var downloadCacheDir = Path.Combine(Path.GetTempPath(), "RfqInstallerDownloads");
+            var downloadCacheDir = DownloadCacheDir;
             if (plan.CleanReinstall && Directory.Exists(downloadCacheDir))
             {
                 Directory.Delete(downloadCacheDir, recursive: true);
@@ -179,13 +179,7 @@ public class InstallOrchestrator
                 Directory.Delete(downloadCacheDir, recursive: true);
             }
 
-            if (_bundledUninstallerPath is not null && File.Exists(_bundledUninstallerPath))
-            {
-                File.Copy(_bundledUninstallerPath, Path.Combine(plan.InstallPath, "RfqInstaller.Uninstall.exe"), overwrite: true);
-                var versionFile = Path.Combine(plan.InstallPath, "version.txt");
-                var version = File.Exists(versionFile) ? File.ReadAllText(versionFile).Trim() : "1.0.0";
-                UninstallRegistration.Register(plan.InstallPath, version);
-            }
+            InstallUninstaller(plan.InstallPath);
 
             progress.Report(new InstallStepProgress("Finishing up", 1.0, null));
             return new InstallResult(true, null, mainExePath);
@@ -198,6 +192,147 @@ public class InstallOrchestrator
         {
             return new InstallResult(false, FormatFailure(ex), null, ex);
         }
+    }
+
+    /// <summary>
+    /// Re-downloads the application and updater into an existing install, then brings its database
+    /// and services back up. .env, Credential Manager entries, the encryption key and the database
+    /// are kept exactly as they are. Every check that can stop a repair runs before anything on
+    /// disk changes.
+    /// </summary>
+    public async Task<InstallResult> RepairAsync(RepairPlan plan, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
+    {
+        try
+        {
+            progress.Report(new InstallStepProgress("Checking the existing installation", 0.0, null));
+            var readiness = RepairPreflight.Check(plan.InstallPath, plan.RepairDatabase);
+            if (!readiness.CanRepair)
+            {
+                return new InstallResult(false, string.Join(Environment.NewLine + Environment.NewLine, readiness.Problems), null);
+            }
+
+            var nssm = new NssmServiceManager(File.Exists(_bundledNssmPath) ? _bundledNssmPath : "nssm.exe");
+            if (plan.Mode == InstallMode.WindowsService)
+            {
+                foreach (var serviceName in new[] { AppServiceName, UpdaterServiceName })
+                {
+                    if (!await nssm.ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))
+                    {
+                        return new InstallResult(
+                            false,
+                            $"The {serviceName} Windows service is missing. Repair can't recreate it without the service account's " +
+                            "Windows password. Run Setup and choose Install instead; your database is kept either way.",
+                            null);
+                    }
+                }
+            }
+
+            using var ownedBrokerClient = _brokerClient is null
+                ? new LicenseBrokerClient(baseUrl: readiness.BrokerUrl)
+                : null;
+            var brokerClient = _brokerClient ?? ownedBrokerClient!;
+
+            progress.Report(new InstallStepProgress("Validating license key", 0.05, null));
+            var release = await brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
+                readiness.LicenseKey!,
+                readiness.UpdateChannel,
+                cancellationToken).ConfigureAwait(false);
+
+            // A repair shouldn't reuse whatever an earlier run left in the download cache.
+            var downloadCacheDir = DownloadCacheDir;
+            if (Directory.Exists(downloadCacheDir))
+            {
+                Directory.Delete(downloadCacheDir, recursive: true);
+            }
+            Directory.CreateDirectory(downloadCacheDir);
+
+            progress.Report(new InstallStepProgress("Downloading application components", 0.1, null));
+            await DownloadAndExtractComponentsAsync(release, downloadCacheDir, plan.InstallPath, progress, cancellationToken)
+                .ConfigureAwait(false);
+
+            // Installs from the legacy installer use a system-wide Postgres instead of pgdata. Repair
+            // leaves that database alone; only the private, installer-owned instance (stopped above
+            // so its files could be replaced) is started again.
+            if (readiness.HasBundledDatabase)
+            {
+                progress.Report(new InstallStepProgress("Starting database", 0.45, null));
+                var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Starting database", 0.45, msg)));
+                var postgresBinaries = await ResolvePostgresBinariesAsync(brokerClient, plan.InstallPath, cancellationToken)
+                    .ConfigureAwait(false);
+                var instance = await new PostgresProvisioner(_downloader).StartExistingAsync(
+                        plan.InstallPath,
+                        pgProgress,
+                        cancellationToken,
+                        postgresBinaries)
+                    .ConfigureAwait(false);
+
+                if (plan.RepairDatabase)
+                {
+                    progress.Report(new InstallStepProgress("Checking database", 0.55, null));
+                    // Same rfq_user password as before, so .env/Credential Manager stay valid; this
+                    // only re-applies the database, role and grants if any of them went missing.
+                    await DatabaseSetup.EnsureDatabaseAndUserAsync(
+                            instance.Port,
+                            readiness.SuperUserPassword!,
+                            readiness.AppUserPassword!,
+                            pgProgress,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            progress.Report(new InstallStepProgress("Restoring license configuration", 0.65, null));
+            var license = readiness.License!;
+            UserConfigWriter.WriteLicense(
+                plan.InstallPath,
+                readiness.LicenseKey!,
+                license.CustomerId,
+                license.Features,
+                license.Limits);
+
+            progress.Report(new InstallStepProgress("Checking security certificate", 0.7, null));
+            SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath);
+
+            if (plan.Mode == InstallMode.WindowsService)
+            {
+                progress.Report(new InstallStepProgress("Restarting Windows services", 0.8, null));
+                await nssm.StartAsync(AppServiceName, cancellationToken).ConfigureAwait(false);
+                await nssm.StartAsync(UpdaterServiceName, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (plan.CleanupAfterInstall && Directory.Exists(downloadCacheDir))
+            {
+                Directory.Delete(downloadCacheDir, recursive: true);
+            }
+
+            InstallUninstaller(plan.InstallPath);
+
+            progress.Report(new InstallStepProgress("Finishing up", 1.0, null));
+            return new InstallResult(true, null, Path.Combine(plan.InstallPath, "RFQ_Application.exe"));
+        }
+        catch (OperationCanceledException)
+        {
+            return new InstallResult(false, "Repair was cancelled.", null);
+        }
+        catch (Exception ex)
+        {
+            return new InstallResult(false, FormatFailure(ex), null, ex);
+        }
+    }
+
+    private static string DownloadCacheDir => Path.Combine(Path.GetTempPath(), "RfqInstallerDownloads");
+
+    private void InstallUninstaller(string installPath)
+    {
+        if (_bundledUninstallerPath is null || !File.Exists(_bundledUninstallerPath))
+        {
+            return;
+        }
+
+        File.Copy(_bundledUninstallerPath, Path.Combine(installPath, "RfqInstaller.Uninstall.exe"), overwrite: true);
+        var versionFile = Path.Combine(installPath, "version.txt");
+        var version = File.Exists(versionFile) ? File.ReadAllText(versionFile).Trim() : "1.0.0";
+        UninstallRegistration.Register(installPath, version);
     }
 
     private static string FormatFailure(Exception exception)

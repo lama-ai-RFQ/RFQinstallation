@@ -12,7 +12,7 @@
                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
-            <TextBlock Text="Setup completed successfully" Style="{StaticResource PageTitleStyle}"/>
+            <TextBlock x:Name="TitleText" Text="Setup completed successfully" Style="{StaticResource PageTitleStyle}"/>
         </StackPanel>
         <TextBlock x:Name="SummaryText" Style="{StaticResource PageSubtitleStyle}"/>
 

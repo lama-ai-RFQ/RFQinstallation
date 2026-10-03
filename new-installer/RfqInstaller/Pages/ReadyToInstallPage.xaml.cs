@@ -66,7 +66,7 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
         }
     }
 
-    private static string MaskLicenseKey(string key)
+    internal static string MaskLicenseKey(string key)
     {
         if (key.Length <= 4)
         {

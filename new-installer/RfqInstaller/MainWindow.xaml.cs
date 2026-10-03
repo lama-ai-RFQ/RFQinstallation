@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using RfqInstaller.Core.Elevation;
+using RfqInstaller.Core.Orchestration;
 using RfqInstaller.Debug;
 using RfqInstaller.Dialogs;
 using RfqInstaller.Logging;
@@ -28,7 +29,16 @@ public partial class MainWindow : Window
         "Finish"
     };
 
+    private static readonly string[] RepairRailTitles =
+    {
+        "Welcome",
+        "Ready to Repair",
+        "Repairing",
+        "Finish"
+    };
+
     private readonly WizardState _state = new();
+    private readonly ExistingInstallation? _existingInstall;
     private WizardStep _current = WizardStep.Welcome;
     private bool _fatalReported;
     private bool _forceClose;
@@ -43,6 +53,9 @@ public partial class MainWindow : Window
             DebugBadge.Visibility = Visibility.Visible;
         }
 
+        // Detected in the elevated relaunch too, so going Back to Welcome still offers Repair.
+        _existingInstall = DetectExistingInstall();
+
         if (TryLoadResumeState(out var resumed, out var resumeStep, out var readySignalPath))
         {
             _state = resumed!;
@@ -52,7 +65,26 @@ public partial class MainWindow : Window
         }
         else
         {
+            if (_existingInstall is not null)
+            {
+                _state.UseExistingInstall(_existingInstall, repair: true);
+            }
+
             GoTo(WizardStep.Welcome);
+        }
+    }
+
+    private static ExistingInstallation? DetectExistingInstall()
+    {
+        try
+        {
+            return ExistingInstallDetector.Detect();
+        }
+        catch (Exception ex)
+        {
+            // Detection only decides whether Repair is offered; a fresh install still works without it.
+            InstallerLog.Write("detecting an existing installation", ex);
+            return null;
         }
     }
 
@@ -155,7 +187,9 @@ public partial class MainWindow : Window
         if (!AppDialog.Confirm(
                 this,
                 "Exit setup?",
-                "Setup is not complete. If you exit now, RFQ Application will not be installed.",
+                _state.Repair
+                    ? "Repair is not complete. If you exit now, RFQ Application will not be repaired."
+                    : "Setup is not complete. If you exit now, RFQ Application will not be installed.",
                 confirmText: "Exit",
                 dismissText: "Cancel"))
         {
@@ -204,7 +238,20 @@ public partial class MainWindow : Window
             //  - Standalone only needs it if the install path itself turns out to be privileged
             //    (e.g. Program Files), which isn't known until InstallLocation is chosen.
             // Both reuse the same check/relaunch logic; it's a no-op once already elevated.
-            if (_current == WizardStep.InstallMode && _state.Mode == InstallMode.WindowsService)
+            if (_current == WizardStep.Welcome && _state.Repair)
+            {
+                // Repair always stops and restarts services (at least the bundled PostgreSQL), so it
+                // always needs admin, whatever the run mode or folder.
+                switch (HandleElevationIfNeeded(WizardStep.ReadyToInstall))
+                {
+                    case ElevationOutcome.RelaunchedElevated:
+                        ForceClose();
+                        return;
+                    case ElevationOutcome.Declined:
+                        return;
+                }
+            }
+            else if (_current == WizardStep.InstallMode && _state.Mode == InstallMode.WindowsService)
             {
                 switch (HandleElevationIfNeeded(WizardStep.InstallLocation))
                 {
@@ -254,9 +301,9 @@ public partial class MainWindow : Window
     /// </summary>
     private ElevationOutcome HandleElevationIfNeeded(WizardStep resumeStep)
     {
-        if (ElevationHelper.IsElevated() || !ElevationHelper.RequiresElevation(
+        if (ElevationHelper.IsElevated() || (!_state.Repair && !ElevationHelper.RequiresElevation(
                 _state.Mode == InstallMode.WindowsService ? Core.Models.InstallMode.WindowsService : Core.Models.InstallMode.Standalone,
-                _state.InstallPath))
+                _state.InstallPath)))
         {
             return ElevationOutcome.NotNeeded;
         }
@@ -269,7 +316,9 @@ public partial class MainWindow : Window
         if (!AppDialog.Confirm(
             this,
             "Administrator approval needed",
-            "Registering a Windows service (or installing into a system folder) requires administrator approval for this installer, regardless of which account the service will run as. Windows will ask you to approve this now.",
+            _state.Repair
+                ? "Repairing RFQ Application stops and restarts its services and replaces files in its install folder, which requires administrator approval. Windows will ask you to approve this now."
+                : "Registering a Windows service (or installing into a system folder) requires administrator approval for this installer, regardless of which account the service will run as. Windows will ask you to approve this now.",
             confirmText: "Continue",
             dismissText: "Cancel"))
         {
@@ -301,7 +350,9 @@ public partial class MainWindow : Window
             TryDeleteQuietly(handoffPath);
             TryDeleteQuietly(readyPath);
             AppDialog.Inform(this, "Administrator approval required",
-                "Administrator approval wasn't given, so this can't continue as a Windows service (or into that folder) right now. Click Next to try again, or choose \"Run as a standalone application\" instead.");
+                _state.Repair
+                    ? "Administrator approval wasn't given, so RFQ Application can't be repaired right now. Click Get Started to try again."
+                    : "Administrator approval wasn't given, so this can't continue as a Windows service (or into that folder) right now. Click Next to try again, or choose \"Run as a standalone application\" instead.");
             return ElevationOutcome.Declined;
         }
 
@@ -390,7 +441,7 @@ public partial class MainWindow : Window
 
     private WizardStep NextStep(WizardStep current) => current switch
     {
-        WizardStep.Welcome => WizardStep.License,
+        WizardStep.Welcome => _state.Repair ? WizardStep.ReadyToInstall : WizardStep.License,
         WizardStep.License => WizardStep.InstallMode,
         WizardStep.InstallMode => WizardStep.InstallLocation,
         WizardStep.InstallLocation => _state.Mode == InstallMode.Standalone
@@ -420,9 +471,11 @@ public partial class MainWindow : Window
             : WizardStep.InstallLocation,
         WizardStep.Advanced => WizardStep.SettingsPassword,
         WizardStep.ServiceAccountConfirm => WizardStep.Advanced,
-        WizardStep.ReadyToInstall => NeedsServiceAccountConfirm()
-            ? WizardStep.ServiceAccountConfirm
-            : WizardStep.Advanced,
+        WizardStep.ReadyToInstall => _state.Repair
+            ? WizardStep.Welcome
+            : NeedsServiceAccountConfirm()
+                ? WizardStep.ServiceAccountConfirm
+                : WizardStep.Advanced,
         _ => WizardStep.Welcome
     };
 
@@ -450,7 +503,7 @@ public partial class MainWindow : Window
 
     private object CreatePage(WizardStep step) => step switch
     {
-        WizardStep.Welcome => new WelcomePage(),
+        WizardStep.Welcome => new WelcomePage(_state, _existingInstall, () => UpdateRail(WizardStep.Welcome)),
         WizardStep.License => new LicenseKeyPage(_state),
         WizardStep.InstallMode => new InstallModePage(_state),
         WizardStep.InstallLocation => new InstallLocationPage(_state),
@@ -458,7 +511,7 @@ public partial class MainWindow : Window
         WizardStep.SettingsPassword => new SettingsPasswordPage(_state),
         WizardStep.Advanced => new AdvancedOptionsPage(_state),
         WizardStep.ServiceAccountConfirm => new ServiceAccountConfirmPage(_state, GoTo),
-        WizardStep.ReadyToInstall => new ReadyToInstallPage(_state),
+        WizardStep.ReadyToInstall => _state.Repair ? new ReadyToRepairPage(_state) : new ReadyToInstallPage(_state),
         WizardStep.Installing => new InstallingPage(_state, () => GoTo(WizardStep.Finish), GoTo),
         WizardStep.Finish => new FinishPage(_state),
         WizardStep.Failed => new SetupFailedPage(_state),
@@ -480,7 +533,7 @@ public partial class MainWindow : Window
         _fatalReported = true;
 
         _state.FatalErrorHeading = _current == WizardStep.Installing
-            ? "Installation failed"
+            ? _state.Repair ? "Repair failed" : "Installation failed"
             : "Setup couldn't continue";
         _state.FatalErrorContext = context;
         _state.FatalErrorDetail = InstallerLog.FormatUserDetail(exception);
@@ -544,7 +597,7 @@ public partial class MainWindow : Window
                 BackButton.Visibility = Visibility.Visible;
                 CancelButton.Visibility = Visibility.Visible;
                 NextButton.Visibility = Visibility.Visible;
-                NextButton.Content = "Install";
+                NextButton.Content = _state.Repair ? "Repair" : "Install";
                 break;
             case WizardStep.Installing:
                 BackButton.Visibility = Visibility.Collapsed;
@@ -578,7 +631,19 @@ public partial class MainWindow : Window
             : Visibility.Collapsed;
     }
 
-    private static int RailIndexFor(WizardStep step) => step switch
+    private int RailIndexFor(WizardStep step) => _state.Repair ? RepairRailIndexFor(step) : InstallRailIndexFor(step);
+
+    private static int RepairRailIndexFor(WizardStep step) => step switch
+    {
+        WizardStep.Welcome => 0,
+        WizardStep.ReadyToInstall => 1,
+        WizardStep.Installing => 2,
+        WizardStep.Failed => 2,
+        WizardStep.Finish => 3,
+        _ => 0
+    };
+
+    private static int InstallRailIndexFor(WizardStep step) => step switch
     {
         WizardStep.Welcome => 0,
         WizardStep.License => 1,
@@ -598,13 +663,14 @@ public partial class MainWindow : Window
     private void UpdateRail(WizardStep step)
     {
         var activeIndex = RailIndexFor(step);
+        var titles = _state.Repair ? RepairRailTitles : RailTitles;
         var items = new List<RailStep>();
 
-        for (var i = 0; i < RailTitles.Length; i++)
+        for (var i = 0; i < titles.Length; i++)
         {
             items.Add(new RailStep
             {
-                Title = RailTitles[i],
+                Title = titles[i],
                 Index = i + 1,
                 IsActive = i == activeIndex,
                 IsCompleted = i < activeIndex

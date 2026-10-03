@@ -32,6 +32,13 @@ public partial class InstallingPage : UserControl
         _state = state;
         _onSuccess = onSuccess;
         _onNavigateTo = onNavigateTo;
+
+        if (_state.Repair)
+        {
+            ProgressTitle.Text = "Repairing RFQ Application";
+            ProgressSubtitle.Text = "Please wait while setup replaces the application files and starts RFQ Application again. Your database and settings are kept. This may take a few minutes.";
+            ErrorTitle.Text = "Repair failed";
+        }
     }
 
     private async void InstallingPage_Loaded(object sender, RoutedEventArgs e)
@@ -56,7 +63,6 @@ public partial class InstallingPage : UserControl
 
         _cts = new CancellationTokenSource();
 
-        var plan = BuildInstallPlan();
         var orchestrator = new InstallOrchestrator(
             BundledTools.ExtractNssm(),
             interaction: new WpfInstallInteraction());
@@ -80,7 +86,9 @@ public partial class InstallingPage : UserControl
         InstallResult result;
         try
         {
-            result = await orchestrator.RunAsync(plan, progress, _cts.Token);
+            result = _state.Repair
+                ? await orchestrator.RepairAsync(BuildRepairPlan(), progress, _cts.Token)
+                : await orchestrator.RunAsync(BuildInstallPlan(), progress, _cts.Token);
         }
         catch (Exception ex)
         {
@@ -123,6 +131,14 @@ public partial class InstallingPage : UserControl
         });
     }
 
+    private RepairPlan BuildRepairPlan() => new()
+    {
+        InstallPath = _state.InstallPath,
+        Mode = _state.Mode == Models.InstallMode.WindowsService ? CoreInstallMode.WindowsService : CoreInstallMode.Standalone,
+        RepairDatabase = _state.RepairDatabase,
+        CleanupAfterInstall = _state.CleanupAfterInstall,
+    };
+
     private InstallPlan BuildInstallPlan() => new()
     {
         LicenseKey = _state.LicenseKey,
@@ -156,6 +172,14 @@ public partial class InstallingPage : UserControl
 
     private async void RetryButton_Click(object sender, RoutedEventArgs e)
     {
+        // Repair reads the license from .env and reports a bad one as its failure message;
+        // there is no license page in the repair flow to send the admin back to.
+        if (_state.Repair)
+        {
+            await RunInstallAsync();
+            return;
+        }
+
         var licenseCheck = LocalLicenseValidator.Validate(_state.LicenseKey);
         if (!licenseCheck.SignatureValid || licenseCheck.Expired)
         {

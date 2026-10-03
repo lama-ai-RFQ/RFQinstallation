@@ -12,9 +12,19 @@ public partial class FinishPage : UserControl
         InitializeComponent();
         _state = state;
 
-        SummaryText.Text = state.Mode == InstallMode.WindowsService
-            ? "RFQ Application has been installed and is running as a Windows service."
-            : "RFQ Application has been installed and is ready to use.";
+        if (state.Repair)
+        {
+            TitleText.Text = "Repair completed successfully";
+            SummaryText.Text = state.Mode == InstallMode.WindowsService
+                ? "RFQ Application has been repaired and is running as a Windows service again."
+                : "RFQ Application has been repaired and is ready to use.";
+        }
+        else
+        {
+            SummaryText.Text = state.Mode == InstallMode.WindowsService
+                ? "RFQ Application has been installed and is running as a Windows service."
+                : "RFQ Application has been installed and is ready to use.";
+        }
 
         LaunchCheckBox.Content = state.Mode == InstallMode.WindowsService
             ? "Open RFQ Application in my browser"

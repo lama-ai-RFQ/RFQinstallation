@@ -35,7 +35,9 @@ public class InstallPlan
     public required string SettingsPassword { get; init; }
 
     public string ServerUrl { get; init; } = "https://localhost";
-    public string BrokerUrl { get; init; } =
+    public string BrokerUrl { get; init; } = DefaultBrokerUrl;
+
+    public static string DefaultBrokerUrl =>
         Environment.GetEnvironmentVariable("RFQ_LICENSE_BROKER_URL")?.Trim()
         is { Length: > 0 } configured
             ? configured

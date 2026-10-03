@@ -81,6 +81,13 @@ public class NssmServiceManager
         return result.ExitCode == 0;
     }
 
+    /// <summary>Starts an already-registered service. Ignores the exit code: "already running" is not an error here.</summary>
+    public async Task StartAsync(string serviceName, CancellationToken cancellationToken)
+    {
+        await HiddenProcessRunner.RunAsync("sc.exe", new[] { "start", serviceName }, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task StopIfExistsAsync(string serviceName, CancellationToken cancellationToken)
     {
         if (!await ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))

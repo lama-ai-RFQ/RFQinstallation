@@ -10,11 +10,42 @@
             <Image Source="/Assets/scint.png" Stretch="Uniform" Margin="12"/>
         </Border>
         <TextBlock Text="Welcome to RFQ Application Setup" Style="{StaticResource PageTitleStyle}"/>
-        <TextBlock Style="{StaticResource PageSubtitleStyle}">
-            This wizard will guide you through installing RFQ Application on this computer.
-            You'll activate your license, choose how the application should run, and pick an
-            install location before we get everything set up.
-        </TextBlock>
-        <TextBlock Text="Click Get Started to begin." Style="{StaticResource PageSubtitleStyle}" Margin="0,24,0,0"/>
+
+        <StackPanel x:Name="FreshInstallPanel">
+            <TextBlock Style="{StaticResource PageSubtitleStyle}">
+                This wizard will guide you through installing RFQ Application on this computer.
+                You'll activate your license, choose how the application should run, and pick an
+                install location before we get everything set up.
+            </TextBlock>
+            <TextBlock Text="Click Get Started to begin." Style="{StaticResource PageSubtitleStyle}" Margin="0,24,0,0"/>
+        </StackPanel>
+
+        <StackPanel x:Name="ExistingInstallPanel" Visibility="Collapsed">
+            <TextBlock x:Name="ExistingInstallText" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap"/>
+
+            <StackPanel Margin="0,24,0,0">
+                <RadioButton x:Name="RepairRadio" GroupName="SetupKind"
+                             Style="{StaticResource OptionCardRadioStyle}"
+                             Checked="RepairRadio_Checked">
+                    <StackPanel>
+                        <TextBlock Text="Repair (recommended)" FontWeight="SemiBold" FontSize="15"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
+                                   Text="Downloads the application and updater again and restarts RFQ Application. Your database, .env settings, stored passwords and encryption key are kept as they are."/>
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton x:Name="InstallRadio" GroupName="SetupKind"
+                             Style="{StaticResource OptionCardRadioStyle}"
+                             Checked="InstallRadio_Checked">
+                    <StackPanel>
+                        <TextBlock Text="Install with new settings" FontWeight="SemiBold" FontSize="15"
+                                   Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
+                                   Text="Goes through every setup step again, including the license key, run mode and a new Settings password. The existing database is still kept."/>
+                    </StackPanel>
+                </RadioButton>
+            </StackPanel>
+        </StackPanel>
     </StackPanel>
 </UserControl>
