@@ -34,7 +34,7 @@ public partial class ReadyToRepairPage : UserControl, IWizardPage
             ? string.IsNullOrWhiteSpace(state.ExistingServiceAccountName)
                 ? "Windows Service"
                 : $"Windows Service (runs as {state.ExistingServiceAccountName})"
-            : "Desktop app (.exe)";
+            : "Runs only while it is open";
         LicenseKeySummary.Text = _readiness.LicenseKey is null
             ? "Not found"
             : ReadyToInstallPage.MaskLicenseKey(_readiness.LicenseKey);

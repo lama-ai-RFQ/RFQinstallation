@@ -26,9 +26,11 @@ public partial class FinishPage : UserControl
                 : "RFQ Application has been installed and is ready to use.";
         }
 
-        LaunchCheckBox.Content = state.Mode == InstallMode.WindowsService
-            ? "Open RFQ Application in my browser"
-            : "Launch RFQ Application";
+        LaunchCheckBox.Content = state.DesktopAppPath is not null
+            ? "Open Scint"
+            : state.Mode == InstallMode.WindowsService
+                ? "Open RFQ Application in my browser"
+                : "Launch RFQ Application";
 
         LaunchCheckBox.IsChecked = _state.LaunchAfterFinish;
         LaunchCheckBox.Checked += (_, _) => _state.LaunchAfterFinish = true;

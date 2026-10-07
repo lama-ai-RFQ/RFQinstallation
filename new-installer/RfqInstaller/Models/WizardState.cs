@@ -112,6 +112,9 @@ public class WizardState
     /// <summary>Set by InstallingPage once the install finishes, so FinishPage knows the real executable path to launch.</summary>
     public string? ResolvedMainExecutablePath { get; set; }
 
+    /// <summary>Scint.exe when this install opens Scint in the desktop app (Individual and Team plans).</summary>
+    public string? DesktopAppPath { get; set; }
+
     /// <summary>Set by InstallingPage if the install failed, so FinishPage (or an error page) can show the real reason instead of always claiming success.</summary>
     public string? InstallErrorMessage { get; set; }
 
