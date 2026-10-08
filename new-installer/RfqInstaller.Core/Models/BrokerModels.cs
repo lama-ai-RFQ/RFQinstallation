@@ -12,6 +12,14 @@ public class LocalLicenseCheck
     public string Message { get; init; } = string.Empty;
     public Dictionary<string, bool> Features { get; init; } = new();
     public Dictionary<string, int> Limits { get; init; } = new();
+    /// <summary>Stripe subscription of a key bought on scint.ai ("s"); hand-issued Enterprise keys have none.</summary>
+    public string? SubscriptionId { get; init; }
+    /// <summary>Individual and Team plans: these installs open Scint in the desktop app.</summary>
+    public bool SelfServe => !string.IsNullOrEmpty(SubscriptionId);
+    /// <summary>Individual plan: a self-serve key for one user, so only this computer uses Scint.</summary>
+    public bool IndividualPlan => SelfServe && Limits.TryGetValue("max_users", out var users) && users == 1;
+    /// <summary>Team plan: one computer runs Scint and teammates open it in their browsers.</summary>
+    public bool TeamPlan => SelfServe && !IndividualPlan;
 }
 
 /// <summary>One downloadable piece of the release (matches local_manifest.json's per-component "files" entries, e.g. app-executable / core-dependencies / assets).</summary>

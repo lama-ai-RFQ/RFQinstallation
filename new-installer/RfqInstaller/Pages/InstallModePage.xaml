@@ -6,8 +6,8 @@
              mc:Ignorable="d" d:DesignWidth="600">
     <StackPanel MaxWidth="560" HorizontalAlignment="Left">
         <TextBlock Text="Choose how RFQ Application should run" Style="{StaticResource PageTitleStyle}"/>
-        <TextBlock Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap">
-            The Windows Service is the recommended way to run RFQ Application. The desktop app is a more basic option if you prefer to start it yourself.
+        <TextBlock x:Name="ModeSubtitle" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap">
+            Running in the background is recommended: RFQ Application is ready whenever someone opens it, including from other computers. Or run it only while it is open on this computer.
         </TextBlock>
 
         <StackPanel Margin="0,28,0,0">
@@ -15,10 +15,10 @@
                          Style="{StaticResource OptionCardRadioStyle}"
                          Checked="ServiceRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Windows Service — advanced (recommended)" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock x:Name="ServiceTitle" Text="Runs in the background (Windows service) — recommended" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
                     <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
-                               Text="Runs in the background and starts with Windows. Needs a Windows account password."/>
+                               Text="Starts with Windows and keeps running, so people on other computers can use it too. Needs a Windows account password."/>
                 </StackPanel>
             </RadioButton>
 
@@ -26,10 +26,10 @@
                          Style="{StaticResource OptionCardRadioStyle}"
                          Checked="StandaloneRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Desktop app (.exe) — basic" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock x:Name="StandaloneTitle" Text="Runs only while it is open" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
                     <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
-                               Text="Installs a program you open yourself, like other desktop software. No Windows service or extra account setup."/>
+                               Text="Starts when you open it on this computer and stops when you close it. No Windows service or extra account setup."/>
                 </StackPanel>
             </RadioButton>
         </StackPanel>

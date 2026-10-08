@@ -102,6 +102,7 @@ public partial class InstallingPage : UserControl
         if (result.Success)
         {
             _state.ResolvedMainExecutablePath = result.MainExecutablePath;
+            _state.DesktopAppPath = result.DesktopAppPath;
             _state.InstallErrorMessage = null;
             _onSuccess();
         }

@@ -124,9 +124,14 @@ public static class LocalLicenseValidator
             }
         }
 
+        var subscriptionId = payload.TryGetProperty("s", out var sEl) && sEl.ValueKind == JsonValueKind.String
+            ? sEl.GetString()
+            : null;
+
         return new LocalLicenseCheck
         {
             SignatureValid = true,
+            SubscriptionId = subscriptionId,
             Expired = expired,
             CustomerId = customerId,
             ExpirationDate = expiration,

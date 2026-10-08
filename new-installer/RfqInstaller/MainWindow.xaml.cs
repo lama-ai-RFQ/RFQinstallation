@@ -399,6 +399,12 @@ public partial class MainWindow : Window
     private void HandleFinish()
     {
         if (_current != WizardStep.Failed
+            && _state.LaunchAfterFinish && _state.DesktopAppPath is { } desktopApp && File.Exists(desktopApp))
+        {
+            // Individual and Team installs: the Scint app finds (or starts) the server itself.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(desktopApp) { UseShellExecute = true });
+        }
+        else if (_current != WizardStep.Failed
             && _state.LaunchAfterFinish && _state.Mode == InstallMode.Standalone && _state.ResolvedMainExecutablePath is { } exePath && File.Exists(exePath))
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exePath) { UseShellExecute = true });

@@ -52,6 +52,12 @@ public class WizardState
 
     public InstallMode Mode { get; set; } = InstallMode.WindowsService;
 
+    /// <summary>
+    /// True once the mode was picked on the Install Mode page or taken from an existing install;
+    /// until then that page picks the one recommended for the license key.
+    /// </summary>
+    public bool ModeChosen { get; set; }
+
     public string InstallPath { get; set; } = @"C:\Program Files\RFQ Application";
 
     public bool CreateDesktopShortcut { get; set; } = true;
@@ -71,7 +77,9 @@ public class WizardState
     [System.Text.Json.Serialization.JsonIgnore]
     public string SettingsPassword { get; set; } = string.Empty;
 
-    public string ServerUrl { get; set; } = "https://localhost";
+    public const string DefaultServerUrl = "https://localhost";
+
+    public string ServerUrl { get; set; } = DefaultServerUrl;
 
     public bool AutoGenerateEncryptionKey { get; set; } = true;
 
@@ -112,6 +120,9 @@ public class WizardState
     /// <summary>Set by InstallingPage once the install finishes, so FinishPage knows the real executable path to launch.</summary>
     public string? ResolvedMainExecutablePath { get; set; }
 
+    /// <summary>Scint.exe when this install opens Scint in the desktop app (Individual and Team plans).</summary>
+    public string? DesktopAppPath { get; set; }
+
     /// <summary>Set by InstallingPage if the install failed, so FinishPage (or an error page) can show the real reason instead of always claiming success.</summary>
     public string? InstallErrorMessage { get; set; }
 
@@ -134,6 +145,7 @@ public class WizardState
         Mode = existing.Mode == RfqInstaller.Core.Models.InstallMode.WindowsService
             ? InstallMode.WindowsService
             : InstallMode.Standalone;
+        ModeChosen = true;
         ExistingVersion = existing.InstalledVersion;
         ExistingServiceAccountName = existing.ServiceAccountName;
     }

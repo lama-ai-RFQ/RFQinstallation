@@ -2,6 +2,7 @@ using RfqInstaller.Core.Archive;
 using RfqInstaller.Core.Certificates;
 using RfqInstaller.Core.Config;
 using RfqInstaller.Core.Database;
+using RfqInstaller.Core.Desktop;
 using RfqInstaller.Core.Elevation;
 using RfqInstaller.Core.Licensing;
 using RfqInstaller.Core.Models;
@@ -20,7 +21,8 @@ public record InstallResult(
     bool Success,
     string? ErrorMessage,
     string? MainExecutablePath,
-    Exception? Cause = null);
+    Exception? Cause = null,
+    string? DesktopAppPath = null);
 
 /// <summary>
 /// Drives the real install sequence end to end — this is what replaces InstallingPage's fake
@@ -154,7 +156,7 @@ public class InstallOrchestrator
                 settingsPassword);
 
             progress.Report(new InstallStepProgress("Generating security certificate", 0.7, null));
-            SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath);
+            SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath, plan.ServerUrl);
 
             var mainExePath = Path.Combine(plan.InstallPath, "RFQ_Application.exe");
 
@@ -168,9 +170,10 @@ public class InstallOrchestrator
                 progress.Report(new InstallStepProgress("Finishing standalone install", 0.8, null));
             }
 
-            if (plan.Mode == InstallMode.Standalone && plan.CreateDesktopShortcut)
+            progress.Report(new InstallStepProgress("Setting up the Scint app", 0.9, null));
+            var desktopAppPath = DesktopAppSetup.Configure(plan.InstallPath, plan.Mode, plan.LicenseKey, plan.CreateDesktopShortcut);
+            if (desktopAppPath is null && plan.Mode == InstallMode.Standalone && plan.CreateDesktopShortcut)
             {
-                progress.Report(new InstallStepProgress("Creating desktop shortcut", 0.9, null));
                 CreateDesktopShortcut(mainExePath, plan.InstallPath);
             }
 
@@ -182,7 +185,7 @@ public class InstallOrchestrator
             InstallUninstaller(plan.InstallPath);
 
             progress.Report(new InstallStepProgress("Finishing up", 1.0, null));
-            return new InstallResult(true, null, mainExePath);
+            return new InstallResult(true, null, mainExePath, DesktopAppPath: desktopAppPath);
         }
         catch (OperationCanceledException)
         {
@@ -292,6 +295,10 @@ public class InstallOrchestrator
 
             progress.Report(new InstallStepProgress("Checking security certificate", 0.7, null));
             SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath);
+            // Repair re-downloads the app, which may now ship Scint.exe; keep the shortcut the install had.
+            var hadShortcut = File.Exists(DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.ShortcutName))
+                || File.Exists(DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.LegacyShortcutName));
+            var repairedDesktopApp = DesktopAppSetup.Configure(plan.InstallPath, plan.Mode, readiness.LicenseKey!, hadShortcut);
 
             if (plan.Mode == InstallMode.WindowsService)
             {
@@ -308,7 +315,8 @@ public class InstallOrchestrator
             InstallUninstaller(plan.InstallPath);
 
             progress.Report(new InstallStepProgress("Finishing up", 1.0, null));
-            return new InstallResult(true, null, Path.Combine(plan.InstallPath, "RFQ_Application.exe"));
+            return new InstallResult(
+                true, null, Path.Combine(plan.InstallPath, "RFQ_Application.exe"), DesktopAppPath: repairedDesktopApp);
         }
         catch (OperationCanceledException)
         {

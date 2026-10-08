@@ -13,8 +13,11 @@
                 Sensible defaults are already selected. Only change these if you know you need to.
             </TextBlock>
 
-            <TextBlock Text="Server URL (used for OAuth redirects)" Style="{StaticResource FieldLabelStyle}" Margin="0,28,0,6"/>
-            <TextBox x:Name="ServerUrlTextBox" Style="{StaticResource ModernTextBoxStyle}" TextChanged="ServerUrlTextBox_TextChanged"/>
+            <StackPanel x:Name="ServerUrlPanel">
+                <TextBlock x:Name="ServerUrlLabel" Text="Server URL (used for OAuth redirects)" Style="{StaticResource FieldLabelStyle}" Margin="0,28,0,6"/>
+                <TextBlock x:Name="ServerUrlHelp" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,0,0,8" Visibility="Collapsed"/>
+                <TextBox x:Name="ServerUrlTextBox" Style="{StaticResource ModernTextBoxStyle}" TextChanged="ServerUrlTextBox_TextChanged"/>
+            </StackPanel>
 
             <TextBlock Text="Azure config encryption key" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
             <TextBlock x:Name="EncryptionKeyHelp" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,0,0,8"/>

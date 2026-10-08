@@ -60,6 +60,7 @@ public class UninstallOrchestrator
         {
             File.Delete(shortcutPath);
         }
+        Desktop.DesktopAppSetup.Remove();
 
         progress.Report("Removing Add/Remove Programs entry...");
         UninstallRegistration.Unregister();
