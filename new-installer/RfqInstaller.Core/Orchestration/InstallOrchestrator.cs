@@ -156,7 +156,7 @@ public class InstallOrchestrator
                 settingsPassword);
 
             progress.Report(new InstallStepProgress("Generating security certificate", 0.7, null));
-            SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath);
+            SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath, plan.ServerUrl);
 
             var mainExePath = Path.Combine(plan.InstallPath, "RFQ_Application.exe");
 

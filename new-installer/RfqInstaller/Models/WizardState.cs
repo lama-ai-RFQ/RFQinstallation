@@ -52,6 +52,12 @@ public class WizardState
 
     public InstallMode Mode { get; set; } = InstallMode.WindowsService;
 
+    /// <summary>
+    /// True once the mode was picked on the Install Mode page or taken from an existing install;
+    /// until then that page picks the one recommended for the license key.
+    /// </summary>
+    public bool ModeChosen { get; set; }
+
     public string InstallPath { get; set; } = @"C:\Program Files\RFQ Application";
 
     public bool CreateDesktopShortcut { get; set; } = true;
@@ -71,7 +77,9 @@ public class WizardState
     [System.Text.Json.Serialization.JsonIgnore]
     public string SettingsPassword { get; set; } = string.Empty;
 
-    public string ServerUrl { get; set; } = "https://localhost";
+    public const string DefaultServerUrl = "https://localhost";
+
+    public string ServerUrl { get; set; } = DefaultServerUrl;
 
     public bool AutoGenerateEncryptionKey { get; set; } = true;
 
@@ -137,6 +145,7 @@ public class WizardState
         Mode = existing.Mode == RfqInstaller.Core.Models.InstallMode.WindowsService
             ? InstallMode.WindowsService
             : InstallMode.Standalone;
+        ModeChosen = true;
         ExistingVersion = existing.InstalledVersion;
         ExistingServiceAccountName = existing.ServiceAccountName;
     }

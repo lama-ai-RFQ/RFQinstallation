@@ -11,7 +11,7 @@ namespace RfqInstaller.Core.Certificates;
 /// </summary>
 public static class SelfSignedCertGenerator
 {
-    public static void GenerateIfMissing(string installPath)
+    public static void GenerateIfMissing(string installPath, string? serverUrl = null)
     {
         var certPath = Path.Combine(installPath, "cert.pem");
         var keyPath = Path.Combine(installPath, "key.pem");
@@ -35,8 +35,16 @@ public static class SelfSignedCertGenerator
             new X509EnhancedKeyUsageExtension(new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") }, critical: false)); // serverAuth
 
         var sanBuilder = new SubjectAlternativeNameBuilder();
-        sanBuilder.AddDnsName("localhost");
+        foreach (var name in HostNames(serverUrl))
+        {
+            sanBuilder.AddDnsName(name);
+        }
         sanBuilder.AddIpAddress(System.Net.IPAddress.Loopback);
+        if (ServerUrlHost(serverUrl) is { } host && System.Net.IPAddress.TryParse(host, out var address)
+            && !System.Net.IPAddress.IsLoopback(address))
+        {
+            sanBuilder.AddIpAddress(address);
+        }
         request.CertificateExtensions.Add(sanBuilder.Build());
 
         using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
@@ -48,6 +56,37 @@ public static class SelfSignedCertGenerator
         File.WriteAllText(certPath, certPem);
         File.WriteAllText(keyPath, keyPem);
     }
+
+    /// <summary>
+    /// localhost, this computer's name (with its domain when joined to one) and the server URL's
+    /// host, so browsers on other computers that open the server by name accept the certificate
+    /// once it is trusted (Team plan teammates, Enterprise users).
+    /// </summary>
+    public static IReadOnlyList<string> HostNames(string? serverUrl)
+    {
+        var names = new List<string> { "localhost" };
+        void Add(string? name)
+        {
+            if (!string.IsNullOrWhiteSpace(name) && Uri.CheckHostName(name) == UriHostNameType.Dns
+                && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                names.Add(name.ToLowerInvariant());
+            }
+        }
+
+        var machine = System.Net.Dns.GetHostName();
+        Add(machine);
+        var domain = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().DomainName;
+        if (!string.IsNullOrWhiteSpace(domain))
+        {
+            Add($"{machine}.{domain}");
+        }
+        Add(ServerUrlHost(serverUrl));
+        return names;
+    }
+
+    private static string? ServerUrlHost(string? serverUrl) =>
+        Uri.TryCreate(serverUrl, UriKind.Absolute, out var uri) ? uri.Host : null;
 
     private static string PemEncode(string label, byte[] der)
     {

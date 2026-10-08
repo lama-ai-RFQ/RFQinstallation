@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using RfqInstaller.Core.Config;
 using RfqInstaller.Core.Database;
+using RfqInstaller.Core.Licensing;
 using RfqInstaller.Dialogs;
 using RfqInstaller.Models;
 
@@ -29,6 +30,7 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         _existingEncryptionKey = EncryptionKeyResolver.ResolveFromInstallPath(_state.InstallPath);
         _existingPostgresCluster = PostgresProvisioner.IsAlreadyInitialized(_state.InstallPath);
 
+        ApplyServerUrlForPlan();
         ServerUrlTextBox.Text = _state.ServerUrl;
 
         ApplyEncryptionKeyUi();
@@ -68,6 +70,32 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
         UpdateCredentialManagerAvailability();
         UpdateHelpText();
+    }
+
+    /// <summary>
+    /// Individual: only this computer opens Scint, so the address is always localhost and the field
+    /// is hidden. Team: teammates open Scint in their browsers at this computer's name, which sign-in
+    /// also redirects to. Enterprise: unchanged.
+    /// </summary>
+    private void ApplyServerUrlForPlan()
+    {
+        var license = LocalLicenseValidator.Validate(_state.LicenseKey);
+        if (license.IndividualPlan)
+        {
+            _state.ServerUrl = WizardState.DefaultServerUrl;
+            ServerUrlPanel.Visibility = Visibility.Collapsed;
+        }
+        else if (license.TeamPlan)
+        {
+            if (string.Equals(_state.ServerUrl.TrimEnd('/'), WizardState.DefaultServerUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                _state.ServerUrl = $"https://{System.Net.Dns.GetHostName().ToLowerInvariant()}";
+            }
+            ServerUrlLabel.Text = "Address teammates open in their browser";
+            ServerUrlHelp.Text = "Teammates on other computers open Scint at this address and sign in with their own "
+                + "accounts. It is this computer's name; change it only if your network uses a different one.";
+            ServerUrlHelp.Visibility = Visibility.Visible;
+        }
     }
 
     private void ServerUrlTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.ServerUrl = ServerUrlTextBox.Text;

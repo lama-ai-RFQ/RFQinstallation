@@ -15,6 +15,8 @@
             <TextBlock x:Name="TitleText" Text="Setup completed successfully" Style="{StaticResource PageTitleStyle}"/>
         </StackPanel>
         <TextBlock x:Name="SummaryText" Style="{StaticResource PageSubtitleStyle}"/>
+        <TextBlock x:Name="TeammatesText" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap"
+                   Margin="0,12,0,0" Visibility="Collapsed"/>
 
         <TextBlock Text="Use the Settings page password you created earlier during setup to access Settings within the application."
                    Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,16,0,0"/>

@@ -6,7 +6,7 @@
              mc:Ignorable="d" d:DesignWidth="600">
     <StackPanel MaxWidth="560" HorizontalAlignment="Left">
         <TextBlock Text="Choose how RFQ Application should run" Style="{StaticResource PageTitleStyle}"/>
-        <TextBlock Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap">
+        <TextBlock x:Name="ModeSubtitle" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap">
             Running in the background is recommended: RFQ Application is ready whenever someone opens it, including from other computers. Or run it only while it is open on this computer.
         </TextBlock>
 
@@ -15,7 +15,7 @@
                          Style="{StaticResource OptionCardRadioStyle}"
                          Checked="ServiceRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Runs in the background (Windows service) — recommended" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock x:Name="ServiceTitle" Text="Runs in the background (Windows service) — recommended" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
                     <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
                                Text="Starts with Windows and keeps running, so people on other computers can use it too. Needs a Windows account password."/>
@@ -26,7 +26,7 @@
                          Style="{StaticResource OptionCardRadioStyle}"
                          Checked="StandaloneRadio_Checked">
                 <StackPanel>
-                    <TextBlock Text="Runs only while it is open" FontWeight="SemiBold" FontSize="15"
+                    <TextBlock x:Name="StandaloneTitle" Text="Runs only while it is open" FontWeight="SemiBold" FontSize="15"
                                Foreground="{StaticResource TextPrimaryBrush}"/>
                     <TextBlock TextWrapping="Wrap" Style="{StaticResource PageSubtitleStyle}" Margin="0,4,0,0"
                                Text="Starts when you open it on this computer and stops when you close it. No Windows service or extra account setup."/>
