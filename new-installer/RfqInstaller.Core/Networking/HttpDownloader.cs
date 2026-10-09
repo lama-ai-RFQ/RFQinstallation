@@ -12,10 +12,16 @@ public record DownloadProgress(long BytesReceived, long? TotalBytes, string File
 public class HttpDownloader
 {
     private readonly HttpClient _http;
+    private readonly TimeSpan _readTimeout;
 
-    public HttpDownloader(HttpClient? httpClient = null)
+    public HttpDownloader(HttpClient? httpClient = null, TimeSpan? readTimeout = null)
     {
         _http = httpClient ?? new HttpClient();
+        _readTimeout = readTimeout ?? TimeSpan.FromMinutes(2);
+        if (_readTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(readTimeout), "The read timeout must be positive.");
+        }
     }
 
     /// <summary>
@@ -32,6 +38,11 @@ public class HttpDownloader
         int maxAttempts = 3,
         string? expectedSha256 = null)
     {
+        if (maxAttempts is < 1 or > 8)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxAttempts), "maxAttempts must be between 1 and 8.");
+        }
+        cancellationToken.ThrowIfCancellationRequested();
         var fileName = Path.GetFileName(destinationPath);
         if (expectedSha256 is not null &&
             (expectedSha256.Length != 64 || expectedSha256.Any(character => !Uri.IsHexDigit(character))))
@@ -48,10 +59,9 @@ public class HttpDownloader
                 progress?.Report(new DownloadProgress(expectedSizeBytes.Value, expectedSizeBytes, fileName));
                 return;
             }
-            TryDelete(destinationPath);
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(destinationPath))!);
 
         Exception? lastError = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
@@ -69,18 +79,21 @@ public class HttpDownloader
                     cancellationToken).ConfigureAwait(false);
                 return;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
             {
                 lastError = ex;
-                if (File.Exists(destinationPath))
-                {
-                    TryDelete(destinationPath);
-                }
-                TryDelete(destinationPath + ".part");
                 if (attempt < maxAttempts)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(2 * attempt), cancellationToken).ConfigureAwait(false);
                 }
+            }
+            finally
+            {
+                TryDelete(destinationPath + ".part");
             }
         }
 
@@ -108,9 +121,31 @@ public class HttpDownloader
         {
             var buffer = new byte[1 << 20];
             long received = 0;
-            int read;
-            while ((read = await httpStream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+            using var readCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            while (true)
             {
+                // ResponseHeadersRead only applies HttpClient.Timeout to the
+                // headers. Bound each body read without limiting a large,
+                // steadily progressing download's total duration.
+                readCancellation.CancelAfter(_readTimeout);
+                int read;
+                try
+                {
+                    read = await httpStream.ReadAsync(buffer, readCancellation.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"The download of '{fileName}' stopped receiving data.");
+                }
+                readCancellation.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (read == 0)
+                {
+                    break;
+                }
+                if (expectedSizeBytes is > 0 && received + read > expectedSizeBytes.Value)
+                {
+                    throw new InvalidDataException("Downloaded file exceeds the expected size.");
+                }
                 await fileStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                 received += read;
                 progress?.Report(new DownloadProgress(received, total, fileName));

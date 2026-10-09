@@ -250,7 +250,8 @@ public class InstallOrchestrator
             Directory.CreateDirectory(downloadCacheDir);
 
             progress.Report(new InstallStepProgress("Downloading application components", 0.1, null));
-            await DownloadAndExtractComponentsAsync(release, downloadCacheDir, plan.InstallPath, progress, cancellationToken)
+            await DownloadAndExtractComponentsAsync(release, downloadCacheDir, plan.InstallPath, progress, cancellationToken,
+                    discardMultipartParts: true)
                 .ConfigureAwait(false);
 
             // Installs from the legacy installer use a system-wide Postgres instead of pgdata. Repair
@@ -383,7 +384,8 @@ public class InstallOrchestrator
         string downloadCacheDir,
         string installPath,
         IProgress<InstallStepProgress> progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool discardMultipartParts = false)
     {
         var metadataById = release.Release.Artifacts.ToDictionary(
             artifact => artifact.ArtifactId,
@@ -474,13 +476,25 @@ public class InstallOrchestrator
                     await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
                 }
             }
+            if (discardMultipartParts)
+            {
+                // Repair deliberately starts with an empty cache. Once the verified
+                // segments have been joined, retaining both copies wastes several GB
+                // while the existing application and new staging tree also occupy disk.
+                foreach (var partNumber in partNumbers)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Delete($"{archivePath}.part{partNumber}");
+                }
+            }
             archivesToExtract.Add(archivePath);
         }
 
         archivesToExtract.AddRange(standaloneArchives);
+        var verifiedArchiveContainsUpdater = false;
         if (archivesToExtract.Count > 0)
         {
-            await ExtractArchivesFromStagingAsync(
+            verifiedArchiveContainsUpdater = await ExtractArchivesFromStagingAsync(
                     archivesToExtract,
                     installPath,
                     progress,
@@ -496,18 +510,27 @@ public class InstallOrchestrator
         }
 
         File.Copy(_bundledNssmPath, Path.Combine(installPath, "nssm.exe"), overwrite: true);
-        InstallUpdaterFromRelease(release.Release.Artifacts, downloaded, installPath);
+        InstallUpdaterFromRelease(release.Release.Artifacts, downloaded, installPath, verifiedArchiveContainsUpdater);
     }
 
     internal static void InstallUpdaterFromRelease(
         IEnumerable<ReleaseArtifact> catalogArtifacts,
         IEnumerable<string> downloadedPaths,
-        string installPath)
+        string installPath,
+        bool verifiedArchiveContainsUpdater = false)
     {
-        var updaterArtifact = ReleaseUpdaterArtifact.Select(catalogArtifacts)
-            ?? throw new InvalidDataException(
+        var updaterArtifact = ReleaseUpdaterArtifact.Select(catalogArtifacts);
+        if (updaterArtifact is null)
+        {
+            // Older signed releases bundle the updater inside an application ZIP.
+            // Only accept one found in this release's fresh extraction staging tree;
+            // an executable left in an existing install is not release verification.
+            if (verifiedArchiveContainsUpdater && File.Exists(Path.Combine(installPath, ReleaseUpdaterArtifact.InstalledFileName)))
+                return;
+            throw new InvalidDataException(
                 "The Windows release catalog does not include a windows updater executable. " +
                 "Publish the current windows_updater release artifact into this channel's catalog.");
+        }
 
         var downloadedName = ReleaseUpdaterArtifact.DownloadedFileName(updaterArtifact);
         var updaterDownload = downloadedPaths.FirstOrDefault(path =>
@@ -524,7 +547,7 @@ public class InstallOrchestrator
             overwrite: true);
     }
 
-    private async Task ExtractArchivesFromStagingAsync(
+    private async Task<bool> ExtractArchivesFromStagingAsync(
         IReadOnlyList<string> archivePaths,
         string installPath,
         IProgress<InstallStepProgress> progress,
@@ -548,14 +571,16 @@ public class InstallOrchestrator
             }
 
             // The old installer extracted away from the live installation, stopped processes once,
-            // then copied the complete staged tree into place. This avoids repeatedly decompressing
+            // then transferred the complete staged tree into place. This avoids repeatedly decompressing
             // an archive while some unrelated live file is locked.
             await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
             progress.Report(new InstallStepProgress(
                 "Installing application files",
                 0.39,
                 null));
-            CopyDirectoryContents(stagingRoot, installPath, cancellationToken);
+            var archiveContainsUpdater = File.Exists(Path.Combine(stagingRoot, ReleaseUpdaterArtifact.InstalledFileName));
+            MoveDirectoryContents(stagingRoot, installPath, cancellationToken);
+            return archiveContainsUpdater;
         }
         finally
         {
@@ -566,7 +591,7 @@ public class InstallOrchestrator
         }
     }
 
-    private static void CopyDirectoryContents(
+    internal static void MoveDirectoryContents(
         string sourceDirectory,
         string destinationDirectory,
         CancellationToken cancellationToken)
@@ -590,7 +615,10 @@ public class InstallOrchestrator
             var relativePath = Path.GetRelativePath(sourceDirectory, file);
             var destinationPath = Path.Combine(destinationDirectory, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-            File.Copy(file, destinationPath, overwrite: true);
+            // Same-volume moves reuse the verified staged file instead of allocating
+            // a second complete application tree. File.Move also supports a destination
+            // on another volume, where it copies and removes the source after success.
+            File.Move(file, destinationPath, overwrite: true);
         }
     }
 

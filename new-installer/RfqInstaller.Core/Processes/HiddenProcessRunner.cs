@@ -19,6 +19,7 @@ public static class HiddenProcessRunner
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
@@ -56,7 +57,28 @@ public static class HiddenProcessRunner
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Disposing Process only closes its handles. Stop the tool and its
+            // children before the wizard allows Retry to change the same files.
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch (InvalidOperationException) when (process.HasExited)
+            {
+                // The process exited between HasExited and Kill.
+            }
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
 
         return new ProcessResult(process.ExitCode, stdOut.ToString(), stdErr.ToString());
     }

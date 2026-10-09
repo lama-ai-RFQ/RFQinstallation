@@ -11,10 +11,20 @@ namespace RfqInstaller.Core.Services;
 public class NssmServiceManager
 {
     private readonly string _nssmPath;
+    private readonly Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> _run;
 
-    public NssmServiceManager(string nssmPath)
+    public NssmServiceManager(string nssmPath) : this(
+        nssmPath,
+        (file, args, token) => HiddenProcessRunner.RunAsync(file, args, cancellationToken: token))
+    {
+    }
+
+    internal NssmServiceManager(
+        string nssmPath,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> run)
     {
         _nssmPath = nssmPath;
+        _run = run;
     }
 
     public async Task InstallOrReplaceAsync(
@@ -31,6 +41,11 @@ public class NssmServiceManager
         string? currentUserPassword,
         CancellationToken cancellationToken)
     {
+        if (account == ServiceAccountKind.CurrentUser &&
+            (string.IsNullOrWhiteSpace(currentUserDomainAndName) || string.IsNullOrEmpty(currentUserPassword)))
+        {
+            throw new ArgumentException("The selected service account requires a username and password.");
+        }
         if (await ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))
         {
             await RemoveAsync(serviceName, cancellationToken).ConfigureAwait(false);
@@ -69,23 +84,30 @@ public class NssmServiceManager
 
     public async Task RemoveAsync(string serviceName, CancellationToken cancellationToken)
     {
-        await RunNssm(new[] { "stop", serviceName }, cancellationToken).ConfigureAwait(false);
+        await StopIfExistsAsync(serviceName, cancellationToken).ConfigureAwait(false);
         await RunNssm(new[] { "remove", serviceName, "confirm" }, cancellationToken).ConfigureAwait(false);
         await WaitForServiceGoneAsync(serviceName, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> ExistsAsync(string serviceName, CancellationToken cancellationToken)
     {
-        var result = await HiddenProcessRunner.RunAsync("sc.exe", new[] { "query", serviceName }, cancellationToken: cancellationToken)
+        var result = await _run("sc.exe", new[] { "query", serviceName }, cancellationToken)
             .ConfigureAwait(false);
+        if (result.ExitCode is not (0 or 1060))
+        {
+            throw new InvalidOperationException($"Could not query service '{serviceName}' (exit code {result.ExitCode}).");
+        }
         return result.ExitCode == 0;
     }
 
-    /// <summary>Starts an already-registered service. Ignores the exit code: "already running" is not an error here.</summary>
+    /// <summary>Starts an already-registered service, allowing "already running".</summary>
     public async Task StartAsync(string serviceName, CancellationToken cancellationToken)
     {
-        await HiddenProcessRunner.RunAsync("sc.exe", new[] { "start", serviceName }, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        var result = await _run("sc.exe", new[] { "start", serviceName }, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode is not (0 or 1056))
+        {
+            throw new InvalidOperationException($"Could not start service '{serviceName}' (exit code {result.ExitCode}).");
+        }
     }
 
     public async Task StopIfExistsAsync(string serviceName, CancellationToken cancellationToken)
@@ -95,21 +117,29 @@ public class NssmServiceManager
             return;
         }
 
-        await HiddenProcessRunner.RunAsync("sc.exe", new[] { "stop", serviceName }, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        var stop = await _run("sc.exe", new[] { "stop", serviceName }, cancellationToken).ConfigureAwait(false);
+        if (stop.ExitCode is not (0 or 1062))
+        {
+            throw new InvalidOperationException($"Could not stop service '{serviceName}' (exit code {stop.ExitCode}).");
+        }
 
         for (var i = 0; i < 30; i++)
         {
-            var query = await HiddenProcessRunner.RunAsync("sc.exe", new[] { "query", serviceName }, cancellationToken: cancellationToken)
+            var query = await _run("sc.exe", new[] { "query", serviceName }, cancellationToken)
                 .ConfigureAwait(false);
-            if (query.ExitCode != 0 ||
-                query.StdOut.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
+            if (query.ExitCode == 1060 ||
+                (query.ExitCode == 0 && query.StdOut.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)))
             {
                 return;
+            }
+            if (query.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Could not query service '{serviceName}' while stopping (exit code {query.ExitCode}).");
             }
 
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
         }
+        throw new TimeoutException($"Service '{serviceName}' did not stop within 30 seconds.");
     }
 
     private async Task WaitForServiceGoneAsync(string serviceName, CancellationToken cancellationToken)
@@ -122,8 +152,20 @@ public class NssmServiceManager
             }
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
         }
+        throw new TimeoutException($"Service '{serviceName}' was not removed within 30 seconds.");
     }
 
-    private Task<ProcessResult> RunNssm(IReadOnlyList<string> args, CancellationToken cancellationToken) =>
-        HiddenProcessRunner.RunAsync(_nssmPath, args, cancellationToken: cancellationToken);
+    private async Task<ProcessResult> RunNssm(IReadOnlyList<string> args, CancellationToken cancellationToken)
+    {
+        var result = await _run(_nssmPath, args, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            // NSSM arguments/output may include the service-account password.
+            // Identify the failed operation without copying secrets into logs.
+            var setting = args.Count > 2 && args[0] == "set" ? $" {args[2]}" : "";
+            throw new InvalidOperationException(
+                $"NSSM {args[0]}{setting} for service '{args[1]}' failed (exit code {result.ExitCode}).");
+        }
+        return result;
+    }
 }
