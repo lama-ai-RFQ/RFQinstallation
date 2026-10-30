@@ -3075,8 +3075,51 @@ if (!$ExePath) {
 if ($ExePath) {
     Write-Success "[OK] Found executable: $($ExePath.FullName)"
     
-    # Reuse the Linux-side cap var; default 300 MB. Lets tests override (e.g. 5120).
-    $logCapMaxBytes = if ($env:RFQ_LOG_CAP_MAX_BYTES) { $env:RFQ_LOG_CAP_MAX_BYTES } else { 314572800 }
+    function Get-RfqLogCapMaxBytes {
+        param([string] $Value)
+
+        if ([string]::IsNullOrEmpty($Value)) { return '314572800' }
+
+        # Match NSSM's base-zero unsigned integer syntax, including hex/octal.
+        # Reject units, trailing text and values outside its DWORD setting.
+        if ($Value -notmatch '\A[ \t\r\n\v\f]*\+?(?:0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)\z') {
+            throw 'RFQ_LOG_CAP_MAX_BYTES must be an unsigned integer byte count (no units).'
+        }
+        $digits = $Value.TrimStart().TrimStart('+')
+        $numberBase = 10
+        if ($digits -match '^0[xX]') {
+            $numberBase = 16
+            $digits = $digits.Substring(2)
+        } elseif ($digits.StartsWith('0')) {
+            $numberBase = 8
+        }
+        try { $null = [Convert]::ToUInt32($digits, $numberBase) }
+        catch { throw 'RFQ_LOG_CAP_MAX_BYTES must fit an unsigned 32-bit byte count.' }
+        return $Value
+    }
+
+    function Set-NssmLogRotation {
+        param([string] $NssmPath, [string] $Name, [string] $MaxBytes)
+
+        foreach ($setting in @(
+            @{ Name = 'AppRotateFiles'; Value = '1' }
+            @{ Name = 'AppRotateOnline'; Value = '1' }
+            @{ Name = 'AppRotateBytes'; Value = $MaxBytes }
+        )) {
+            # Consume this invocation's result before another native command can replace it.
+            $global:LASTEXITCODE = $null
+            $settingOutput = & $NssmPath set $Name $setting.Name $setting.Value 2>&1
+            $settingExitCode = $global:LASTEXITCODE
+            if ($null -eq $settingExitCode -or $settingExitCode -ne 0) {
+                Write-Warning "  [!] NSSM log rotation for '$Name': $($setting.Name) was not applied (exit code: $settingExitCode). Configure it manually."
+                if ($settingOutput) { Write-Warning "    NSSM output: $($settingOutput | Out-String)" }
+                Add-SkippedStepUnique "Log rotation for '$Name' ($($setting.Name) was not applied)"
+            }
+        }
+    }
+
+    # Validate before removing or configuring either service. Preserve valid NSSM values.
+    $logCapMaxBytes = Get-RfqLogCapMaxBytes $env:RFQ_LOG_CAP_MAX_BYTES
 
     # Create Windows service
     Write-Info "`nCreating Windows service 'RFQapplication'..."
@@ -3172,6 +3215,7 @@ if ($ExePath) {
     
     $script:serviceCreated = $false
     $script:serviceCreationMethod = $null
+    $script:serviceStarted = $false
     $logDir = Join-Path $InstallPath "logs"
 
     if ($mainServiceCreationBlocked) {
@@ -3414,9 +3458,7 @@ Revision=1
                 $stderrLog = Join-Path $logDir "${ServiceName}_stderr.log"
                 & $nssmPath set $ServiceName AppStdout "$stdoutLog" 2>&1 | Out-Null
                 & $nssmPath set $ServiceName AppStderr "$stderrLog" 2>&1 | Out-Null
-                & $nssmPath set $ServiceName AppRotateFiles 1 2>&1 | Out-Null
-                & $nssmPath set $ServiceName AppRotateOnline 1 2>&1 | Out-Null
-                & $nssmPath set $ServiceName AppRotateBytes $logCapMaxBytes 2>&1 | Out-Null
+                Set-NssmLogRotation -NssmPath $nssmPath -Name $ServiceName -MaxBytes $logCapMaxBytes
                 
                 # Configure service account (NSSM stores password securely in Windows registry)
                 if ($targetServiceAccount) {
@@ -3635,6 +3677,7 @@ Revision=1
             } else {
                 Start-Service -Name $ServiceName -ErrorAction Stop
             }
+            $script:serviceStarted = $true
             Write-Success "[OK] Service '$ServiceName' started successfully"
             Write-Info "  The application is now running as a Windows service"
         }
@@ -3750,9 +3793,7 @@ Revision=1
                         $updaterStderrLog = Join-Path $logDir "${UpdaterServiceName}_stderr.log"
                         & $nssmPath set $UpdaterServiceName AppStdout "$updaterStdoutLog" 2>&1 | Out-Null
                         & $nssmPath set $UpdaterServiceName AppStderr "$updaterStderrLog" 2>&1 | Out-Null
-                        & $nssmPath set $UpdaterServiceName AppRotateFiles 1 2>&1 | Out-Null
-                        & $nssmPath set $UpdaterServiceName AppRotateOnline 1 2>&1 | Out-Null
-                        & $nssmPath set $UpdaterServiceName AppRotateBytes $logCapMaxBytes 2>&1 | Out-Null
+                        Set-NssmLogRotation -NssmPath $nssmPath -Name $UpdaterServiceName -MaxBytes $logCapMaxBytes
                         
                         $script:updaterServiceCreated = $true
                         
@@ -3901,10 +3942,17 @@ if ($script:SkippedSteps.Count -gt 0) {
 }
 
 if ($script:serviceCreated) {
+    if ($script:serviceStarted) {
+        $mainServiceOutcome = "The Windows service 'RFQapplication' has been created and started"
+        $mainServiceNextStep = "The application should now be running as a Windows service"
+    } else {
+        $mainServiceOutcome = "The Windows service 'RFQapplication' has been created, but could not be started"
+        $mainServiceNextStep = "Review the start warning and logs, then start it manually using Services.msc"
+    }
     $SuccessMessage += @"
 NEXT STEPS:
-  1. The Windows service 'RFQapplication' has been created and started
-  2. The application should now be running as a Windows service
+  1. $mainServiceOutcome
+  2. $mainServiceNextStep
   3. You can also run the application directly: $($ExePath.FullName)
   4. Or use the desktop shortcut: RFQ Application
   5. For updates, use the built-in updater (Settings -> System Updates)
