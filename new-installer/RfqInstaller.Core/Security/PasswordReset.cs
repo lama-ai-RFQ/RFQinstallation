@@ -18,7 +18,7 @@ public enum ManagedPassword
 /// Sets a new value for one of the install's passwords, from Repair: the postgres superuser, the
 /// rfq_user database login, or the Settings page password. The database is changed first, then
 /// the stored copy, in whichever place the install keeps it (.env or Windows Credential Manager).
-/// The app reads its passwords when it starts, so its service is restarted afterwards.
+/// Services read passwords when they start, so affected services are restarted afterwards.
 ///
 /// A lost superuser password can still be reset: PostgreSQL briefly accepts the postgres login
 /// from this computer without a password, then pg_hba.conf is put back exactly as it was.
@@ -27,6 +27,7 @@ public enum ManagedPassword
 public sealed class PasswordReset
 {
     public const string AppServiceName = "RFQapplication";
+    public const string UpdaterServiceName = "RFQUpdaterService";
 
     private static readonly Dictionary<ManagedPassword, (string EnvKey, string Target, string UserName)> Stores = new()
     {
@@ -37,18 +38,25 @@ public sealed class PasswordReset
 
     private readonly string _installPath;
     private readonly ServiceControl _services;
+    private readonly Func<string?> _serviceAccountName;
 
     public PasswordReset(string installPath, ServiceControl? services = null)
+        : this(installPath, services ?? new ServiceControl(), ServiceAccountName)
+    {
+    }
+
+    internal PasswordReset(string installPath, ServiceControl services, Func<string?> serviceAccountName)
     {
         _installPath = installPath;
-        _services = services ?? new ServiceControl();
+        _services = services;
+        _serviceAccountName = serviceAccountName;
     }
 
     public async Task ResetAsync(ManagedPassword which, string newPassword, IProgress<string>? progress, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(newPassword))
+        if (Problem(which, newPassword) is { } problem)
         {
-            throw new ArgumentException("The new password is empty.", nameof(newPassword));
+            throw new ArgumentException(problem, nameof(newPassword));
         }
 
         // Checked before the database changes, so a refused reset leaves everything as it was.
@@ -69,13 +77,51 @@ public sealed class PasswordReset
         progress?.Report("Saving the new password...");
         Store(which, newPassword);
 
-        // The app reads all three when it starts (the superuser too, for schema updates).
-        if ((await _services.QueryAsync(AppServiceName, cancellationToken).ConfigureAwait(false)).State != ServiceState.NotInstalled)
+        // The updater caches SETTINGS_PASSWORD separately. Refresh it first so an app startup
+        // failure cannot leave the old password authorizing updater requests.
+        if (which == ManagedPassword.Settings)
         {
-            progress?.Report("Restarting RFQ Application so it uses the new password...");
-            await _services.StopIfExistsAsync(AppServiceName, cancellationToken).ConfigureAwait(false);
-            await _services.StartAndWaitAsync(AppServiceName, cancellationToken).ConfigureAwait(false);
+            await RestartIfInstalledAsync(UpdaterServiceName, progress, cancellationToken).ConfigureAwait(false);
         }
+
+        // The app reads all three when it starts (the superuser too, for schema updates).
+        await RestartIfInstalledAsync(AppServiceName, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RestartIfInstalledAsync(string serviceName, IProgress<string>? progress, CancellationToken cancellationToken)
+    {
+        if ((await _services.QueryAsync(serviceName, cancellationToken).ConfigureAwait(false)).State != ServiceState.NotInstalled)
+        {
+            progress?.Report($"Restarting {serviceName} so it uses the new password...");
+            await _services.StopIfExistsAsync(serviceName, cancellationToken).ConfigureAwait(false);
+            await _services.StartAndWaitAsync(serviceName, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Shared by Repair's UI and the reset operation, before any database changes.</summary>
+    public static string? Problem(ManagedPassword which, string password)
+    {
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            return "Enter a new password.";
+        }
+
+        // .env is also read by python-dotenv, which strips quotes/comments and expands ${...}.
+        // Keep values literal for every existing reader rather than changing the file format.
+        if (password.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '\'' or '"') ||
+            password.Contains("${", StringComparison.Ordinal))
+        {
+            return "Use a password without whitespace, control characters, quotes or ${ sequences.";
+        }
+
+        if (which == ManagedPassword.Settings)
+        {
+            return PasswordPolicy.Evaluate(password).MeetsMinimum
+                ? null
+                : "Use at least 8 characters with 3 of: upper case, lower case, a digit, a symbol, and not a common password.";
+        }
+
+        return password.Length >= 12 ? null : "Use at least 12 characters for a database password.";
     }
 
     /// <summary>
@@ -91,9 +137,17 @@ public sealed class PasswordReset
             return;
         }
 
-        var serviceAccount = ServiceAccountName();
-        var serviceSid = AccountIdentity.TryResolve(serviceAccount);
-        if (serviceAccount is null || serviceSid is null || serviceSid.Equals(AccountIdentity.CurrentSid()))
+        var serviceAccount = _serviceAccountName();
+        var serviceSid = string.IsNullOrWhiteSpace(serviceAccount) ? null : AccountIdentity.TryResolve(serviceAccount);
+        if (serviceSid is null)
+        {
+            throw new InvalidOperationException(
+                "This install keeps that password in Windows Credential Manager, but Setup can't verify which " +
+                "Windows account owns it. Standalone installs have no RFQ Application service to identify the owner. " +
+                "Reset was refused to avoid changing the database while leaving the app's saved password unchanged. Nothing was changed.");
+        }
+
+        if (IsCredentialOwner(serviceSid.Value, AccountIdentity.CurrentSid().Value))
         {
             return;
         }
@@ -103,6 +157,9 @@ public sealed class PasswordReset
             $"RFQ Application runs as, but Setup is running as {AccountIdentity.CurrentName()}. Sign in to Windows as " +
             $"{serviceAccount}, run Setup, choose Repair and reset it from there. Nothing was changed.");
     }
+
+    internal static bool IsCredentialOwner(string? ownerSid, string currentSid) =>
+        !string.IsNullOrWhiteSpace(ownerSid) && string.Equals(ownerSid, currentSid, StringComparison.OrdinalIgnoreCase);
 
     private static string? ServiceAccountName()
     {

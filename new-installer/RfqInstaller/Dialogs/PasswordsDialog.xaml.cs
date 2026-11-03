@@ -212,7 +212,8 @@ public partial class PasswordsDialog : Window
             InstallerLog.Write("password reset from Repair", extra: $"{which} password was reset.");
             BuildRows();
             AppDialog.Inform(this, "Password saved",
-                "The new password is set and saved, and RFQ Application was restarted to use it.");
+                "The new password is set and saved. Installed RFQ services that use it were restarted. " +
+                "If you run RFQ Application directly, close and reopen it to use the new password.");
         }
         catch (Exception ex)
         {
@@ -230,25 +231,7 @@ public partial class PasswordsDialog : Window
         }
     }
 
-    internal static string? Problem(ManagedPassword which, string password)
-    {
-        if (string.IsNullOrWhiteSpace(password))
-        {
-            return "Enter a new password.";
-        }
-        if (password != password.Trim() || password.Contains('\n') || password.Contains('\r'))
-        {
-            return "The password can't start or end with a space or contain line breaks.";
-        }
-        if (which == ManagedPassword.Settings)
-        {
-            return PasswordPolicy.Evaluate(password).MeetsMinimum
-                ? null
-                : "Use at least 8 characters with 3 of: upper case, lower case, a digit, a symbol, and not a common password.";
-        }
-
-        return password.Length >= 12 ? null : "Use at least 12 characters for a database password.";
-    }
+    internal static string? Problem(ManagedPassword which, string password) => PasswordReset.Problem(which, password);
 
     private static string StoreHint(ManagedPassword which) =>
         which == ManagedPassword.Settings
