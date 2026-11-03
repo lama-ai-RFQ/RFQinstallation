@@ -21,8 +21,16 @@ public static class DesktopAppSetup
     public static string DefaultConfigPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Scint", "desktop.json");
 
-    public static string DesktopShortcutPath(string name) =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), name);
+    /// <summary>
+    /// A shortcut on <paramref name="desktopDirectory"/>, or on this process's desktop. Setup can
+    /// run as a different account than the signed-in user, whose desktop is the one that matters.
+    /// </summary>
+    public static string DesktopShortcutPath(string name, string? desktopDirectory = null) =>
+        Path.Combine(
+            string.IsNullOrWhiteSpace(desktopDirectory)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+                : desktopDirectory,
+            name);
 
     /// <summary>Scint.exe of this install, when the installed release ships one.</summary>
     public static string? ExecutablePath(string installPath)
@@ -63,7 +71,7 @@ public static class DesktopAppSetup
     /// the browser (Enterprise license, or a release without the desktop app).
     /// </summary>
     public static string? Configure(string installPath, InstallMode mode, string licenseKey, bool createShortcut,
-        string? configPath = null)
+        string? configPath = null, string? desktopDirectory = null)
     {
         var exe = ExecutablePath(installPath);
         if (exe is null || !Licensing.LocalLicenseValidator.Validate(licenseKey).SelfServe)
@@ -80,8 +88,8 @@ public static class DesktopAppSetup
             env.GetValueOrDefault("PORT"));
         if (createShortcut)
         {
-            ShellShortcut.Create(DesktopShortcutPath(ShortcutName), exe, installPath, exe, "Scint");
-            var legacy = DesktopShortcutPath(LegacyShortcutName);
+            ShellShortcut.Create(DesktopShortcutPath(ShortcutName, desktopDirectory), exe, installPath, exe, "Scint");
+            var legacy = DesktopShortcutPath(LegacyShortcutName, desktopDirectory);
             if (File.Exists(legacy))
             {
                 File.Delete(legacy);

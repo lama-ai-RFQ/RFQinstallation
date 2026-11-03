@@ -7,9 +7,12 @@ namespace RfqInstaller.Pages;
 
 public partial class SetupFailedPage : UserControl
 {
+    private readonly WizardState _state;
+
     public SetupFailedPage(WizardState state)
     {
         InitializeComponent();
+        _state = state;
 
         HeadingText.Text = string.IsNullOrWhiteSpace(state.FatalErrorHeading)
             ? "Setup couldn't continue"
@@ -29,4 +32,7 @@ public partial class SetupFailedPage : UserControl
     }
 
     private void OpenLog_Click(object sender, RoutedEventArgs e) => InstallerLog.TryOpenLog();
+
+    private async void CopyDiagnostics_Click(object sender, RoutedEventArgs e) =>
+        await DiagnosticsCopier.CopyAsync(_state, DiagnosticsStatus, _state.FatalErrorDetail);
 }

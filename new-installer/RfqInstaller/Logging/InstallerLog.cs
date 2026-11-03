@@ -11,9 +11,13 @@ namespace RfqInstaller.Logging;
 /// </summary>
 public static class InstallerLog
 {
-    public static string LogDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "RFQ Application Setup");
+    /// <summary>
+    /// C:\ProgramData\RFQ Application Setup, the same for every account. Setup's first window runs
+    /// as the signed-in user and its elevated one possibly as another account (whoever approved the
+    /// administrator prompt), so a per-user folder splits one run's log across two profiles. Falls
+    /// back to the per-user folder if the shared one can't be written.
+    /// </summary>
+    public static string LogDirectory { get; } = PickLogDirectory();
 
     public static string LogPath { get; } = Path.Combine(LogDirectory, "installer.log");
 
@@ -34,6 +38,48 @@ public static class InstallerLog
         }
 
         return LogPath;
+    }
+
+    private static string PickLogDirectory()
+    {
+        var shared = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "RFQ Application Setup");
+        try
+        {
+            var created = !Directory.Exists(shared);
+            Directory.CreateDirectory(shared);
+            if (created)
+            {
+                // Whoever creates it first, the other window's account must be able to append.
+                TryOpenToAllUsers(shared);
+            }
+
+            File.AppendAllText(Path.Combine(shared, "installer.log"), string.Empty);
+            return shared;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "RFQ Application Setup");
+        }
+    }
+
+    private static void TryOpenToAllUsers(string directory)
+    {
+        try
+        {
+            RfqInstaller.Core.Security.FolderAccess.Grant(
+                directory,
+                System.Security.AccessControl.FileSystemRights.Modify,
+                new[] { RfqInstaller.Core.Security.AccountIdentity.AuthenticatedUsers });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                                       or System.Security.Principal.IdentityNotMappedException)
+        {
+            // The log still works for this account; the other one falls back to its own folder.
+        }
     }
 
     public static string FormatUserDetail(Exception exception)

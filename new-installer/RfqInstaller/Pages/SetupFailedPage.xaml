@@ -20,8 +20,13 @@
                     <TextBlock x:Name="LogPathText" FontSize="12" TextWrapping="Wrap"
                                FontFamily="Consolas, Cascadia Mono, Courier New"
                                Foreground="{StaticResource TextSecondaryBrush}"/>
-                    <Button Content="Open log file" Style="{StaticResource LinkButtonStyle}"
-                            Margin="0,10,0,0" Click="OpenLog_Click"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Content="Open log file" Style="{StaticResource LinkButtonStyle}" Click="OpenLog_Click"/>
+                        <Button Content="Copy Diagnostics" Style="{StaticResource LinkButtonStyle}"
+                                Margin="20,0,0,0" Click="CopyDiagnostics_Click"/>
+                    </StackPanel>
+                    <TextBlock x:Name="DiagnosticsStatus" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}" Visibility="Collapsed"/>
                 </StackPanel>
             </Border>
         </StackPanel>
