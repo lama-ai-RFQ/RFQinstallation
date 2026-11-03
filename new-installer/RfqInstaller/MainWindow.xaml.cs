@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Input;
 using RfqInstaller.Core.Elevation;
 using RfqInstaller.Core.Orchestration;
+using RfqInstaller.Core.Security;
 using RfqInstaller.Debug;
 using RfqInstaller.Dialogs;
 using RfqInstaller.Logging;
@@ -61,6 +62,8 @@ public partial class MainWindow : Window
             _state = resumed!;
             _elevationReadySignalPath = readySignalPath;
             ContentRendered += SignalElevationReady;
+            RememberSignedInUser();
+            ContentRendered += WarnIfSetupRunsAsAnotherAccount;
             GoTo(resumeStep);
         }
         else
@@ -70,8 +73,69 @@ public partial class MainWindow : Window
                 _state.UseExistingInstall(_existingInstall, repair: true);
             }
 
+            RememberSignedInUser();
+            ContentRendered += WarnIfSetupRunsAsAnotherAccount;
             GoTo(WizardStep.Welcome);
         }
+    }
+
+    private void RememberSignedInUser()
+    {
+        if (!string.IsNullOrWhiteSpace(_state.SignedInUserSid))
+        {
+            return; // From the unelevated window, which ran as the signed-in user.
+        }
+
+        try
+        {
+            var account = SignedInUser.Detect();
+            _state.SignedInUserSid = account.Sid;
+            _state.SignedInUserName = account.Name;
+            _state.SignedInUserDesktop = account.DesktopDirectory;
+        }
+        catch (Exception ex)
+        {
+            InstallerLog.Write("detecting the signed-in Windows account", ex);
+        }
+    }
+
+    /// <summary>
+    /// A standard user can start Setup and have another account approve the administrator prompt.
+    /// Setup then runs as that account, which changes where things end up, so say so before
+    /// anything happens, and suggest the simpler alternative.
+    /// </summary>
+    private void WarnIfSetupRunsAsAnotherAccount(object? sender, EventArgs e)
+    {
+        ContentRendered -= WarnIfSetupRunsAsAnotherAccount;
+        if (_state.OtherSetupAccountAccepted || SignedInUser.IsSetupAccount(_state.SignedInUserSid))
+        {
+            return;
+        }
+
+        var setupAccount = AccountIdentity.CurrentName();
+        var signedIn = _state.SignedInUserName ?? "another account";
+        InstallerLog.Write("Setup runs as another account", extra: $"Setup account: {setupAccount}; signed in: {signedIn}");
+        var proceed = AppDialog.Confirm(
+            this,
+            "Setup is running as a different account",
+            $"Windows approved Setup as {setupAccount}, but {signedIn} is signed in. Setup can continue as {setupAccount}:" +
+            Environment.NewLine + Environment.NewLine +
+            $"• The install folder and its database are set up by {setupAccount}. Setup gives the account RFQ Application runs as access to them." +
+            Environment.NewLine +
+            $"• Passwords are saved in the install's .env file instead of Windows Credential Manager, unless the RFQ service runs as {setupAccount}: each account's Credential Manager is private to it." +
+            Environment.NewLine +
+            $"• The desktop shortcut goes on {signedIn}'s desktop." +
+            Environment.NewLine + Environment.NewLine +
+            $"For the simplest setup, cancel, sign in to Windows as {setupAccount} (or make {signedIn} an administrator), and run Setup again.",
+            confirmText: "Continue",
+            dismissText: "Cancel");
+        if (!proceed)
+        {
+            ForceClose();
+            return;
+        }
+
+        _state.OtherSetupAccountAccepted = true;
     }
 
     private static ExistingInstallation? DetectExistingInstall()

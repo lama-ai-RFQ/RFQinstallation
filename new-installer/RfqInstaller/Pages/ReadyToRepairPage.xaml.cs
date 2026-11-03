@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using RfqInstaller.Core.Orchestration;
 using RfqInstaller.Dialogs;
+using RfqInstaller.Logging;
 using RfqInstaller.Models;
 
 namespace RfqInstaller.Pages;
@@ -83,6 +84,12 @@ public partial class ReadyToRepairPage : UserControl, IWizardPage
         ProblemsText.Text = string.Join(Environment.NewLine + Environment.NewLine, _readiness.Problems);
         ProblemsPanel.Visibility = Visibility.Visible;
     }
+
+    private void Passwords_Click(object sender, RoutedEventArgs e) =>
+        PasswordsDialog.Show(Window.GetWindow(this), _state.InstallPath);
+
+    private async void CopyDiagnostics_Click(object sender, RoutedEventArgs e) =>
+        await DiagnosticsCopier.CopyAsync(_state, DiagnosticsStatus, lastError: null);
 
     public bool Validate()
     {

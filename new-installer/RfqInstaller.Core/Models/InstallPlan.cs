@@ -74,4 +74,14 @@ public class InstallPlan
     public string? ServiceAccountPassword { get; init; }
 
     public string UpdateChannel { get; init; } = "customer";
+
+    /// <summary>
+    /// The account signed in to Windows when Setup started (see <see cref="Security.SignedInUser"/>).
+    /// Not the account Setup runs as when another account approved the administrator prompt.
+    /// Null means the same account.
+    /// </summary>
+    public string? SignedInUserSid { get; init; }
+
+    /// <summary>That account's desktop, for the shortcut. Null means this process's desktop.</summary>
+    public string? SignedInUserDesktop { get; init; }
 }

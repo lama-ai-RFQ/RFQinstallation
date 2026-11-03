@@ -1,7 +1,13 @@
+using System.Security.AccessControl;
+using System.Text.RegularExpressions;
+using Microsoft.Win32;
 using RfqInstaller.Core.Archive;
 using RfqInstaller.Core.Models;
 using RfqInstaller.Core.Networking;
+using RfqInstaller.Core.Orchestration;
 using RfqInstaller.Core.Processes;
+using RfqInstaller.Core.Security;
+using RfqInstaller.Core.Services;
 
 namespace RfqInstaller.Core.Database;
 
@@ -14,7 +20,7 @@ public record PostgresInstance(string BinDir, string DataDir, int Port, string S
 /// own Windows service so it can never collide with a PostgreSQL the customer already has installed
 /// for something else. Safe to re-run: skips steps whose result already exists on disk.
 /// </summary>
-public class PostgresProvisioner
+public partial class PostgresProvisioner
 {
     public const string ServiceName = "RFQPostgreSQL";
 
@@ -83,28 +89,21 @@ public class PostgresProvisioner
         var pgCtl = Path.Combine(binDir, "bin", "pg_ctl.exe");
         var initDb = Path.Combine(binDir, "bin", "initdb.exe");
 
+        // initdb and the service read these files after dropping administrator rights (see
+        // FolderAccess), so the accounts themselves need read access wherever the install lives.
+        FolderAccess.Grant(binDir, FileSystemRights.ReadAndExecute, new[] { AccountIdentity.CurrentSid(), AccountIdentity.LocalSystem });
+
         var alreadyInitialized = File.Exists(Path.Combine(dataDir, "PG_VERSION"));
         if (!alreadyInitialized)
         {
             progress?.Report("Initializing database cluster...");
+            PrepareDataDirectory(dataDir);
             await InitializeDataDirectoryAsync(initDb, dataDir, generatedSuperUserPassword, cancellationToken).ConfigureAwait(false);
             SetPort(dataDir, PostgresBinariesConfig.DefaultPort);
             RestrictToLocalhost(dataDir);
         }
 
-        var serviceAlreadyRegistered = await IsServiceRegisteredAsync(cancellationToken).ConfigureAwait(false);
-        if (!serviceAlreadyRegistered)
-        {
-            progress?.Report("Registering PostgreSQL as a Windows service...");
-            var register = await HiddenProcessRunner.RunAsync(
-                pgCtl,
-                new[] { "register", "-N", ServiceName, "-D", dataDir, "-w" },
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (register.ExitCode != 0)
-            {
-                throw new InvalidOperationException($"pg_ctl register failed: {register.StdErr}");
-            }
-        }
+        await EnsureServiceRegisteredAsync(pgCtl, dataDir, progress, cancellationToken).ConfigureAwait(false);
 
         progress?.Report("Starting PostgreSQL service...");
         await HiddenProcessRunner.RunAsync("sc.exe", new[] { "start", ServiceName }, cancellationToken: cancellationToken)
@@ -134,6 +133,128 @@ public class PostgresProvisioner
 
         return ProvisionAsync(installPath, string.Empty, progress, cancellationToken, binaries);
     }
+
+    /// <summary>
+    /// Creates pgdata for initdb, readable only by the account running Setup (initdb runs as it,
+    /// without its administrator rights), SYSTEM (the PostgreSQL service) and Administrators.
+    /// Without this initdb can't create the folder under Program Files or in another user's
+    /// profile, and would otherwise leave it readable by every user on the machine.
+    /// </summary>
+    internal static void PrepareDataDirectory(string dataDir)
+    {
+        if (Directory.Exists(dataDir) && Directory.EnumerateFileSystemEntries(dataDir).Any())
+        {
+            throw new InvalidOperationException(
+                $"{dataDir} already exists but holds no database (it has no PG_VERSION file), so it is probably left " +
+                "over from an install that failed. Delete that folder and try again.");
+        }
+
+        FolderAccess.CreatePrivateDirectory(
+            dataDir,
+            new[] { AccountIdentity.CurrentSid(), AccountIdentity.LocalSystem, AccountIdentity.Administrators });
+    }
+
+    /// <summary>
+    /// Registers the RFQPostgreSQL service for this install's pgdata. A service left by another or
+    /// a failed install that points at a different folder is replaced; reusing it would start
+    /// PostgreSQL against the wrong (or a deleted) data directory.
+    /// </summary>
+    private static async Task EnsureServiceRegisteredAsync(
+        string pgCtl,
+        string dataDir,
+        IProgress<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        var control = new ServiceControl();
+        var registered = (await control.QueryAsync(ServiceName, cancellationToken).ConfigureAwait(false)).State
+                         != ServiceState.NotInstalled;
+        if (registered)
+        {
+            var imagePath = ReadServiceImagePath();
+            if (PointsAt(imagePath, pgCtl, dataDir))
+            {
+                return;
+            }
+
+            progress?.Report($"Replacing a PostgreSQL service left from an earlier install ({DataDirFromImagePath(imagePath) ?? "unknown folder"})...");
+            await control.StopIfExistsAsync(ServiceName, cancellationToken).ConfigureAwait(false);
+            var delete = await HiddenProcessRunner.RunAsync("sc.exe", new[] { "delete", ServiceName }, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            if (delete.ExitCode is not (0 or 1060 or 1072))
+            {
+                throw new InvalidOperationException(
+                    $"Could not remove the old {ServiceName} service (exit code {delete.ExitCode}): {delete.StdOut.Trim()}");
+            }
+            await control.WaitUntilRemovedAsync(ServiceName, cancellationToken).ConfigureAwait(false);
+        }
+
+        progress?.Report("Registering PostgreSQL as a Windows service...");
+        var register = await HiddenProcessRunner.RunAsync(
+            pgCtl,
+            new[] { "register", "-N", ServiceName, "-D", dataDir, "-w" },
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (register.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"pg_ctl register failed: {register.StdErr}");
+        }
+    }
+
+    internal static bool PointsAt(string? imagePath, string pgCtl, string dataDir)
+    {
+        var registeredDataDir = DataDirFromImagePath(imagePath);
+        var registeredInstall = ExistingInstallDetector.InstallDirFromPostgresImagePath(imagePath);
+        var ownInstall = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(pgCtl)));
+        return registeredDataDir is not null && registeredInstall is not null && ownInstall is not null &&
+               SamePath(registeredDataDir, dataDir) && SamePath(registeredInstall, ownInstall);
+    }
+
+    /// <summary>The -D argument of <c>pg_ctl runservice</c>, as pg_ctl register writes it.</summary>
+    internal static string? DataDirFromImagePath(string? imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return null;
+        }
+
+        var match = DataDirArgumentRegex().Match(imagePath);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        return match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(a.Trim().Trim('"')).TrimEnd('\\', '/'),
+                Path.GetFullPath(b.Trim().Trim('"')).TrimEnd('\\', '/'),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static string? ReadServiceImagePath()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + ServiceName);
+            return key?.GetValue("ImagePath", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
+    }
+
+    [GeneratedRegex(@"\s-D\s+(?:""([^""]+)""|(\S+))")]
+    private static partial Regex DataDirArgumentRegex();
 
     private static async Task InitializeDataDirectoryAsync(string initDbExe, string dataDir, string superUserPassword, CancellationToken cancellationToken)
     {
@@ -175,13 +296,6 @@ public class PostgresProvisioner
             "host all all 127.0.0.1/32 scram-sha-256\n" +
             "host all all ::1/128 scram-sha-256\n";
         File.WriteAllText(hbaPath, content);
-    }
-
-    private static async Task<bool> IsServiceRegisteredAsync(CancellationToken cancellationToken)
-    {
-        var result = await HiddenProcessRunner.RunAsync("sc.exe", new[] { "query", ServiceName }, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        return result.ExitCode == 0;
     }
 
     /// <summary>

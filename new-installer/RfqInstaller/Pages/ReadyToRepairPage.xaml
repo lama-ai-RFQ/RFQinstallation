@@ -77,6 +77,23 @@
                     </StackPanel>
                 </StackPanel>
             </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock Text="Passwords" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                    <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,6,0,12"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Text="See the Settings page, rfq_user and postgres passwords this install keeps, or set new ones. You don't need to run the repair for this."/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="View or Reset Passwords" Style="{StaticResource SecondaryButtonStyle}"
+                                Click="Passwords_Click"/>
+                        <Button Content="Copy Diagnostics" Style="{StaticResource SecondaryButtonStyle}"
+                                Margin="10,0,0,0" Click="CopyDiagnostics_Click"/>
+                    </StackPanel>
+                    <TextBlock x:Name="DiagnosticsStatus" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}" Visibility="Collapsed"/>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

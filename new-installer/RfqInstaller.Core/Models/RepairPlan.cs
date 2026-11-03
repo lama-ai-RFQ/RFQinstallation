@@ -23,4 +23,7 @@ public class RepairPlan
     public bool RepairDatabase { get; init; }
 
     public bool CleanupAfterInstall { get; init; } = true;
+
+    /// <summary>The signed-in account's desktop, where the install's shortcut is. Null means this process's desktop.</summary>
+    public string? SignedInUserDesktop { get; init; }
 }
