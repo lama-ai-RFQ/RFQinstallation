@@ -123,7 +123,11 @@ public partial class InstallingPage : UserControl
 
         _state.InstallErrorMessage = message;
         ProgressPanel.Visibility = Visibility.Collapsed;
-        ErrorText.Text = message;
+        DiagnosticsStatus.Visibility = Visibility.Collapsed;
+        // Always say where the details are; support asks for this log first.
+        ErrorText.Text = message.Contains(InstallerLog.LogPath, StringComparison.OrdinalIgnoreCase)
+            ? message
+            : $"{message}{Environment.NewLine}{Environment.NewLine}Details were saved to:{Environment.NewLine}{InstallerLog.LogPath}";
         ErrorPanel.Visibility = Visibility.Visible;
         Dispatcher.BeginInvoke(() =>
         {
@@ -138,6 +142,7 @@ public partial class InstallingPage : UserControl
         Mode = _state.Mode == Models.InstallMode.WindowsService ? CoreInstallMode.WindowsService : CoreInstallMode.Standalone,
         RepairDatabase = _state.RepairDatabase,
         CleanupAfterInstall = _state.CleanupAfterInstall,
+        SignedInUserDesktop = _state.SignedInUserDesktop,
     };
 
     private InstallPlan BuildInstallPlan() => new()
@@ -169,6 +174,8 @@ public partial class InstallingPage : UserControl
         },
         ServiceAccountName = string.IsNullOrEmpty(_state.ServiceAccountName) ? null : _state.ServiceAccountName,
         ServiceAccountPassword = string.IsNullOrEmpty(_state.ServiceAccountPassword) ? null : _state.ServiceAccountPassword,
+        SignedInUserSid = _state.SignedInUserSid,
+        SignedInUserDesktop = _state.SignedInUserDesktop,
     };
 
     private async void RetryButton_Click(object sender, RoutedEventArgs e)
@@ -192,4 +199,7 @@ public partial class InstallingPage : UserControl
     }
 
     private void BackToReviewButton_Click(object sender, RoutedEventArgs e) => _onNavigateTo(WizardStep.ReadyToInstall);
+
+    private async void CopyDiagnostics_Click(object sender, RoutedEventArgs e) =>
+        await DiagnosticsCopier.CopyAsync(_state, DiagnosticsStatus, _state.InstallErrorMessage);
 }

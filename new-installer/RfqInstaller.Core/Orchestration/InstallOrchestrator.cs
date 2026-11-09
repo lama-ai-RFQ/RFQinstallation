@@ -12,6 +12,8 @@ using RfqInstaller.Core.Releases;
 using RfqInstaller.Core.Security;
 using RfqInstaller.Core.Services;
 using RfqInstaller.Core.Shortcuts;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace RfqInstaller.Core.Orchestration;
 
@@ -168,13 +170,16 @@ public class InstallOrchestrator
             else
             {
                 progress.Report(new InstallStepProgress("Finishing standalone install", 0.8, null));
+                // The signed-in user runs a standalone install; it writes logs and data in its folder.
+                GrantAppAccess(plan.InstallPath, SignedInSid(plan));
             }
 
             progress.Report(new InstallStepProgress("Setting up the Scint app", 0.9, null));
-            var desktopAppPath = DesktopAppSetup.Configure(plan.InstallPath, plan.Mode, plan.LicenseKey, plan.CreateDesktopShortcut);
+            var desktopAppPath = DesktopAppSetup.Configure(
+                plan.InstallPath, plan.Mode, plan.LicenseKey, plan.CreateDesktopShortcut, desktopDirectory: plan.SignedInUserDesktop);
             if (desktopAppPath is null && plan.Mode == InstallMode.Standalone && plan.CreateDesktopShortcut)
             {
-                CreateDesktopShortcut(mainExePath, plan.InstallPath);
+                CreateDesktopShortcut(mainExePath, plan.InstallPath, plan.SignedInUserDesktop);
             }
 
             if (plan.CleanupAfterInstall && Directory.Exists(downloadCacheDir))
@@ -297,9 +302,10 @@ public class InstallOrchestrator
             progress.Report(new InstallStepProgress("Checking security certificate", 0.7, null));
             SelfSignedCertGenerator.GenerateIfMissing(plan.InstallPath);
             // Repair re-downloads the app, which may now ship Scint.exe; keep the shortcut the install had.
-            var hadShortcut = File.Exists(DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.ShortcutName))
-                || File.Exists(DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.LegacyShortcutName));
-            var repairedDesktopApp = DesktopAppSetup.Configure(plan.InstallPath, plan.Mode, readiness.LicenseKey!, hadShortcut);
+            var hadShortcut = File.Exists(DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.ShortcutName, plan.SignedInUserDesktop))
+                || File.Exists(DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.LegacyShortcutName, plan.SignedInUserDesktop));
+            var repairedDesktopApp = DesktopAppSetup.Configure(
+                plan.InstallPath, plan.Mode, readiness.LicenseKey!, hadShortcut, desktopDirectory: plan.SignedInUserDesktop);
 
             if (plan.Mode == InstallMode.WindowsService)
             {
@@ -752,12 +758,47 @@ public class InstallOrchestrator
         string userName,
         string password)
     {
-        var effectivelyUseCredentialManager =
-            plan.UseCredentialManager && plan.ServiceAccount == ServiceAccountKind.CurrentUser;
-        return effectivelyUseCredentialManager &&
+        return UsesCredentialManager(plan) &&
                CredentialManagerWriter.TryWrite(targetName, userName, password)
             ? CredentialManagerWriter.Sentinel
             : password;
+    }
+
+    /// <summary>
+    /// Credential Manager entries belong to the account that writes them, and only that account can
+    /// read them back. Setup writes them as itself, so they're only usable when the RFQ services run
+    /// as that same account. When another account approved the administrator prompt (Setup runs as
+    /// it) but the service runs as the signed-in user, the service could never read its own
+    /// passwords: they go in .env instead.
+    /// </summary>
+    internal static bool UsesCredentialManager(InstallPlan plan) =>
+        UsesCredentialManager(plan, AccountIdentity.CurrentSid(), AccountIdentity.TryResolve(ServiceAccountName(plan)));
+
+    internal static bool UsesCredentialManager(InstallPlan plan, SecurityIdentifier setupAccount, SecurityIdentifier? serviceAccount) =>
+        plan.UseCredentialManager &&
+        plan.ServiceAccount == ServiceAccountKind.CurrentUser &&
+        serviceAccount is not null &&
+        serviceAccount.Equals(setupAccount);
+
+    private static string ServiceAccountName(InstallPlan plan) =>
+        plan.ServiceAccountName ?? $"{Environment.UserDomainName}\\{Environment.UserName}";
+
+    private static SecurityIdentifier SignedInSid(InstallPlan plan) =>
+        plan.SignedInUserSid is { Length: > 0 } sid ? new SecurityIdentifier(sid) : AccountIdentity.CurrentSid();
+
+    /// <summary>
+    /// The account the app runs as writes its logs, data and updates in the install folder. Under
+    /// Program Files only administrators can write, and a service doesn't run with administrator
+    /// rights unless its account is one.
+    /// </summary>
+    private static void GrantAppAccess(string installPath, SecurityIdentifier? account)
+    {
+        if (account is null || account.Equals(AccountIdentity.LocalSystem))
+        {
+            return;
+        }
+
+        FolderAccess.Grant(installPath, FileSystemRights.Modify, new[] { account });
     }
 
     private async Task RegisterServicesAsync(InstallPlan plan, string mainExePath, CancellationToken cancellationToken)
@@ -769,10 +810,16 @@ public class InstallOrchestrator
         string? currentUserAccount = null;
         if (plan.ServiceAccount == ServiceAccountKind.CurrentUser)
         {
-            currentUserAccount = plan.ServiceAccountName
-                ?? $"{Environment.UserDomainName}\\{Environment.UserName}";
+            currentUserAccount = ServiceAccountName(plan);
             ServiceLogonRight.TryGrant(currentUserAccount);
         }
+
+        GrantAppAccess(plan.InstallPath, plan.ServiceAccount switch
+        {
+            ServiceAccountKind.CurrentUser => AccountIdentity.TryResolve(currentUserAccount),
+            ServiceAccountKind.NetworkService => AccountIdentity.NetworkService,
+            _ => null,
+        });
 
         await nssm.InstallOrReplaceAsync(
             AppServiceName,
@@ -803,10 +850,9 @@ public class InstallOrchestrator
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static void CreateDesktopShortcut(string mainExePath, string installPath)
+    private static void CreateDesktopShortcut(string mainExePath, string installPath, string? desktopDirectory)
     {
-        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        var shortcutPath = Path.Combine(desktop, "RFQ Application.lnk");
+        var shortcutPath = DesktopAppSetup.DesktopShortcutPath(DesktopAppSetup.LegacyShortcutName, desktopDirectory);
         ShellShortcut.Create(shortcutPath, mainExePath, installPath, mainExePath, "RFQ Application");
     }
 }

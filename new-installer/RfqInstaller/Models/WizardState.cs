@@ -135,6 +135,20 @@ public class WizardState
     public string? FatalErrorLogPath { get; set; }
 
     /// <summary>
+    /// The account signed in to Windows when Setup started, set by the first (unelevated) window
+    /// and carried through the elevation hand-off. When another account approves the
+    /// administrator prompt, the elevated window runs as that account instead.
+    /// </summary>
+    public string? SignedInUserSid { get; set; }
+
+    public string? SignedInUserName { get; set; }
+
+    public string? SignedInUserDesktop { get; set; }
+
+    /// <summary>The warning about Setup running as another account was shown and accepted.</summary>
+    public bool OtherSetupAccountAccepted { get; set; }
+
+    /// <summary>
     /// Points the wizard at an install found on this machine. Used for Repair, and also as the
     /// defaults for a normal install so "Install" over an existing copy starts from its folder and mode.
     /// </summary>

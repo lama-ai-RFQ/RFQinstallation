@@ -34,6 +34,8 @@
                 <StackPanel MaxWidth="560" HorizontalAlignment="Left">
                     <TextBlock x:Name="ErrorTitle" Text="Installation failed" Style="{StaticResource PageTitleStyle}" Foreground="#C42B1C"/>
                     <TextBlock x:Name="ErrorText" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="DiagnosticsStatus" TextWrapping="Wrap" FontSize="12" Margin="0,12,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}" Visibility="Collapsed"/>
                 </StackPanel>
             </ScrollViewer>
             <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,24,0,0">
@@ -41,6 +43,8 @@
                         Click="RetryButton_Click"/>
                 <Button x:Name="BackToReviewButton" Content="Go Back" Style="{StaticResource SecondaryButtonStyle}"
                         Margin="12,0,0,0" Click="BackToReviewButton_Click"/>
+                <Button Content="Copy Diagnostics" Style="{StaticResource SecondaryButtonStyle}"
+                        Margin="12,0,0,0" Click="CopyDiagnostics_Click"/>
             </StackPanel>
         </Grid>
     </Grid>

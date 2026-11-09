@@ -12,6 +12,7 @@ public class NssmServiceManager
 {
     private readonly string _nssmPath;
     private readonly Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> _run;
+    private readonly ServiceControl _control;
 
     public NssmServiceManager(string nssmPath) : this(
         nssmPath,
@@ -21,11 +22,16 @@ public class NssmServiceManager
 
     internal NssmServiceManager(
         string nssmPath,
-        Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> run)
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> run,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         _nssmPath = nssmPath;
         _run = run;
+        _control = new ServiceControl(run, delay);
     }
+
+    /// <summary>How long a start may take before it counts as failed; RFQ Application can take minutes on a slow disk.</summary>
+    public TimeSpan StartTimeout { get; init; } = ServiceControl.DefaultStartTimeout;
 
     public async Task InstallOrReplaceAsync(
         string serviceName,
@@ -51,26 +57,26 @@ public class NssmServiceManager
             await RemoveAsync(serviceName, cancellationToken).ConfigureAwait(false);
         }
 
-        await RunNssm(new[] { "install", serviceName, exePath }, cancellationToken).ConfigureAwait(false);
-        await RunNssm(new[] { "set", serviceName, "DisplayName", displayName }, cancellationToken).ConfigureAwait(false);
-        await RunNssm(new[] { "set", serviceName, "Description", description }, cancellationToken).ConfigureAwait(false);
-        await RunNssm(new[] { "set", serviceName, "AppDirectory", appDirectory }, cancellationToken).ConfigureAwait(false);
-        await RunNssm(new[] { "set", serviceName, "Start", "SERVICE_AUTO_START" }, cancellationToken).ConfigureAwait(false);
-        await RunNssm(new[] { "set", serviceName, "AppStdout", stdoutLogPath }, cancellationToken).ConfigureAwait(false);
-        await RunNssm(new[] { "set", serviceName, "AppStderr", stderrLogPath }, cancellationToken).ConfigureAwait(false);
+        await RunNssm(new[] { "install", serviceName, exePath }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "DisplayName", displayName }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "Description", description }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "AppDirectory", appDirectory }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "Start", "SERVICE_AUTO_START" }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "AppStdout", stdoutLogPath }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "AppStderr", stderrLogPath }, cancellationToken, currentUserPassword).ConfigureAwait(false);
 
         if (!string.IsNullOrEmpty(appParameters))
         {
-            await RunNssm(new[] { "set", serviceName, "AppParameters", appParameters }, cancellationToken).ConfigureAwait(false);
+            await RunNssm(new[] { "set", serviceName, "AppParameters", appParameters }, cancellationToken, currentUserPassword).ConfigureAwait(false);
         }
 
         switch (account)
         {
             case ServiceAccountKind.NetworkService:
-                await RunNssm(new[] { "set", serviceName, "ObjectName", "NT AUTHORITY\\NETWORK SERVICE" }, cancellationToken).ConfigureAwait(false);
+                await RunNssm(new[] { "set", serviceName, "ObjectName", "NT AUTHORITY\\NETWORK SERVICE" }, cancellationToken, currentUserPassword).ConfigureAwait(false);
                 break;
             case ServiceAccountKind.CurrentUser when currentUserDomainAndName is not null && currentUserPassword is not null:
-                await RunNssm(new[] { "set", serviceName, "ObjectName", currentUserDomainAndName, currentUserPassword }, cancellationToken)
+                await RunNssm(new[] { "set", serviceName, "ObjectName", currentUserDomainAndName, currentUserPassword }, cancellationToken, currentUserPassword)
                     .ConfigureAwait(false);
                 break;
             case ServiceAccountKind.LocalSystem:
@@ -79,7 +85,8 @@ public class NssmServiceManager
                 break;
         }
 
-        await RunNssm(new[] { "start", serviceName }, cancellationToken).ConfigureAwait(false);
+        // Not `nssm start`: it gives up while the app is still starting and hides why a start failed.
+        await _control.StartAndWaitAsync(serviceName, cancellationToken, StartTimeout, stderrLogPath).ConfigureAwait(false);
     }
 
     public async Task RemoveAsync(string serviceName, CancellationToken cancellationToken)
@@ -100,72 +107,43 @@ public class NssmServiceManager
         return result.ExitCode == 0;
     }
 
-    /// <summary>Starts an already-registered service, allowing "already running".</summary>
-    public async Task StartAsync(string serviceName, CancellationToken cancellationToken)
-    {
-        var result = await _run("sc.exe", new[] { "start", serviceName }, cancellationToken).ConfigureAwait(false);
-        if (result.ExitCode is not (0 or 1056))
-        {
-            throw new InvalidOperationException($"Could not start service '{serviceName}' (exit code {result.ExitCode}).");
-        }
-    }
+    /// <summary>Starts an already-registered service, allowing "already running", and waits until it runs.</summary>
+    public Task StartAsync(string serviceName, CancellationToken cancellationToken) =>
+        _control.StartAndWaitAsync(serviceName, cancellationToken, StartTimeout);
 
-    public async Task StopIfExistsAsync(string serviceName, CancellationToken cancellationToken)
-    {
-        if (!await ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))
-        {
-            return;
-        }
+    public Task StopIfExistsAsync(string serviceName, CancellationToken cancellationToken) =>
+        _control.StopIfExistsAsync(serviceName, cancellationToken);
 
-        var stop = await _run("sc.exe", new[] { "stop", serviceName }, cancellationToken).ConfigureAwait(false);
-        if (stop.ExitCode is not (0 or 1062))
-        {
-            throw new InvalidOperationException($"Could not stop service '{serviceName}' (exit code {stop.ExitCode}).");
-        }
+    private Task WaitForServiceGoneAsync(string serviceName, CancellationToken cancellationToken) =>
+        _control.WaitUntilRemovedAsync(serviceName, cancellationToken);
 
-        for (var i = 0; i < 30; i++)
-        {
-            var query = await _run("sc.exe", new[] { "query", serviceName }, cancellationToken)
-                .ConfigureAwait(false);
-            if (query.ExitCode == 1060 ||
-                (query.ExitCode == 0 && query.StdOut.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)))
-            {
-                return;
-            }
-            if (query.ExitCode != 0)
-            {
-                throw new InvalidOperationException($"Could not query service '{serviceName}' while stopping (exit code {query.ExitCode}).");
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-        }
-        throw new TimeoutException($"Service '{serviceName}' did not stop within 30 seconds.");
-    }
-
-    private async Task WaitForServiceGoneAsync(string serviceName, CancellationToken cancellationToken)
-    {
-        for (var i = 0; i < 30; i++)
-        {
-            if (!await ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-        }
-        throw new TimeoutException($"Service '{serviceName}' was not removed within 30 seconds.");
-    }
-
-    private async Task<ProcessResult> RunNssm(IReadOnlyList<string> args, CancellationToken cancellationToken)
+    private async Task<ProcessResult> RunNssm(
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken,
+        string? secretToRedact = null)
     {
         var result = await _run(_nssmPath, args, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
-            // NSSM arguments/output may include the service-account password.
-            // Identify the failed operation without copying secrets into logs.
             var setting = args.Count > 2 && args[0] == "set" ? $" {args[2]}" : "";
+            // Only `set ObjectName` carries the service account's password, in its arguments and
+            // possibly echoed in NSSM's output. Every other command's output is the actual reason.
+            var carriesPassword = args.Count > 2 && args[0] == "set" &&
+                                  string.Equals(args[2], "ObjectName", StringComparison.OrdinalIgnoreCase);
+            var output = carriesPassword ? "" : CleanOutput(result.StdOut + Environment.NewLine + result.StdErr);
+            if (!string.IsNullOrEmpty(secretToRedact))
+            {
+                output = output.Replace(secretToRedact, "[password]", StringComparison.Ordinal);
+            }
             throw new InvalidOperationException(
-                $"NSSM {args[0]}{setting} for service '{args[1]}' failed (exit code {result.ExitCode}).");
+                $"NSSM {args[0]}{setting} for service '{args[1]}' failed (exit code {result.ExitCode})." +
+                (output.Length > 0 ? $" NSSM said: {output}" : ""));
         }
         return result;
     }
+
+    /// <summary>NSSM writes UTF-16 to its console; read as UTF-8 that shows up as NUL padding.</summary>
+    internal static string CleanOutput(string output) =>
+        string.Join(" ", output.Replace("\0", "", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 }
