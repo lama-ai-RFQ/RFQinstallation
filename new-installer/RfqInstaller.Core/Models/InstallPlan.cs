@@ -35,6 +35,12 @@ public class InstallPlan
     public required string SettingsPassword { get; init; }
 
     public string ServerUrl { get; init; } = "https://localhost";
+
+    /// <summary>
+    /// Open the app's PORT (from .env) in Windows Firewall on domain and private networks so other
+    /// computers can use it. False removes a rule left by an earlier install.
+    /// </summary>
+    public bool AllowNetworkAccess { get; init; } = true;
     public string BrokerUrl { get; init; } = DefaultBrokerUrl;
 
     public static string DefaultBrokerUrl =>

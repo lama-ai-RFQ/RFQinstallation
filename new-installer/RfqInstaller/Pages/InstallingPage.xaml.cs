@@ -103,6 +103,7 @@ public partial class InstallingPage : UserControl
         {
             _state.ResolvedMainExecutablePath = result.MainExecutablePath;
             _state.DesktopAppPath = result.DesktopAppPath;
+            _state.InstallWarning = result.Warning;
             _state.InstallErrorMessage = null;
             _onSuccess();
         }
@@ -156,6 +157,7 @@ public partial class InstallingPage : UserControl
         CleanupAfterInstall = _state.CleanupAfterInstall,
         SettingsPassword = _state.SettingsPassword,
         ServerUrl = _state.ServerUrl,
+        AllowNetworkAccess = _state.AllowNetworkAccess,
         AutoGenerateEncryptionKey = _state.AutoGenerateEncryptionKey,
         CustomEncryptionKey = string.IsNullOrWhiteSpace(_state.CustomEncryptionKey) ? null : _state.CustomEncryptionKey,
         AutoGeneratePostgresPasswords = _state.AutoGeneratePostgresPasswords,
