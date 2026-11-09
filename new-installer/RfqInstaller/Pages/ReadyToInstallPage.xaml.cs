@@ -19,6 +19,9 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
             ? "Runs in the background (Windows service)"
             : "Runs only while it is open";
         PathSummary.Text = state.InstallPath;
+        NetworkAccessSummary.Text = state.AllowNetworkAccess
+            ? "Other computers on the network can connect (Windows Firewall rule for the app's port)"
+            : "This computer only";
 
         if (state.Mode == InstallMode.Standalone)
         {

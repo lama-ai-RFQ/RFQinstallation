@@ -24,7 +24,8 @@ public record InstallResult(
     string? ErrorMessage,
     string? MainExecutablePath,
     Exception? Cause = null,
-    string? DesktopAppPath = null);
+    string? DesktopAppPath = null,
+    string? Warning = null);
 
 /// <summary>
 /// Drives the real install sequence end to end — this is what replaces InstallingPage's fake
@@ -189,8 +190,11 @@ public class InstallOrchestrator
 
             InstallUninstaller(plan.InstallPath);
 
+            var warning = await ApplyFirewallAsync(plan.AllowNetworkAccess, AppPort(plan.InstallPath), progress, cancellationToken)
+                .ConfigureAwait(false);
+
             progress.Report(new InstallStepProgress("Finishing up", 1.0, null));
-            return new InstallResult(true, null, mainExePath, DesktopAppPath: desktopAppPath);
+            return new InstallResult(true, null, mainExePath, DesktopAppPath: desktopAppPath, Warning: warning);
         }
         catch (OperationCanceledException)
         {
@@ -208,6 +212,53 @@ public class InstallOrchestrator
     /// are kept exactly as they are. Every check that can stop a repair runs before anything on
     /// disk changes.
     /// </summary>
+    /// <summary>The port the app listens on: PORT in the install's .env, else the app's default 8000.</summary>
+    public static int AppPort(string installPath) =>
+        int.TryParse(EnvFileReader.Read(installPath).GetValueOrDefault("PORT"), out var port) && port is > 0 and <= 65535
+            ? port
+            : DefaultAppPort;
+
+    public const int DefaultAppPort = 8000;
+
+    /// <summary>
+    /// The address people open in a browser: SERVER_URL plus the install's PORT, unless SERVER_URL
+    /// names a port itself (the same rule the desktop app uses). No trailing slash.
+    /// </summary>
+    public static string BrowserAddress(string serverUrl, string installPath) =>
+        DesktopAppSetup.AppUrl(serverUrl, AppPort(installPath).ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .TrimEnd('/');
+
+    /// <summary>
+    /// Add (or move) the inbound rule for <paramref name="port"/>, or remove it. A firewall failure
+    /// doesn't fail the install, since the app works on this computer either way; it is returned as
+    /// a warning for the Finish page.
+    /// </summary>
+    internal static async Task<string?> ApplyFirewallAsync(
+        bool allow, int port, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
+    {
+        progress.Report(new InstallStepProgress("Configuring Windows Firewall", 0.95, null));
+        try
+        {
+            if (allow)
+            {
+                await FirewallRule.EnsureAsync(FirewallRule.AppRuleName, port, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await FirewallRule.RemoveAsync(FirewallRule.AppRuleName, cancellationToken).ConfigureAwait(false);
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return allow ? FirewallWarning(port, ex.Message) : null;
+        }
+    }
+
+    public static string FirewallWarning(int port, string reason) =>
+        $"Other computers can't connect yet: the Windows Firewall rule could not be added ({reason}). " +
+        $"Allow inbound TCP port {port}, or run Setup again and choose Repair.";
+
     public async Task<InstallResult> RepairAsync(RepairPlan plan, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
     {
         try
@@ -321,9 +372,18 @@ public class InstallOrchestrator
 
             InstallUninstaller(plan.InstallPath);
 
+            // Keep an existing rule on the install's current port; never add one repair wasn't asked for.
+            string? warning = null;
+            if (await FirewallRule.ExistsAsync(FirewallRule.AppRuleName, cancellationToken).ConfigureAwait(false))
+            {
+                warning = await ApplyFirewallAsync(true, AppPort(plan.InstallPath), progress, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             progress.Report(new InstallStepProgress("Finishing up", 1.0, null));
             return new InstallResult(
-                true, null, Path.Combine(plan.InstallPath, "RFQ_Application.exe"), DesktopAppPath: repairedDesktopApp);
+                true, null, Path.Combine(plan.InstallPath, "RFQ_Application.exe"), DesktopAppPath: repairedDesktopApp,
+                Warning: warning);
         }
         catch (OperationCanceledException)
         {

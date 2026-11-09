@@ -1,5 +1,6 @@
 using RfqInstaller.Core.Database;
 using RfqInstaller.Core.Services;
+using RfqInstaller.Core.Networking;
 
 namespace RfqInstaller.Core.Orchestration;
 
@@ -51,6 +52,9 @@ public class UninstallOrchestrator
             await Processes.HiddenProcessRunner.RunAsync("sc.exe", new[] { "stop", PostgresProvisioner.ServiceName }, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
+
+        progress.Report("Removing the Windows Firewall rule...");
+        await FirewallRule.RemoveAsync(FirewallRule.AppRuleName, cancellationToken).ConfigureAwait(false);
 
         progress.Report("Removing desktop shortcut...");
         // Matches the exact name/location InstallOrchestrator.CreateDesktopShortcut used — only

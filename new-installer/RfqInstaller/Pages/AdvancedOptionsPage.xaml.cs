@@ -33,6 +33,12 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         ApplyServerUrlForPlan();
         ServerUrlTextBox.Text = _state.ServerUrl;
 
+        // Individual licenses are used on this computer only: nothing to open.
+        NetworkAccessPanel.Visibility = LocalLicenseValidator.Validate(_state.LicenseKey).IndividualPlan
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        NetworkAccessCheckBox.IsChecked = _state.AllowNetworkAccess;
+
         ApplyEncryptionKeyUi();
         ApplyPostgresPasswordUi();
 
@@ -92,13 +98,17 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
                 _state.ServerUrl = $"https://{System.Net.Dns.GetHostName().ToLowerInvariant()}";
             }
             ServerUrlLabel.Text = "Address teammates open in their browser";
-            ServerUrlHelp.Text = "Teammates on other computers open Scint at this address and sign in with their own "
-                + "accounts. It is this computer's name; change it only if your network uses a different one.";
+            ServerUrlHelp.Text = "Teammates on other computers open Scint at this address and the app's port, "
+                + $"{RfqInstaller.Core.Orchestration.InstallOrchestrator.BrowserAddress(_state.ServerUrl, _state.InstallPath)}, "
+                + "and sign in with their own accounts. It is this computer's name; change it only if your network uses a different one.";
             ServerUrlHelp.Visibility = Visibility.Visible;
         }
     }
 
     private void ServerUrlTextBox_TextChanged(object sender, TextChangedEventArgs e) => _state.ServerUrl = ServerUrlTextBox.Text;
+
+    private void NetworkAccessCheckBox_Changed(object sender, RoutedEventArgs e) =>
+        _state.AllowNetworkAccessChoice = NetworkAccessCheckBox.IsChecked == true;
 
     private void ApplyEncryptionKeyUi()
     {

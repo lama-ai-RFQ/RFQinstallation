@@ -476,7 +476,9 @@ public partial class MainWindow : Window
         else if (_current != WizardStep.Failed
             && _state.LaunchAfterFinish && _state.Mode == InstallMode.WindowsService)
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_state.ServerUrl) { UseShellExecute = true });
+            // The app listens on PORT (8000 by default), not on the bare SERVER_URL's 443.
+            var address = Core.Orchestration.InstallOrchestrator.BrowserAddress(_state.ServerUrl, _state.InstallPath);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(address) { UseShellExecute = true });
         }
 
         ForceClose();

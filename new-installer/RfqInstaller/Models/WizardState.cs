@@ -81,6 +81,22 @@ public class WizardState
 
     public string ServerUrl { get; set; } = DefaultServerUrl;
 
+    /// <summary>
+    /// The user's answer to "Allow other computers on the network to connect", or null when they
+    /// haven't touched it: then a Windows service allows it and a standalone install doesn't. An
+    /// Individual license is used on this computer only, so it never opens the firewall.
+    /// </summary>
+    public bool? AllowNetworkAccessChoice { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool AllowNetworkAccess =>
+        !RfqInstaller.Core.Licensing.LocalLicenseValidator.Validate(LicenseKey).IndividualPlan
+        && (AllowNetworkAccessChoice ?? Mode == InstallMode.WindowsService);
+
+    /// <summary>Set after install when something worked only partly (e.g. the firewall rule).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? InstallWarning { get; set; }
+
     public bool AutoGenerateEncryptionKey { get; set; } = true;
 
     public string CustomEncryptionKey { get; set; } = string.Empty;

@@ -19,6 +19,14 @@
                 <TextBox x:Name="ServerUrlTextBox" Style="{StaticResource ModernTextBoxStyle}" TextChanged="ServerUrlTextBox_TextChanged"/>
             </StackPanel>
 
+            <StackPanel x:Name="NetworkAccessPanel" Margin="0,16,0,0">
+                <CheckBox x:Name="NetworkAccessCheckBox" Style="{StaticResource ModernCheckBoxStyle}"
+                          Content="Allow other computers on the network to connect"
+                          Checked="NetworkAccessCheckBox_Changed" Unchecked="NetworkAccessCheckBox_Changed"/>
+                <TextBlock Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" FontSize="12" Margin="24,4,0,0"
+                           Text="Adds a Windows Firewall rule for the app's port on work and home (domain and private) networks. Public networks stay closed."/>
+            </StackPanel>
+
             <TextBlock Text="Azure config encryption key" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
             <TextBlock x:Name="EncryptionKeyHelp" Style="{StaticResource PageSubtitleStyle}" TextWrapping="Wrap" Margin="0,0,0,8"/>
 
