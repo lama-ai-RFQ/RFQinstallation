@@ -27,6 +27,17 @@ public static class DefaultPaths
         return Path.Combine(documents, "RFQ_Models");
     }
 
+    /// <summary>
+    /// The model folder for a service that runs as Network Service or Local System. The app
+    /// downloads models into it as that account, which can't open the installing user's
+    /// Documents or AppData; ProgramData is local, never synced, and not tied to one user.
+    /// </summary>
+    public static string MachineModelPath() =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "RFQApplication",
+            "RFQ_Models");
+
     private static bool IsOneDriveRedirected(string documentsPath)
     {
         foreach (var variable in new[] { "OneDriveCommercial", "OneDriveConsumer", "OneDrive" })

@@ -84,19 +84,21 @@ public sealed partial class ServiceControl
         var start = await _run("sc.exe", new[] { "start", serviceName }, cancellationToken).ConfigureAwait(false);
         if (start.ExitCode == ErrorServiceLogonFailed)
         {
+            // The app never ran, so neither its log nor NSSM has anything to add to the message.
             var account = await StartNameAsync(serviceName, cancellationToken).ConfigureAwait(false);
-            throw new InvalidOperationException(
-                $"Windows couldn't sign the {serviceName} service in as {account ?? "its account"}: the user name or " +
-                "password is wrong, or the account isn't allowed to run services. For a Microsoft account, use the " +
-                "account's password, not the PIN." + Environment.NewLine + Environment.NewLine +
-                await FailureReportAsync(serviceName, stderrLogPath, cancellationToken).ConfigureAwait(false));
+            throw await FailureAsync(
+                    $"Windows couldn't sign the {serviceName} service in as {account ?? "its account"}: the user name or " +
+                    "password is wrong, or the account isn't allowed to run services. For a Microsoft account, use the " +
+                    "account's password, not the PIN.",
+                    serviceName, stderrLogPath, withReason: false, cancellationToken)
+                .ConfigureAwait(false);
         }
         if (start.ExitCode is not (0 or ErrorServiceAlreadyRunning))
         {
-            throw new InvalidOperationException(
-                $"Could not start service '{serviceName}' (exit code {start.ExitCode}: {FirstLine(start.StdOut + start.StdErr)})." +
-                Environment.NewLine + Environment.NewLine +
-                await FailureReportAsync(serviceName, stderrLogPath, cancellationToken).ConfigureAwait(false));
+            throw await FailureAsync(
+                    $"Could not start service '{serviceName}' (exit code {start.ExitCode}: {FirstLine(start.StdOut + start.StdErr)}).",
+                    serviceName, stderrLogPath, withReason: true, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         // Counted in one-second polls rather than wall-clock time, so the wait is the same however
@@ -122,10 +124,10 @@ public sealed partial class ServiceControl
                 case ServiceState.Stopped:
                 case ServiceState.Paused:
                 case ServiceState.NotInstalled:
-                    throw new InvalidOperationException(
-                        $"The {serviceName} service {(status.State == ServiceState.Paused ? "keeps exiting, so Windows paused it" : stablePolls > 0 ? "stopped soon after starting" : "stopped right after starting")}." +
-                        Environment.NewLine + Environment.NewLine +
-                        await FailureReportAsync(serviceName, stderrLogPath, cancellationToken).ConfigureAwait(false));
+                    throw await FailureAsync(
+                            $"The {serviceName} service {(status.State == ServiceState.Paused ? "keeps exiting, so Windows paused it" : stablePolls > 0 ? "stopped soon after starting" : "stopped right after starting")}.",
+                            serviceName, stderrLogPath, withReason: true, cancellationToken)
+                        .ConfigureAwait(false);
                 default:
                     stablePolls = 0;
                     break;
@@ -133,10 +135,10 @@ public sealed partial class ServiceControl
 
             if (stablePolls == 0 && --pollsLeft <= 0)
             {
-                throw new InvalidOperationException(
-                    $"The {serviceName} service was still starting after {limit.TotalMinutes:0.#} minutes." +
-                    Environment.NewLine + Environment.NewLine +
-                    await FailureReportAsync(serviceName, stderrLogPath, cancellationToken).ConfigureAwait(false));
+                throw await FailureAsync(
+                        $"The {serviceName} service was still starting after {limit.TotalMinutes:0.#} minutes.",
+                        serviceName, stderrLogPath, withReason: true, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             await _delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
@@ -191,6 +193,60 @@ public sealed partial class ServiceControl
         }
         throw new TimeoutException(
             $"Service '{serviceName}' was not removed within 30 seconds. Close the Services window if it is open, then try again.");
+    }
+
+    /// <summary>
+    /// A short message, with NSSM's own reason when it logged one ("CreateProcess() failed: Access
+    /// is denied"), and the full report as the exception's details.
+    /// </summary>
+    private async Task<ServiceStartException> FailureAsync(
+        string summary,
+        string serviceName,
+        string? stderrLogPath,
+        bool withReason,
+        CancellationToken cancellationToken)
+    {
+        var reason = withReason ? await NssmReasonAsync(serviceName, cancellationToken).ConfigureAwait(false) : null;
+        var message = reason is null ? summary : $"{summary}{Environment.NewLine}{Environment.NewLine}Windows said: {reason}";
+        return new ServiceStartException(
+            message,
+            await FailureReportAsync(serviceName, stderrLogPath, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// NSSM's newest error about this service in the last ten minutes. NSSM writes why it couldn't
+    /// launch the app to the Application log, not the System log the Service Control Manager uses.
+    /// </summary>
+    internal async Task<string?> NssmReasonAsync(string serviceName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var events = await NssmErrorsAsync(serviceName, 600000, 1, cancellationToken).ConfigureAwait(false);
+            return events.Count > 0 ? events[0].Text : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<ServiceEvent>> NssmErrorsAsync(
+        string serviceName,
+        int withinMilliseconds,
+        int max,
+        CancellationToken cancellationToken)
+    {
+        var query = await _run(
+                "wevtutil.exe",
+                new[]
+                {
+                    "qe", "Application",
+                    $"/q:*[System[Provider[@Name='nssm'] and Level=2 and TimeCreated[timediff(@SystemTime) <= {withinMilliseconds}]]]",
+                    "/rd:true", "/c:20", "/f:text",
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+        return query.ExitCode == 0 ? ParseServiceEvents(query.StdOut, serviceName, null, max) : Array.Empty<ServiceEvent>();
     }
 
     /// <summary>
@@ -302,12 +358,35 @@ public sealed partial class ServiceControl
                 },
                 cancellationToken)
             .ConfigureAwait(false);
-        return query.ExitCode == 0 ? ParseEvents(query.StdOut, serviceName, displayName, 6) : Array.Empty<string>();
+        var events = query.ExitCode == 0
+            ? ParseServiceEvents(query.StdOut, serviceName, displayName, 6).ToList()
+            : new List<ServiceEvent>();
+        try
+        {
+            events.AddRange(await NssmErrorsAsync(serviceName, 3600000, 3, cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The System log's events still stand.
+        }
+
+        return events
+            .OrderByDescending(e => e.Date, StringComparer.Ordinal)
+            .Select(e => e.ToString())
+            .ToList();
     }
 
-    internal static IReadOnlyList<string> ParseEvents(string wevtutilText, string serviceName, string? displayName, int max)
+    internal sealed record ServiceEvent(string? Date, string? Id, string Text)
     {
-        var results = new List<string>();
+        public override string ToString() => $"{Date} event {Id}: {Text}";
+    }
+
+    internal static IReadOnlyList<string> ParseEvents(string wevtutilText, string serviceName, string? displayName, int max) =>
+        ParseServiceEvents(wevtutilText, serviceName, displayName, max).Select(e => e.ToString()).ToList();
+
+    internal static IReadOnlyList<ServiceEvent> ParseServiceEvents(string wevtutilText, string serviceName, string? displayName, int max)
+    {
+        var results = new List<ServiceEvent>();
         foreach (var block in EventSplitRegex().Split(wevtutilText))
         {
             var description = DescriptionRegex().Match(block) is { Success: true } d ? d.Groups[1].Value : null;
@@ -327,7 +406,7 @@ public sealed partial class ServiceControl
             var date = Field(block, "Date");
             var id = Field(block, "Event ID");
             var text = string.Join(" ", description.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-            results.Add($"{date} event {id}: {text}");
+            results.Add(new ServiceEvent(date, id, text));
             if (results.Count >= max)
             {
                 break;
@@ -414,7 +493,9 @@ public sealed partial class ServiceControl
     [GeneratedRegex(@"STATE\s*:\s*(\d+)")]
     private static partial Regex StateRegex();
 
-    [GeneratedRegex(@"^Event\[\d+\]:", RegexOptions.Multiline)]
+    // Some Windows versions write "Event[1]:", others "Event[1]" alone; missing one merged every
+    // event after it into the first one's description.
+    [GeneratedRegex(@"^[ \t]*Event\[\d+\]:?", RegexOptions.Multiline)]
     private static partial Regex EventSplitRegex();
 
     // The description is the rest of the event's block and may contain blank lines.

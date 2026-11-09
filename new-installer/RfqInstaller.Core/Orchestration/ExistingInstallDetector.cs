@@ -130,15 +130,23 @@ public static class ExistingInstallDetector
             if (File.Exists(manifestPath))
             {
                 using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
-                if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                    document.RootElement.TryGetProperty("version", out var version) &&
-                    version.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(version.GetString()))
+                // Releases name it "release_version"; older manifests used "version".
+                foreach (var key in new[] { "release_version", "version" })
                 {
-                    return version.GetString()!.Trim();
+                    if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                        document.RootElement.TryGetProperty(key, out var version) &&
+                        version.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(version.GetString()))
+                    {
+                        return version.GetString()!.Trim();
+                    }
                 }
+
+                return null;
             }
 
+            // Only installs from before the manifest: builds stopped writing version.txt, and one
+            // left behind by an older install names that install's version.
             var versionFile = Path.Combine(installPath, "version.txt");
             if (File.Exists(versionFile))
             {

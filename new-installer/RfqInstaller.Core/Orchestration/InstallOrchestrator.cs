@@ -405,16 +405,16 @@ public class InstallOrchestrator
         }
 
         File.Copy(_bundledUninstallerPath, Path.Combine(installPath, "RfqInstaller.Uninstall.exe"), overwrite: true);
-        var versionFile = Path.Combine(installPath, "version.txt");
-        var version = File.Exists(versionFile) ? File.ReadAllText(versionFile).Trim() : "1.0.0";
+        var version = ExistingInstallDetector.ReadInstalledVersion(installPath) ?? "1.0.0";
         UninstallRegistration.Register(installPath, version);
     }
 
     private static string FormatFailure(Exception exception)
     {
-        if (exception is BrokerClientException broker)
+        if (exception is BrokerClientException or ServiceStartException)
         {
-            return broker.Message;
+            // Already written for the person installing; a service's full report goes to the log.
+            return exception.Message;
         }
 
         var root = exception;
@@ -619,11 +619,7 @@ public class InstallOrchestrator
         IProgress<InstallStepProgress> progress,
         CancellationToken cancellationToken)
     {
-        var stagingRoot = Path.Combine(
-            Path.GetTempPath(),
-            "RfqInstallerExtract",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(stagingRoot);
+        var stagingRoot = CreateStagingRoot(installPath);
         try
         {
             foreach (var archivePath in archivePaths)
@@ -650,11 +646,35 @@ public class InstallOrchestrator
         }
         finally
         {
-            if (Directory.Exists(stagingRoot))
+            var stagingParent = Path.GetDirectoryName(stagingRoot)!;
+            if (Directory.Exists(stagingParent))
             {
-                Directory.Delete(stagingRoot, recursive: true);
+                Directory.Delete(stagingParent, recursive: true);
             }
         }
+    }
+
+    internal const string StagingFolderName = ".install-staging";
+
+    /// <summary>
+    /// Unpacks inside the install folder, not the user's temp folder. A moved file keeps the
+    /// permissions it was created with, so files unpacked in the user's temp folder arrived open
+    /// only to that user, SYSTEM and Administrators: a service running as Network Service could
+    /// not launch the app ("CreateProcess() failed: Access is denied"). Created here, they take
+    /// the install folder's permissions, and a later grant on the install folder reaches them.
+    /// </summary>
+    internal static string CreateStagingRoot(string installPath)
+    {
+        var stagingParent = Path.Combine(installPath, StagingFolderName);
+        if (Directory.Exists(stagingParent))
+        {
+            // Left by an install that was interrupted; nothing else writes here.
+            Directory.Delete(stagingParent, recursive: true);
+        }
+
+        var stagingRoot = Path.Combine(stagingParent, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stagingRoot);
+        return stagingRoot;
     }
 
     internal static void MoveDirectoryContents(
@@ -684,6 +704,7 @@ public class InstallOrchestrator
             // Same-volume moves reuse the verified staged file instead of allocating
             // a second complete application tree. File.Move also supports a destination
             // on another volume, where it copies and removes the source after success.
+            // The moved file keeps its permissions: see CreateStagingRoot.
             File.Move(file, destinationPath, overwrite: true);
         }
     }
@@ -780,7 +801,7 @@ public class InstallOrchestrator
             // deliberately not 5432 — the app's own default (backend/config/database.py) is 5432, so
             // this must always be written or the app connects to nothing.
             ["DB_PORT"] = dbPort.ToString(),
-            ["MODEL_PATH"] = DefaultPaths.DefaultModelPath(),
+            ["MODEL_PATH"] = ModelPath(plan),
         };
 
         envValues["SQL_SUPER_USER"] = StoreCredentialOrUsePlaintext(
@@ -874,12 +895,14 @@ public class InstallOrchestrator
             ServiceLogonRight.TryGrant(currentUserAccount);
         }
 
-        GrantAppAccess(plan.InstallPath, plan.ServiceAccount switch
+        var serviceAccount = plan.ServiceAccount switch
         {
             ServiceAccountKind.CurrentUser => AccountIdentity.TryResolve(currentUserAccount),
             ServiceAccountKind.NetworkService => AccountIdentity.NetworkService,
             _ => null,
-        });
+        };
+        GrantAppAccess(plan.InstallPath, serviceAccount);
+        PrepareModelFolder(plan, serviceAccount);
 
         await nssm.InstallOrReplaceAsync(
             AppServiceName,
@@ -908,6 +931,35 @@ public class InstallOrchestrator
             currentUserAccount,
             plan.ServiceAccountPassword,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Where the app keeps its AI models. A service running as the installing user uses that
+    /// user's folder, as before; any other account gets a machine folder it can write to.
+    /// </summary>
+    internal static string ModelPath(InstallPlan plan) =>
+        UsesMachineModelFolder(plan) ? DefaultPaths.MachineModelPath() : DefaultPaths.DefaultModelPath();
+
+    private static bool UsesMachineModelFolder(InstallPlan plan) =>
+        plan.Mode == InstallMode.WindowsService && plan.ServiceAccount != ServiceAccountKind.CurrentUser;
+
+    /// <summary>
+    /// Creates the machine model folder and lets the service account write to it: the app
+    /// downloads models there as that account. Local System can already.
+    /// </summary>
+    internal static void PrepareModelFolder(InstallPlan plan, SecurityIdentifier? serviceAccount)
+    {
+        if (!UsesMachineModelFolder(plan))
+        {
+            return;
+        }
+
+        var path = ModelPath(plan);
+        Directory.CreateDirectory(path);
+        if (serviceAccount is not null && !serviceAccount.Equals(AccountIdentity.LocalSystem))
+        {
+            FolderAccess.Grant(path, FileSystemRights.Modify, new[] { serviceAccount });
+        }
     }
 
     private static void CreateDesktopShortcut(string mainExePath, string installPath, string? desktopDirectory)
