@@ -91,6 +91,23 @@ public sealed class ExistingInstallDetectorTests : IDisposable
         Assert.Null(ExistingInstallDetector.ReadInstalledVersion(withBrokenManifest));
     }
 
+    [Fact]
+    public void ReadsTheReleaseManifestsVersionNotAnOlderInstallsVersionTxt()
+    {
+        // A release manifest names its version "release_version"; the version.txt is left from an
+        // install made before the current one.
+        var install = CreateInstall("release");
+        File.WriteAllText(Path.Combine(install, "local_manifest.json"),
+            "{\"release_version\": \"3.10.041\", \"components\": {}}");
+        File.WriteAllText(Path.Combine(install, "version.txt"), "3.4.734");
+        var withoutVersion = CreateInstall("no-version");
+        File.WriteAllText(Path.Combine(withoutVersion, "local_manifest.json"), "{\"components\": {}}");
+        File.WriteAllText(Path.Combine(withoutVersion, "version.txt"), "3.4.734");
+
+        Assert.Equal("3.10.041", ExistingInstallDetector.ReadInstalledVersion(install));
+        Assert.Null(ExistingInstallDetector.ReadInstalledVersion(withoutVersion));
+    }
+
     private string CreateDir(string name)
     {
         var path = Path.Combine(_root, name);
