@@ -13,6 +13,7 @@ public class NssmServiceManager
     private readonly string _nssmPath;
     private readonly Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> _run;
     private readonly ServiceControl _control;
+    private readonly Func<string?> _getLogCapValue;
 
     public NssmServiceManager(string nssmPath) : this(
         nssmPath,
@@ -23,11 +24,13 @@ public class NssmServiceManager
     internal NssmServiceManager(
         string nssmPath,
         Func<string, IReadOnlyList<string>, CancellationToken, Task<ProcessResult>> run,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        Func<string?>? getLogCapValue = null)
     {
         _nssmPath = nssmPath;
         _run = run;
         _control = new ServiceControl(run, delay);
+        _getLogCapValue = getLogCapValue ?? (() => Environment.GetEnvironmentVariable("RFQ_LOG_CAP_MAX_BYTES"));
     }
 
     /// <summary>How long a start may take before it counts as failed; RFQ Application can take minutes on a slow disk.</summary>
@@ -47,6 +50,9 @@ public class NssmServiceManager
         string? currentUserPassword,
         CancellationToken cancellationToken)
     {
+        // Validate before this method removes an existing service. The enclosing
+        // installer may already have stopped services while replacing app files.
+        var logCapMaxBytes = NssmLogRotation.ParseMaxBytes(_getLogCapValue());
         if (account == ServiceAccountKind.CurrentUser &&
             (string.IsNullOrWhiteSpace(currentUserDomainAndName) || string.IsNullOrEmpty(currentUserPassword)))
         {
@@ -64,6 +70,9 @@ public class NssmServiceManager
         await RunNssm(new[] { "set", serviceName, "Start", "SERVICE_AUTO_START" }, cancellationToken, currentUserPassword).ConfigureAwait(false);
         await RunNssm(new[] { "set", serviceName, "AppStdout", stdoutLogPath }, cancellationToken, currentUserPassword).ConfigureAwait(false);
         await RunNssm(new[] { "set", serviceName, "AppStderr", stderrLogPath }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "AppRotateFiles", "1" }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "AppRotateOnline", "1" }, cancellationToken, currentUserPassword).ConfigureAwait(false);
+        await RunNssm(new[] { "set", serviceName, "AppRotateBytes", logCapMaxBytes }, cancellationToken, currentUserPassword).ConfigureAwait(false);
 
         if (!string.IsNullOrEmpty(appParameters))
         {
