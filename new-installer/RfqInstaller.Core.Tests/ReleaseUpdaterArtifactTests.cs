@@ -13,12 +13,19 @@ public sealed class ReleaseUpdaterArtifactTests
         var selected = ReleaseUpdaterArtifact.Select(
         [
             Artifact("app-executable.zip", "app-executable.zip"),
+            Artifact("previous-updater", "previous-windows_updater.exe"),
             Artifact("updater", "windows_updater.exe"),
         ]);
 
         Assert.NotNull(selected);
         Assert.Equal("updater", selected.ArtifactId);
         Assert.Equal("windows_updater.exe", selected.Name);
+    }
+
+    [Fact]
+    public void RejectsAnArchiveIdentifiedAsTheUpdaterExecutable()
+    {
+        Assert.Throws<InvalidDataException>(() => ReleaseUpdaterArtifact.Select([Artifact("updater", "updater.zip")]));
     }
 
     [Fact]

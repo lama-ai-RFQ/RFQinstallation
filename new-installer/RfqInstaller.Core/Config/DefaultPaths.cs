@@ -3,6 +3,46 @@ namespace RfqInstaller.Core.Config;
 /// <summary>Computes install-time default folders, working around known Windows footguns rather than trusting SpecialFolder blindly.</summary>
 public static class DefaultPaths
 {
+    /// <summary>Setup grants access to its install folder and its children. A shared system
+    /// or profile folder must never receive that grant as the installation itself.</summary>
+    public static string? InstallFolderProblem(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            return "Enter the full path to a folder for RFQ Application.";
+
+        try
+        {
+            var directory = new DirectoryInfo(path);
+            var fullPath = Path.TrimEndingDirectorySeparator(directory.FullName);
+            const string dedicatedFolder = "Choose a dedicated application folder, such as an RFQ Application subfolder.";
+            if (directory.Parent is null)
+                return dedicatedFolder;
+            if (File.Exists(fullPath))
+                return "The selected path is a file. Choose a folder for RFQ Application.";
+
+            Environment.SpecialFolder[] sharedFolders = [
+                Environment.SpecialFolder.Windows, Environment.SpecialFolder.System, Environment.SpecialFolder.SystemX86,
+                Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86,
+                Environment.SpecialFolder.CommonProgramFiles, Environment.SpecialFolder.CommonProgramFilesX86,
+                Environment.SpecialFolder.CommonApplicationData, Environment.SpecialFolder.UserProfile,
+                Environment.SpecialFolder.ApplicationData, Environment.SpecialFolder.LocalApplicationData,
+                Environment.SpecialFolder.MyDocuments, Environment.SpecialFolder.DesktopDirectory,
+            ];
+            foreach (var shared in sharedFolders)
+            {
+                var known = Environment.GetFolderPath(shared);
+                if (string.Equals(fullPath, known, StringComparison.OrdinalIgnoreCase) ||
+                    known.StartsWith(fullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    return dedicatedFolder;
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return "The install folder path is invalid. Choose another folder.";
+        }
+    }
+
     /// <summary>
     /// The AI model is ~30 GB and needs to stay fully present on local disk at all times. On many
     /// Windows machines (very commonly on managed/corporate devices), "Documents" is silently

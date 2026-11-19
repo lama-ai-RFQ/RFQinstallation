@@ -1,3 +1,4 @@
+using System.Globalization;
 using RfqInstaller.Core.Archive;
 using RfqInstaller.Core.Certificates;
 using RfqInstaller.Core.Config;
@@ -72,7 +73,10 @@ public class InstallOrchestrator
             {
                 return new InstallResult(false, localCheck.Message, null);
             }
+            if (DefaultPaths.InstallFolderProblem(plan.InstallPath) is { } problem)
+                return new InstallResult(false, problem, null);
 
+            using var setupLock = AcquireSetupLock();
             var release = await brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
                 plan.LicenseKey,
                 plan.UpdateChannel,
@@ -264,6 +268,9 @@ public class InstallOrchestrator
         try
         {
             progress.Report(new InstallStepProgress("Checking the existing installation", 0.0, null));
+            if (DefaultPaths.InstallFolderProblem(plan.InstallPath) is { } problem)
+                return new InstallResult(false, problem, null);
+            using var setupLock = AcquireSetupLock();
             var readiness = RepairPreflight.Check(plan.InstallPath, plan.RepairDatabase);
             if (!readiness.CanRepair)
             {
@@ -397,6 +404,18 @@ public class InstallOrchestrator
 
     private static string DownloadCacheDir => Path.Combine(Path.GetTempPath(), "RfqInstallerDownloads");
 
+    // All destinations share the same Windows services. Hold the named handle across awaits
+    // without taking thread-affine mutex ownership. Windows closes it if Setup exits.
+    internal static Mutex AcquireSetupLock()
+    {
+        var handle = new Mutex(false, @"Global\Scint.RfqInstaller.Setup", out var created);
+        if (created)
+            return handle;
+
+        handle.Dispose();
+        throw new InvalidOperationException("Another RFQ setup is running. Wait for it to finish, then retry.");
+    }
+
     private void InstallUninstaller(string installPath)
     {
         if (_bundledUninstallerPath is null || !File.Exists(_bundledUninstallerPath))
@@ -445,7 +464,7 @@ public class InstallOrchestrator
         return signed.Artifacts[0];
     }
 
-    private async Task DownloadAndExtractComponentsAsync(
+    internal async Task DownloadAndExtractComponentsAsync(
         SignedWindowsRelease release,
         string downloadCacheDir,
         string installPath,
@@ -477,11 +496,12 @@ public class InstallOrchestrator
             }
             var destination = Path.Combine(downloadCacheDir, fileName);
 
+            var artifactIndex = i;
             var dlProgress = new Progress<DownloadProgress>(p =>
             {
                 // Reserve 35-40% for staging/extraction so progress never intentionally moves
                 // backwards after the final download callback.
-                var fraction = 0.1 + 0.25 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
+                var fraction = 0.1 + 0.25 * (artifactIndex + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
                     Math.Max(1, release.Artifacts.Count);
                 progress.Report(new InstallStepProgress("Downloading application components", fraction, fileName));
             });
@@ -497,30 +517,10 @@ public class InstallOrchestrator
             downloaded.Add(destination);
         }
 
-        var multipartArchives = downloaded
-            .Where(path => path.EndsWith(".zip.part1", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        var standaloneArchives = downloaded
-            .Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
         var archivesToExtract = new List<string>();
 
-        foreach (var firstPart in multipartArchives)
+        foreach (var (archivePath, parts) in MultipartArchives(downloaded))
         {
-            var archivePath = firstPart[..^".part1".Length];
-            var partPrefix = Path.GetFileName(archivePath) + ".part";
-            var partNumbers = downloaded
-                .Select(Path.GetFileName)
-                .Where(name => name is not null && name.StartsWith(partPrefix, StringComparison.OrdinalIgnoreCase))
-                .Select(name => int.TryParse(name![partPrefix.Length..], out var number) ? number : 0)
-                .Where(number => number > 0)
-                .Order()
-                .ToArray();
-            if (partNumbers.Length == 0 ||
-                !partNumbers.SequenceEqual(Enumerable.Range(1, partNumbers[^1])))
-            {
-                throw new InvalidDataException($"Archive '{Path.GetFileName(archivePath)}' has missing or malformed parts.");
-            }
             await using (var output = new FileStream(
                              archivePath,
                              FileMode.Create,
@@ -529,9 +529,8 @@ public class InstallOrchestrator
                              1 << 20,
                              useAsync: true))
             {
-                foreach (var partNumber in partNumbers)
+                foreach (var partPath in parts)
                 {
-                    var partPath = $"{archivePath}.part{partNumber}";
                     await using var input = new FileStream(
                         partPath,
                         FileMode.Open,
@@ -547,36 +546,97 @@ public class InstallOrchestrator
                 // Repair deliberately starts with an empty cache. Once the verified
                 // segments have been joined, retaining both copies wastes several GB
                 // while the existing application and new staging tree also occupy disk.
-                foreach (var partNumber in partNumbers)
+                foreach (var partPath in parts)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    File.Delete($"{archivePath}.part{partNumber}");
+                    File.Delete(partPath);
                 }
             }
             archivesToExtract.Add(archivePath);
         }
 
-        archivesToExtract.AddRange(standaloneArchives);
-        var verifiedArchiveContainsUpdater = false;
-        if (archivesToExtract.Count > 0)
+        archivesToExtract.AddRange(downloaded.Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)));
+        var stagingRoot = CreateStagingRoot(installPath);
+        try
         {
-            verifiedArchiveContainsUpdater = await ExtractArchivesFromStagingAsync(
-                    archivesToExtract,
-                    installPath,
-                    progress,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            StageRelease(archivesToExtract, release.Release.Artifacts, downloaded, stagingRoot, progress, cancellationToken);
+            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
+            progress.Report(new InstallStepProgress("Installing application files", 0.39, null));
+            MoveDirectoryContents(stagingRoot, installPath, cancellationToken);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stagingRoot)!, recursive: true);
+        }
+    }
+
+    // A missing first part must fail even when a different component is a complete ZIP.
+    internal static IEnumerable<(string Archive, string[] Parts)> MultipartArchives(IReadOnlyList<string> downloads)
+    {
+        var groups = downloads
+            .Where(path => Path.GetExtension(path).StartsWith(".part", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(path => Path.ChangeExtension(path, null)!, StringComparer.OrdinalIgnoreCase);
+        foreach (var group in groups.Where(group => group.Key.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (downloads.Contains(group.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"Archive '{Path.GetFileName(group.Key)}' is listed both whole and in parts.");
+            }
+
+            var parts = new string[group.Count()];
+            foreach (var path in group)
+            {
+                var suffix = Path.GetExtension(path)[".part".Length..];
+                if (!int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var number) ||
+                    suffix.StartsWith('0') || number < 1 || number > parts.Length || parts[number - 1] is not null)
+                {
+                    throw new InvalidDataException($"Archive '{Path.GetFileName(group.Key)}' has missing or malformed parts.");
+                }
+                parts[number - 1] = path;
+            }
+            yield return (group.Key, parts);
+        }
+    }
+
+    internal void StageRelease(
+        IReadOnlyList<string> archives, IReadOnlyList<ReleaseArtifact> artifacts, IReadOnlyList<string> downloaded,
+        string stagingRoot, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
+    {
+        foreach (var archive in archives)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress.Report(new InstallStepProgress("Extracting application files", 0.36, Path.GetFileName(archive)));
+            ZipExtractor.Extract(archive, stagingRoot, progress: null, cancellationToken);
+        }
+
+        var app = new FileInfo(Path.Combine(stagingRoot, "RFQ_Application.exe"));
+        if (!app.Exists || app.Length == 0)
+        {
+            throw new InvalidDataException("The Windows release is missing the RFQ Application executable or it is empty.");
+        }
+
+        // These files belong to the installation. A packaging error must not replace them on repair.
+        string[] reservedPaths = [
+            ".env", "pgdata", "cert.pem", "key.pem", "user_config.yaml",
+            Path.Combine("backend", "main", "user_config.yaml"), StagingFolderName,
+        ];
+        foreach (var reserved in reservedPaths)
+        {
+            if (Path.Exists(Path.Combine(stagingRoot, reserved)))
+            {
+                throw new InvalidDataException($"The Windows release contains the reserved install path '{reserved}'.");
+            }
         }
 
         var manifest = downloaded.FirstOrDefault(path =>
             string.Equals(Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase));
         if (manifest is not null)
         {
-            File.Copy(manifest, Path.Combine(installPath, "local_manifest.json"), overwrite: true);
+            File.Copy(manifest, Path.Combine(stagingRoot, "local_manifest.json"), overwrite: true);
         }
-
-        File.Copy(_bundledNssmPath, Path.Combine(installPath, "nssm.exe"), overwrite: true);
-        InstallUpdaterFromRelease(release.Release.Artifacts, downloaded, installPath, verifiedArchiveContainsUpdater);
+        File.Copy(_bundledNssmPath, Path.Combine(stagingRoot, "nssm.exe"), overwrite: true);
+        var updater = new FileInfo(Path.Combine(stagingRoot, ReleaseUpdaterArtifact.InstalledFileName));
+        InstallUpdaterFromRelease(artifacts, downloaded, stagingRoot, updater.Exists && updater.Length > 0);
     }
 
     internal static void InstallUpdaterFromRelease(
@@ -611,47 +671,6 @@ public class InstallOrchestrator
             updaterDownload,
             Path.Combine(installPath, ReleaseUpdaterArtifact.InstalledFileName),
             overwrite: true);
-    }
-
-    private async Task<bool> ExtractArchivesFromStagingAsync(
-        IReadOnlyList<string> archivePaths,
-        string installPath,
-        IProgress<InstallStepProgress> progress,
-        CancellationToken cancellationToken)
-    {
-        var stagingRoot = CreateStagingRoot(installPath);
-        try
-        {
-            foreach (var archivePath in archivePaths)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                progress.Report(new InstallStepProgress(
-                    "Extracting application files",
-                    0.36,
-                    Path.GetFileName(archivePath)));
-                ZipExtractor.Extract(archivePath, stagingRoot, progress: null, cancellationToken);
-            }
-
-            // The old installer extracted away from the live installation, stopped processes once,
-            // then transferred the complete staged tree into place. This avoids repeatedly decompressing
-            // an archive while some unrelated live file is locked.
-            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
-            progress.Report(new InstallStepProgress(
-                "Installing application files",
-                0.39,
-                null));
-            var archiveContainsUpdater = File.Exists(Path.Combine(stagingRoot, ReleaseUpdaterArtifact.InstalledFileName));
-            MoveDirectoryContents(stagingRoot, installPath, cancellationToken);
-            return archiveContainsUpdater;
-        }
-        finally
-        {
-            var stagingParent = Path.GetDirectoryName(stagingRoot)!;
-            if (Directory.Exists(stagingParent))
-            {
-                Directory.Delete(stagingParent, recursive: true);
-            }
-        }
     }
 
     internal const string StagingFolderName = ".install-staging";
