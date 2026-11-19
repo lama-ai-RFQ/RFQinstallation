@@ -93,6 +93,8 @@ public partial class PostgresProvisioner
         // FolderAccess), so the accounts themselves need read access wherever the install lives.
         FolderAccess.Grant(binDir, FileSystemRights.ReadAndExecute, new[] { AccountIdentity.CurrentSid(), AccountIdentity.LocalSystem });
 
+        await EnsurePostgresCanStartAsync(binDir, progress, cancellationToken).ConfigureAwait(false);
+
         var alreadyInitialized = File.Exists(Path.Combine(dataDir, "PG_VERSION"));
         if (!alreadyInitialized)
         {
@@ -113,6 +115,44 @@ public partial class PostgresProvisioner
         await WaitUntilAcceptingConnectionsAsync(binDir, progress, cancellationToken).ConfigureAwait(false);
 
         return new PostgresInstance(binDir, dataDir, PostgresBinariesConfig.DefaultPort, ServiceName, generatedSuperUserPassword);
+    }
+
+    private async Task EnsurePostgresCanStartAsync(
+        string engineDirectory, IProgress<string>? progress, CancellationToken token)
+    {
+        const int missingDll = unchecked((int)0xC0000135);
+        var postgres = Path.Combine(engineDirectory, "bin", "postgres.exe");
+        var probe = await HiddenProcessRunner.RunAsync(postgres, ["--version"], cancellationToken: token).ConfigureAwait(false);
+        if (probe.ExitCode == missingDll)
+        {
+            // A fresh Windows installation does not include the x64 MSVC runtime used by EDB.
+            // Use Microsoft's immutable download, pinned to the same hash as its official release.
+            const string sha256 = "9c02c9ed120f671b900e6b9471d890e3b2414117a7e53f4ae2e855466fa2b7c9";
+            const string url = "https://download.visualstudio.microsoft.com/download/pr/78d061c5-9ef3-42ab-98ed-3309d1095dc4/"
+                + "9C02C9ED120F671B900E6B9471D890E3B2414117A7E53F4AE2E855466FA2B7C9/VC_redist.x64.exe";
+            progress?.Report("Installing the Microsoft Visual C++ x64 runtime required by PostgreSQL...");
+            var directory = Directory.CreateTempSubdirectory("rfq-vcredist-");
+            try
+            {
+                FolderAccess.CreatePrivateDirectory(directory.FullName, [AccountIdentity.Administrators, AccountIdentity.LocalSystem]);
+                var path = Path.Combine(directory.FullName, "VC_redist.x64.exe");
+                await _downloader.DownloadAsync(url, path, 18863624, null, token, expectedSha256: sha256).ConfigureAwait(false);
+                var install = await HiddenProcessRunner.RunAsync(path, ["/install", "/quiet", "/norestart"], cancellationToken: token)
+                    .ConfigureAwait(false);
+                // 1638 means a newer runtime is already present. 3010 requests a restart.
+                if (install.ExitCode is not (0 or 1638 or 3010))
+                    throw new InvalidOperationException($"Microsoft Visual C++ x64 runtime setup failed (exit {install.ExitCode}).");
+                probe = await HiddenProcessRunner.RunAsync(postgres, ["--version"], cancellationToken: token).ConfigureAwait(false);
+                if (probe.ExitCode != 0 && install.ExitCode == 3010)
+                    throw new InvalidOperationException("Restart Windows to finish installing the Microsoft Visual C++ x64 runtime, then retry setup.");
+            }
+            finally
+            {
+                try { directory.Delete(recursive: true); } catch (IOException) { }
+            }
+        }
+        if (probe.ExitCode != 0)
+            throw new InvalidOperationException($"PostgreSQL could not start (Windows exit 0x{probe.ExitCode:X8}). {probe.StdErr.Trim()}");
     }
 
     /// <summary>
@@ -270,7 +310,7 @@ public partial class PostgresProvisioner
 
             if (result.ExitCode != 0)
             {
-                throw new InvalidOperationException($"initdb failed: {result.StdErr}");
+                throw new InvalidOperationException($"initdb failed (exit 0x{result.ExitCode:X8}): {result.StdErr.Trim()}");
             }
         }
         finally

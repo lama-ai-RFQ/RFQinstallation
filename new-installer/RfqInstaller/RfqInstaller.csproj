@@ -24,13 +24,25 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RfqInstaller.Core\RfqInstaller.Core.csproj" />
+    <ProjectReference Include="..\RfqInstaller.Uninstall\RfqInstaller.Uninstall.csproj"
+                      ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <BundledToolDir>$(MSBuildProjectDirectory)/obj/$(Configuration)/bundled-tools</BundledToolDir>
+    <UninstallerResource Condition="'$(BundledUninstallerPath)' == ''">$(BundledToolDir)/RfqInstaller.Uninstall.exe</UninstallerResource>
+    <UninstallerResource Condition="'$(BundledUninstallerPath)' != ''">$(BundledUninstallerPath)</UninstallerResource>
+  </PropertyGroup>
+
+  <Target Name="PublishBundledUninstaller" BeforeTargets="PrepareForBuild"
+          Condition="'$(BundledUninstallerPath)' == '' and '$(MSBuildProjectName)' == 'RfqInstaller'">
+    <MSBuild Projects="../RfqInstaller.Uninstall/RfqInstaller.Uninstall.csproj" Targets="Publish"
+             Properties="Configuration=$(Configuration);PublishDir=$(BundledToolDir)/" />
+  </Target>
+
   <ItemGroup>
-    <!-- Bundled, proven tools the orchestrator copies into the install directory — no PATH/silent-install dependency.
-         Embedded rather than shipped beside the exe so the single downloaded RfqInstaller.exe is self-sufficient;
-         BundledTools extracts it at install time. -->
     <EmbeddedResource Include="..\..\nssm.exe" LogicalName="Bundled.nssm.exe" />
+    <EmbeddedResource Include="$(UninstallerResource)" LogicalName="Bundled.RfqInstaller.Uninstall.exe" />
   </ItemGroup>
 
 </Project>

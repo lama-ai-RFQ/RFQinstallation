@@ -63,10 +63,6 @@ public partial class InstallingPage : UserControl
 
         _cts = new CancellationTokenSource();
 
-        var orchestrator = new InstallOrchestrator(
-            BundledTools.ExtractNssm(),
-            interaction: new WpfInstallInteraction());
-
         var progress = new Progress<InstallStepProgress>(p =>
         {
             var reportedPercent = Math.Clamp(p.FractionComplete * 100, 0, 100);
@@ -86,6 +82,10 @@ public partial class InstallingPage : UserControl
         InstallResult result;
         try
         {
+            using var tools = new BundledTools();
+            tools.Extract();
+            var orchestrator = new InstallOrchestrator(
+                tools.NssmPath, tools.UninstallerPath, interaction: new WpfInstallInteraction());
             result = _state.Repair
                 ? await orchestrator.RepairAsync(BuildRepairPlan(), progress, _cts.Token)
                 : await orchestrator.RunAsync(BuildInstallPlan(), progress, _cts.Token);

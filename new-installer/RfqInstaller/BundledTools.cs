@@ -1,34 +1,29 @@
 using System.IO;
-using System.Reflection;
 
 namespace RfqInstaller;
 
-/// <summary>
-/// Tools embedded in the installer exe itself, so the single downloaded RfqInstaller.exe works
-/// without a Bundled\ folder beside it.
-/// </summary>
-public static class BundledTools
+internal sealed class BundledTools : IDisposable
 {
-    private const string NssmResourceName = "Bundled.nssm.exe";
+    private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("RfqInstaller-");
+    public string NssmPath => Path.Combine(_directory.FullName, "nssm.exe");
+    public string UninstallerPath => Path.Combine(_directory.FullName, "RfqInstaller.Uninstall.exe");
 
-    /// <summary>
-    /// Writes the embedded nssm.exe to a fresh, per-run temp directory and returns its path.
-    /// A unique directory per run avoids reusing (or racing on) a file another process could
-    /// have planted at a predictable path before the elevated install executes it.
-    /// </summary>
-    public static string ExtractNssm()
+    public void Extract()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "RfqInstaller", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "nssm.exe");
-
-        using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(NssmResourceName)
-            ?? throw new InvalidOperationException($"Embedded resource '{NssmResourceName}' is missing from the installer.");
-        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        foreach (var path in new[] { NssmPath, UninstallerPath })
         {
+            var name = "Bundled." + Path.GetFileName(path);
+            using var resource = typeof(BundledTools).Assembly.GetManifestResourceStream(name)
+                ?? throw new InvalidOperationException($"The installer is missing {name}.");
+            using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             resource.CopyTo(file);
         }
+    }
 
-        return path;
+    public void Dispose()
+    {
+        try { _directory.Delete(recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 }
