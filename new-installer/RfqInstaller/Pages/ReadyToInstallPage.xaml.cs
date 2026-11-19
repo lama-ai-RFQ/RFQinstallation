@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using RfqInstaller.Core.Config;
+using RfqInstaller.Core.Security;
 using RfqInstaller.Debug;
 using RfqInstaller.Models;
 
@@ -44,7 +45,10 @@ public partial class ReadyToInstallPage : UserControl, IWizardPage
             : "Set during setup";
 
         var credentialManagerWillActuallyWork = state.UseCredentialManager
-            && (state.Mode == InstallMode.Standalone || state.ServiceAccount == ServiceAccountKind.CurrentUser);
+            && (state.Mode == InstallMode.Standalone
+                ? SignedInUser.IsSetupAccount(state.SignedInUserSid)
+                : state.ServiceAccount == ServiceAccountKind.CurrentUser &&
+                  AccountIdentity.TryResolve(state.ServiceAccountName)?.Equals(AccountIdentity.CurrentSid()) == true);
         PasswordStorageSummary.Text = credentialManagerWillActuallyWork
             ? "Windows Credential Manager"
             : state.UseCredentialManager

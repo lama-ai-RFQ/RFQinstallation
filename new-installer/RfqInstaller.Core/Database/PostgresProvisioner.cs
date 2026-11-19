@@ -52,40 +52,7 @@ public partial class PostgresProvisioner
         var binDir = Path.Combine(installPath, "pgsql");
         var dataDir = Path.Combine(installPath, "pgdata");
 
-        if (!File.Exists(Path.Combine(binDir, "bin", "postgres.exe")))
-        {
-            var url = binaries?.Url ?? PostgresBinariesConfig.DownloadUrl;
-            var sha256 = binaries?.Sha256 ?? PostgresBinariesConfig.Sha256;
-            long? size = binaries is { Size: > 0 } ? binaries.Size : null;
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                throw new InvalidOperationException(
-                    "PostgreSQL binaries are not available. Activate a license so the installer can " +
-                    $"sign '{PostgresBinariesConfig.RuntimeAssetId}', or set RFQ_POSTGRES_BINARIES_URL.");
-            }
-
-            progress?.Report("Downloading PostgreSQL engine...");
-            var zipPath = Path.Combine(Path.GetTempPath(), $"rfq-postgres-{PostgresBinariesConfig.Version}.zip");
-            await _downloader.DownloadAsync(
-                    url,
-                    zipPath,
-                    size,
-                    progress: null,
-                    cancellationToken,
-                    expectedSha256: sha256)
-                .ConfigureAwait(false);
-
-            progress?.Report("Extracting PostgreSQL engine...");
-            // EDB's portable zip has pgsql/ at the archive root. Extract into the install
-            // folder so postgres.exe lands at {install}\pgsql\bin\postgres.exe.
-            ZipExtractor.Extract(zipPath, installPath, progress: null, cancellationToken);
-            if (!File.Exists(Path.Combine(binDir, "bin", "postgres.exe")))
-            {
-                throw new InvalidOperationException(
-                    "The PostgreSQL zip did not contain pgsql/bin/postgres.exe.");
-            }
-        }
-
+        await EnsureBinariesAsync(installPath, progress, cancellationToken, binaries).ConfigureAwait(false);
         var pgCtl = Path.Combine(binDir, "bin", "pg_ctl.exe");
         var initDb = Path.Combine(binDir, "bin", "initdb.exe");
 
@@ -115,6 +82,125 @@ public partial class PostgresProvisioner
         await WaitUntilAcceptingConnectionsAsync(binDir, progress, cancellationToken).ConfigureAwait(false);
 
         return new PostgresInstance(binDir, dataDir, PostgresBinariesConfig.DefaultPort, ServiceName, generatedSuperUserPassword);
+    }
+
+    internal async Task EnsureBinariesAsync(string installPath, IProgress<string>? progress,
+        CancellationToken cancellationToken, SignedArtifact? binaries)
+    {
+        var binDir = Path.Combine(installPath, "pgsql");
+        if (File.Exists(Path.Combine(binDir, "bin", "postgres.exe"))) return;
+
+        var url = binaries?.Url ?? PostgresBinariesConfig.DownloadUrl;
+        var sha256 = binaries?.Sha256 ?? PostgresBinariesConfig.Sha256;
+        long? size = binaries is { Size: > 0 } ? binaries.Size : null;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException(
+                "PostgreSQL binaries are not available. Activate a license so the installer can " +
+                $"sign '{PostgresBinariesConfig.RuntimeAssetId}', or set RFQ_POSTGRES_BINARIES_URL.");
+        }
+
+        progress?.Report("Downloading PostgreSQL engine...");
+        var zipPath = Path.Combine(Path.GetTempPath(), $"rfq-postgres-{PostgresBinariesConfig.Version}.zip");
+        await _downloader.DownloadAsync(
+                url,
+                zipPath,
+                size,
+                progress: null,
+                cancellationToken,
+                expectedSha256: sha256)
+            .ConfigureAwait(false);
+
+        progress?.Report("Extracting PostgreSQL engine...");
+        // EDB's portable zip has pgsql/ at the archive root. Extract into the install
+        // folder so postgres.exe lands at {install}\pgsql\bin\postgres.exe.
+        ZipExtractor.Extract(zipPath, installPath, progress: null, cancellationToken);
+        if (!File.Exists(Path.Combine(binDir, "bin", "postgres.exe")))
+        {
+            throw new InvalidOperationException(
+                "The PostgreSQL zip did not contain pgsql/bin/postgres.exe.");
+        }
+    }
+
+    // Authenticate against this exact cluster. Restore a stopped database to its original
+    // state even when authentication fails, and never reconfigure a service to perform a probe.
+    internal async Task VerifyExistingPasswordAsync(string installPath, string password, CancellationToken token)
+    {
+        var dataDir = Path.GetFullPath(Path.Combine(installPath, "pgdata"));
+        var engine = Path.Combine(installPath, "pgsql");
+        var pgCtl = Path.Combine(engine, "bin", "pg_ctl.exe");
+        await EnsurePostgresCanStartAsync(engine, null, token).ConfigureAwait(false);
+        var status = await HiddenProcessRunner.RunAsync(pgCtl, ["status", "-D", dataDir], cancellationToken: token)
+            .ConfigureAwait(false);
+        if (status.ExitCode == 0)
+        {
+            await VerifyRunningClusterAsync(dataDir, password, token).ConfigureAwait(false);
+            return;
+        }
+        if (status.ExitCode != 3)
+            throw new InvalidOperationException($"Could not inspect the existing database in {dataDir}: {status.StdErr.Trim()}");
+
+        var control = new ServiceControl { SettlePolls = 1 };
+        if (PointsAt(ReadServiceImagePath(), pgCtl, dataDir))
+        {
+            var state = (await control.QueryAsync(ServiceName, token).ConfigureAwait(false)).State;
+            if (state != ServiceState.Stopped)
+                throw new InvalidOperationException($"The database service is {state}. Wait for it to settle and retry.");
+            try
+            {
+                await control.StartAndWaitAsync(ServiceName, token).ConfigureAwait(false);
+                await VerifyRunningClusterAsync(dataDir, password, token).ConfigureAwait(false);
+            }
+            finally
+            {
+                await control.StopIfExistsAsync(ServiceName, CancellationToken.None).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        // A retained cluster may have no service. Start pg_ctl on a temporary loopback port
+        // without replacing another installation's service or registering a new one.
+        int port;
+        using (var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0))
+        {
+            listener.Start();
+            port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        var log = Path.Combine(dataDir, $"setup-check-{Guid.NewGuid():N}.log");
+        token.ThrowIfCancellationRequested();
+        try
+        {
+            // Let pg_ctl finish startup before acting on cancellation so the server can always be stopped.
+            var started = await HiddenProcessRunner.RunAsync(pgCtl, ["start", "-D", dataDir, "-w", "-t", "60",
+                "-l", log, "-o", $"-h 127.0.0.1 -p {port}"]).ConfigureAwait(false);
+            if (started.ExitCode != 0)
+                throw new InvalidOperationException($"Could not open the retained database for its password check: {started.StdErr.Trim()}");
+            await VerifyRunningClusterAsync(dataDir, password, token, port).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The port distinguishes this probe from a concurrently started external server.
+            var pid = Path.Combine(dataDir, "postmaster.pid");
+            if (File.Exists(pid) && File.ReadLines(pid).ElementAtOrDefault(3) == port.ToString())
+            {
+                var stopped = await HiddenProcessRunner.RunAsync(pgCtl, ["stop", "-D", dataDir, "-m", "fast", "-w"])
+                    .ConfigureAwait(false);
+                if (stopped.ExitCode != 0)
+                    throw new InvalidOperationException($"Could not stop the password-check database: {stopped.StdErr.Trim()}");
+            }
+            File.Delete(log);
+        }
+    }
+
+    private static async Task VerifyRunningClusterAsync(string dataDir, string password, CancellationToken token,
+        int? expectedPort = null)
+    {
+        var pidFile = await File.ReadAllLinesAsync(Path.Combine(dataDir, "postmaster.pid"), token).ConfigureAwait(false);
+        if (pidFile.Length < 4 || !SamePath(pidFile[1], dataDir) || !int.TryParse(pidFile[3], out var port)
+            || port is < 1 or > 65535 || (expectedPort.HasValue && port != expectedPort))
+            throw new InvalidOperationException($"Could not identify the running PostgreSQL cluster in {dataDir}.");
+
+        await DatabaseSetup.VerifySuperUserAsync(port, password, dataDir, token).ConfigureAwait(false);
     }
 
     private async Task EnsurePostgresCanStartAsync(

@@ -13,6 +13,41 @@ public static class DatabaseSetup
     public const string DatabaseName = "rfq_db";
     public const string AppUserName = "rfq_user";
 
+    private static NpgsqlConnectionStringBuilder MaintenanceSettings(int port, string password) =>
+        new NpgsqlConnectionStringBuilder
+        {
+            Host = "127.0.0.1",
+            Port = port,
+            Username = "postgres",
+            Password = password,
+            Database = "postgres",
+            // Setup stops and restarts this server between installation and repair.
+            Pooling = false,
+        };
+
+    internal static async Task VerifySuperUserAsync(int port, string password, string dataDirectory, CancellationToken token)
+    {
+        await using var connection = new NpgsqlConnection(MaintenanceSettings(port, password).ConnectionString);
+        await OpenMaintenanceAsync(connection, null, token).ConfigureAwait(false);
+        await using var query = new NpgsqlCommand("SHOW data_directory", connection);
+        var actual = (string?)await query.ExecuteScalarAsync(token).ConfigureAwait(false);
+        if (actual is null || !Path.GetFullPath(actual).Equals(Path.GetFullPath(dataDirectory), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The database answering on the configured port belongs to another installation.");
+    }
+
+    private static async Task OpenMaintenanceAsync(NpgsqlConnection connection, IProgress<string>? progress, CancellationToken token)
+    {
+        try
+        {
+            await OpenWhenReadyAsync(connection, progress, token).ConfigureAwait(false);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.InvalidPassword)
+        {
+            throw new InvalidOperationException(
+                "The stored postgres superuser password does not match this database. Restore the correct credential or use the password reset in Repair.", ex);
+        }
+    }
+
     public static async Task EnsureDatabaseAndUserAsync(
         int port,
         string superUserPassword,
@@ -20,30 +55,10 @@ public static class DatabaseSetup
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
-        var settings = new NpgsqlConnectionStringBuilder
-        {
-            Host = "127.0.0.1",
-            Port = port,
-            Username = "postgres",
-            Password = superUserPassword,
-            Database = "postgres",
-            // Setup stops and restarts this server between installation and repair.
-            Pooling = false,
-        };
-
+        var settings = MaintenanceSettings(port, superUserPassword);
         await using (var connection = new NpgsqlConnection(settings.ConnectionString))
         {
-            try
-            {
-                await OpenWhenReadyAsync(connection, progress, cancellationToken).ConfigureAwait(false);
-            }
-            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.InvalidPassword)
-            {
-                throw new InvalidOperationException(
-                    "PostgreSQL is running, but the stored postgres superuser password does not match this database cluster. " +
-                    "Restore the password originally used to initialize pgdata, or delete pgdata if this is a disposable failed install.",
-                    ex);
-            }
+            await OpenMaintenanceAsync(connection, progress, cancellationToken).ConfigureAwait(false);
 
             var dbExists = await ScalarBoolAsync(connection, "SELECT 1 FROM pg_database WHERE datname = @n", ("n", DatabaseName), cancellationToken)
                 .ConfigureAwait(false);

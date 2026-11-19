@@ -49,6 +49,22 @@ public static class PasswordPolicy
         "rfqapplication", "settings123", "rfqsettings", "changeme123", "letmein1234",
     };
 
+    public static string? StorageProblem(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return "Enter a password.";
+        // The installed app trims boundary whitespace. Its dotenv reader also treats a space
+        // before # as a comment and expands ${...}; the updater strips boundary quotes.
+        if (char.IsWhiteSpace(password[0]) || char.IsWhiteSpace(password[^1]) ||
+            password.Any(char.IsControl) ||
+            password[0] is '\'' or '"' || password[^1] is '\'' or '"' ||
+            System.Text.RegularExpressions.Regex.IsMatch(password, @"\s#") ||
+            password.Contains("${", StringComparison.Ordinal))
+            return "Remove leading or trailing whitespace or quotes, control characters, whitespace before #, and ${ sequences.";
+        if (password == CredentialManagerWriter.Sentinel)
+            return "Choose a password other than the reserved Credential Manager marker.";
+        return null;
+    }
+
     public static PasswordEvaluation Evaluate(string password)
     {
         password ??= string.Empty;
@@ -64,9 +80,10 @@ public static class PasswordPolicy
         var classCountMet = classCount >= 3;
 
         var criteria = new PasswordCriteria(hasMinLength, hasUpper, hasLower, hasDigit, hasSpecial, isNotCommon, classCountMet);
-        var meetsMinimum = hasMinLength && classCountMet && isNotCommon;
+        var storable = StorageProblem(password) is null;
+        var meetsMinimum = hasMinLength && classCountMet && isNotCommon && storable;
 
-        return new PasswordEvaluation(Score(password, criteria), meetsMinimum, criteria);
+        return new PasswordEvaluation(storable ? Score(password, criteria) : PasswordStrength.VeryWeak, meetsMinimum, criteria);
     }
 
     private static PasswordStrength Score(string password, PasswordCriteria criteria)

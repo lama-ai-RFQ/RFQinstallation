@@ -1,3 +1,5 @@
+using RfqInstaller.Core.Config;
+
 namespace RfqInstaller.Core.Security;
 
 public record StoredCredential(string DisplayName, string EnvKey, string? Value, string Source);
@@ -20,7 +22,7 @@ public static class StoredCredentialsResolver
 
     public static List<StoredCredential> ResolveAll(string installPath)
     {
-        var envValues = ReadEnvValues(Path.Combine(installPath, ".env"));
+        var envValues = EnvFileReader.Read(installPath);
 
         var results = new List<StoredCredential>();
         foreach (var (displayName, envKey, credentialManagerTarget) in Entries)
@@ -45,30 +47,5 @@ public static class StoredCredentialsResolver
         }
 
         return results;
-    }
-
-    private static Dictionary<string, string> ReadEnvValues(string envPath)
-    {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!File.Exists(envPath))
-        {
-            return result;
-        }
-
-        foreach (var line in File.ReadAllLines(envPath))
-        {
-            var trimmed = line.TrimStart();
-            if (trimmed.StartsWith('#') || !trimmed.Contains('='))
-            {
-                continue;
-            }
-
-            var separatorIndex = trimmed.IndexOf('=');
-            var key = trimmed[..separatorIndex].Trim();
-            var value = trimmed[(separatorIndex + 1)..].Trim();
-            result[key] = value;
-        }
-
-        return result;
     }
 }

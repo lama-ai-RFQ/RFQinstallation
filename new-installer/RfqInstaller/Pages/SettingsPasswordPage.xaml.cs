@@ -171,6 +171,8 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
         AddCriterionRow("At least 8 characters", criteria.HasMinLength);
         AddCriterionRow("Contains 3 of: uppercase, lowercase, number, symbol", criteria.ClassCountMet);
         AddCriterionRow("Not a commonly used password", criteria.IsNotCommon);
+        if (_state.SettingsPassword.Length > 0 && PasswordPolicy.StorageProblem(_state.SettingsPassword) is { } problem)
+            AddCriterionRow(problem, false);
     }
 
     private void AddCriterionRow(string text, bool met)
@@ -203,6 +205,12 @@ public partial class SettingsPasswordPage : UserControl, IWizardPage
         if (string.IsNullOrEmpty(_state.SettingsPassword))
         {
             ShowError("Please create a Settings password to continue.");
+            return false;
+        }
+
+        if (PasswordPolicy.StorageProblem(_state.SettingsPassword) is { } problem)
+        {
+            ShowError(problem);
             return false;
         }
 

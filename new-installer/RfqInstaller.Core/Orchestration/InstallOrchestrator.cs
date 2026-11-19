@@ -79,6 +79,11 @@ public class InstallOrchestrator
             if (DefaultPaths.InstallFolderProblem(plan.InstallPath) is { } problem)
                 return new InstallResult(false, problem, null);
 
+            if (OperatingSystem.IsWindows() && !ElevationHelper.IsElevated())
+                return new InstallResult(false, "Administrator approval is required to install the PostgreSQL service.", null);
+            if (PasswordReset.Problem(ManagedPassword.Settings, plan.SettingsPassword) is { } settingsProblem)
+                return new InstallResult(false, $"Settings password: {settingsProblem}", null);
+
             if (plan.Mode == InstallMode.WindowsService && plan.ServiceAccount == ServiceAccountKind.CurrentUser)
             {
                 var credentials = new WindowsAccountCredentials(ServiceAccountName(plan), plan.ServiceAccountPassword ?? "");
@@ -87,10 +92,45 @@ public class InstallOrchestrator
             }
 
             using var setupLock = AcquireSetupLock();
+            bool hasDatabase = PostgresProvisioner.IsAlreadyInitialized(plan.InstallPath);
+            if (!plan.AutoGeneratePostgresPasswords)
+            {
+                foreach (var value in hasDatabase ? new[] { plan.CustomRfqUserPassword }
+                    : new[] { plan.CustomSqlSuperUserPassword, plan.CustomRfqUserPassword })
+                {
+                    if (value is null || value.Length < 8)
+                        return new InstallResult(false, "Custom database passwords must be at least 8 characters.", null);
+                    if (PasswordPolicy.StorageProblem(value) is { } storageProblem)
+                        return new InstallResult(false, $"Database password: {storageProblem}", null);
+                }
+            }
+            string superUserPassword;
+            if (hasDatabase)
+            {
+                var existing = StoredCredentialsResolver.ResolveAll(plan.InstallPath)
+                    .FirstOrDefault(c => c.EnvKey == "SQL_SUPER_USER");
+                superUserPassword = existing?.Value
+                    ?? throw new InvalidOperationException(
+                        "Found an existing PostgreSQL data directory, but its superuser password could not be recovered " +
+                        "from Credential Manager or .env. Restore the credential or use the password reset in Repair.");
+            }
+            else if (!plan.AutoGeneratePostgresPasswords &&
+                     !string.IsNullOrWhiteSpace(plan.CustomSqlSuperUserPassword))
+            {
+                superUserPassword = plan.CustomSqlSuperUserPassword;
+            }
+            else
+            {
+                superUserPassword = PasswordGenerator.Generate();
+            }
+
             var release = await brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
                 plan.LicenseKey,
                 plan.UpdateChannel,
                 cancellationToken).ConfigureAwait(false);
+
+            var provisioner = await PrepareDatabaseAsync(brokerClient, plan.InstallPath,
+                hasDatabase ? superUserPassword : null, progress, cancellationToken).ConfigureAwait(false);
 
             var downloadCacheDir = DownloadCacheDir;
             if (plan.CleanReinstall && Directory.Exists(downloadCacheDir))
@@ -104,35 +144,6 @@ public class InstallOrchestrator
             await DownloadAndExtractComponentsAsync(release, downloadCacheDir, plan.InstallPath, progress, cancellationToken)
                 .ConfigureAwait(false);
 
-            progress.Report(new InstallStepProgress("Generating credentials", 0.4, null));
-            // rfq_user's password is safe to regenerate every run — DatabaseSetup always ALTERs it
-            // to match, so Credential Manager/.env and the real role stay in sync either way. The
-            // postgres superuser is different: if a data directory from a prior install already
-            // exists, its password was fixed once during that original initdb and can't be changed
-            // by generating a new one here — reuse the real existing value instead, or the
-            // maintenance connection below will fail to authenticate against the cluster that's
-            // actually there.
-            string superUserPassword;
-            if (PostgresProvisioner.IsAlreadyInitialized(plan.InstallPath))
-            {
-                var existing = StoredCredentialsResolver.ResolveAll(plan.InstallPath)
-                    .FirstOrDefault(c => c.EnvKey == "SQL_SUPER_USER");
-                superUserPassword = existing?.Value
-                    ?? throw new InvalidOperationException(
-                        "Found an existing PostgreSQL data directory, but its superuser password could not be recovered " +
-                        "from Credential Manager or .env. Delete the 'pgdata' folder under the install path to start a " +
-                        "fresh database, or restore the missing credential before reinstalling.");
-            }
-            else if (!plan.AutoGeneratePostgresPasswords &&
-                     !string.IsNullOrWhiteSpace(plan.CustomSqlSuperUserPassword))
-            {
-                superUserPassword = plan.CustomSqlSuperUserPassword;
-            }
-            else
-            {
-                superUserPassword = PasswordGenerator.Generate();
-            }
-
             var appUserPassword = !plan.AutoGeneratePostgresPasswords &&
                                   !string.IsNullOrWhiteSpace(plan.CustomRfqUserPassword)
                 ? plan.CustomRfqUserPassword
@@ -145,19 +156,12 @@ public class InstallOrchestrator
             PersistSuperUserPasswordForRecovery(plan, superUserPassword);
 
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));
-            var provisioner = new PostgresProvisioner(_downloader);
             var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Setting up database", 0.45, msg)));
-            var postgresBinaries = await ResolvePostgresBinariesAsync(
-                    brokerClient,
-                    plan.InstallPath,
-                    cancellationToken)
-                .ConfigureAwait(false);
             var instance = await provisioner.ProvisionAsync(
                     plan.InstallPath,
                     superUserPassword,
                     pgProgress,
-                    cancellationToken,
-                    postgresBinaries)
+                    cancellationToken)
                 .ConfigureAwait(false);
             await DatabaseSetup.EnsureDatabaseAndUserAsync(instance.Port, superUserPassword, appUserPassword, pgProgress, cancellationToken)
                 .ConfigureAwait(false);
@@ -287,6 +291,9 @@ public class InstallOrchestrator
                 return new InstallResult(false, string.Join(Environment.NewLine + Environment.NewLine, readiness.Problems), null);
             }
 
+            if (OperatingSystem.IsWindows() && !ElevationHelper.IsElevated())
+                return new InstallResult(false, "Administrator approval is required to repair this installation.", null);
+
             var nssm = new NssmServiceManager(File.Exists(_bundledNssmPath) ? _bundledNssmPath : "nssm.exe");
             if (plan.Mode == InstallMode.WindowsService)
             {
@@ -319,6 +326,11 @@ public class InstallOrchestrator
                 readiness.UpdateChannel,
                 cancellationToken).ConfigureAwait(false);
 
+            var provisioner = readiness.HasBundledDatabase
+                ? await PrepareDatabaseAsync(brokerClient, plan.InstallPath, readiness.SuperUserPassword, progress, cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
+
             // A repair shouldn't reuse whatever an earlier run left in the download cache.
             var downloadCacheDir = DownloadCacheDir;
             if (Directory.Exists(downloadCacheDir))
@@ -335,17 +347,11 @@ public class InstallOrchestrator
             // Installs from the legacy installer use a system-wide Postgres instead of pgdata. Repair
             // leaves that database alone; only the private, installer-owned instance (stopped above
             // so its files could be replaced) is started again.
-            if (readiness.HasBundledDatabase)
+            if (provisioner is not null)
             {
                 progress.Report(new InstallStepProgress("Starting database", 0.45, null));
                 var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Starting database", 0.45, msg)));
-                var postgresBinaries = await ResolvePostgresBinariesAsync(brokerClient, plan.InstallPath, cancellationToken)
-                    .ConfigureAwait(false);
-                var instance = await new PostgresProvisioner(_downloader).StartExistingAsync(
-                        plan.InstallPath,
-                        pgProgress,
-                        cancellationToken,
-                        postgresBinaries)
+                var instance = await provisioner.StartExistingAsync(plan.InstallPath, pgProgress, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (plan.RepairDatabase)
@@ -462,21 +468,27 @@ public class InstallOrchestrator
             : $"{exception.GetType().Name}: {exception.Message}{Environment.NewLine}{root.GetType().Name}: {root.Message}";
     }
 
-    private async Task<SignedArtifact?> ResolvePostgresBinariesAsync(
-        LicenseBrokerClient brokerClient,
-        string installPath,
-        CancellationToken cancellationToken)
+    private async Task<PostgresProvisioner> PrepareDatabaseAsync(LicenseBrokerClient broker, string installPath,
+        string? existingPassword, IProgress<InstallStepProgress> progress, CancellationToken token)
     {
-        if (File.Exists(Path.Combine(installPath, "pgsql", "bin", "postgres.exe")) ||
-            !string.IsNullOrWhiteSpace(PostgresBinariesConfig.DownloadUrl))
+        var provisioner = new PostgresProvisioner(_downloader);
+        if (!File.Exists(Path.Combine(installPath, "pgsql", "bin", "postgres.exe")))
         {
-            return null;
+            progress.Report(new InstallStepProgress("Preparing the PostgreSQL engine", 0.06, null));
+            SignedArtifact? binaries = null;
+            if (string.IsNullOrWhiteSpace(PostgresBinariesConfig.DownloadUrl))
+            {
+                var signed = await broker.SignRuntimeAssetsAsync([PostgresBinariesConfig.RuntimeAssetId], token).ConfigureAwait(false);
+                binaries = signed.Artifacts.Single();
+            }
+            await provisioner.EnsureBinariesAsync(installPath, null, token, binaries).ConfigureAwait(false);
         }
-
-        var signed = await brokerClient.SignRuntimeAssetsAsync(
-            new[] { PostgresBinariesConfig.RuntimeAssetId },
-            cancellationToken).ConfigureAwait(false);
-        return signed.Artifacts[0];
+        if (existingPassword is not null)
+        {
+            progress.Report(new InstallStepProgress("Checking the existing database password", 0.08, null));
+            await provisioner.VerifyExistingPasswordAsync(installPath, existingPassword, token).ConfigureAwait(false);
+        }
+        return provisioner;
     }
 
     internal async Task DownloadAndExtractComponentsAsync(
@@ -887,11 +899,12 @@ public class InstallOrchestrator
     /// passwords: they go in .env instead.
     /// </summary>
     internal static bool UsesCredentialManager(InstallPlan plan) =>
-        UsesCredentialManager(plan, AccountIdentity.CurrentSid(), AccountIdentity.TryResolve(ServiceAccountName(plan)));
+        UsesCredentialManager(plan, AccountIdentity.CurrentSid(), plan.Mode == InstallMode.Standalone
+            ? SignedInSid(plan) : AccountIdentity.TryResolve(ServiceAccountName(plan)));
 
     internal static bool UsesCredentialManager(InstallPlan plan, SecurityIdentifier setupAccount, SecurityIdentifier? serviceAccount) =>
         plan.UseCredentialManager &&
-        plan.ServiceAccount == ServiceAccountKind.CurrentUser &&
+        (plan.Mode == InstallMode.Standalone || plan.ServiceAccount == ServiceAccountKind.CurrentUser) &&
         serviceAccount is not null &&
         serviceAccount.Equals(setupAccount);
 
