@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace RfqInstaller.Core.Processes;
@@ -12,6 +13,21 @@ public record ProcessResult(int ExitCode, string StdOut, string StdErr);
 /// </summary>
 public static class HiddenProcessRunner
 {
+    static HiddenProcessRunner()
+    {
+        // Windows otherwise opens a modal loader error in the child's session and never
+        // returns its exit code (observed with PostgreSQL on a clean Windows install).
+        // Child processes inherit this flag. Preserve every other process error setting.
+        const uint failCriticalErrors = 0x0001;
+        if (OperatingSystem.IsWindows()) SetErrorMode(GetErrorMode() | failCriticalErrors);
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetErrorMode();
+
+    [DllImport("kernel32.dll")]
+    private static extern uint SetErrorMode(uint mode);
+
     public static async Task<ProcessResult> RunAsync(
         string fileName,
         IReadOnlyList<string> arguments,
