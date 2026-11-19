@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
@@ -171,10 +172,15 @@ public partial class PostgresProvisioner
         try
         {
             // Let pg_ctl finish startup before acting on cancellation so the server can always be stopped.
-            var started = await HiddenProcessRunner.RunAsync(pgCtl, ["start", "-D", dataDir, "-w", "-t", "60",
-                "-l", log, "-o", $"-h 127.0.0.1 -p {port}"]).ConfigureAwait(false);
-            if (started.ExitCode != 0)
-                throw new InvalidOperationException($"Could not open the retained database for its password check: {started.StdErr.Trim()}");
+            // The server inherits pg_ctl's handles on Windows. Capturing output through a pipe
+            // would wait for EOF until the very server we need to check has shut down.
+            var start = new ProcessStartInfo(pgCtl) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var argument in new[] { "start", "-D", dataDir, "-w", "-t", "60", "-l", log, "-o", $"-h 127.0.0.1 -p {port}" })
+                start.ArgumentList.Add(argument);
+            using var pgCtlProcess = Process.Start(start) ?? throw new InvalidOperationException("Could not start pg_ctl.");
+            await pgCtlProcess.WaitForExitAsync().ConfigureAwait(false);
+            if (pgCtlProcess.ExitCode != 0)
+                throw new InvalidOperationException($"Could not open the retained database in {dataDir} for its password check (pg_ctl exit {pgCtlProcess.ExitCode}).");
             await VerifyRunningClusterAsync(dataDir, password, token, port).ConfigureAwait(false);
         }
         finally
