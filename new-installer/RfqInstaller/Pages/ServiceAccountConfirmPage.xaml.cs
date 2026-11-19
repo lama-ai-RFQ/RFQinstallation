@@ -74,6 +74,11 @@ public partial class ServiceAccountConfirmPage : UserControl, IWizardPage
         {
             credentials = WindowsCredentialPrompt.Request(hwnd);
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            ShowNeeded(ex.Message);
+            return;
+        }
         catch (Exception ex)
         {
             var logPath = InstallerLog.Write("asking Windows for the service account", ex);
@@ -121,8 +126,8 @@ public partial class ServiceAccountConfirmPage : UserControl, IWizardPage
     {
         TitleText.Text = "Confirm your Windows account";
         ExplanationText.Text = _state.UseCredentialManager
-            ? "You chose to run the RFQ Application service as your own Windows account, so it can use passwords saved in your Windows Credential Manager. Windows will ask for this account's password once — a PIN or Windows Hello cannot be used for a service. This account does not need to be an administrator; that was a separate, already-completed step."
-            : "You chose to run the RFQ Application service as your own Windows account. Windows will ask for this account's password once so the service can log on as you — a PIN or Windows Hello cannot be used for a service. This account does not need to be an administrator; that was a separate, already-completed step.";
+            ? "You chose to run the RFQ Application service as your own Windows account, so it can use passwords saved in your Windows Credential Manager. Windows will ask for this account's password once — a PIN or Windows Hello cannot be used for a service. The Windows updater requires this account to have local administrator rights."
+            : "You chose to run the RFQ Application service as your own Windows account. Windows will ask for this account's password once so the service can log on as you — a PIN or Windows Hello cannot be used for a service. The Windows updater requires this account to have local administrator rights.";
         ExplanationText.Visibility = Visibility.Visible;
     }
 

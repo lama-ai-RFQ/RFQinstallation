@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Security.Principal;
 
 namespace RfqInstaller.Core.Security;
 
@@ -15,6 +16,9 @@ public sealed record WindowsAccountCredentials(string AccountName, string Passwo
 [SupportedOSPlatform("windows")]
 public static class WindowsCredentialPrompt
 {
+    public const string UpdaterAccountRequirement =
+        "The Windows updater requires a local administrator account. Choose an administrator account or use standalone mode.";
+
     private const uint CredUiWinGeneric = 0x1;
     private const uint CredPackGenericCredentials = 0x4;
     private const int WtsCurrentSession = -1;
@@ -116,16 +120,20 @@ public static class WindowsCredentialPrompt
         }
     }
 
-    private static bool TryValidateLogon(WindowsAccountCredentials credentials, out int win32Error)
+    internal static bool TryValidateLogon(WindowsAccountCredentials credentials, out int win32Error)
     {
         win32Error = ErrorLogonFailure;
         SplitAccount(credentials.AccountName, out var domain, out var user);
 
+        var expectedSid = AccountIdentity.TryResolve(ToServiceAccountName(credentials.AccountName));
+        if (expectedSid is null)
+            return false;
+
         foreach (var logonType in new[]
                  {
-                     Logon32LogonNetworkCleartext,
                      Logon32LogonInteractive,
                      Logon32LogonService,
+                     Logon32LogonNetworkCleartext,
                      Logon32LogonBatch,
                      Logon32LogonNetwork,
                  })
@@ -136,9 +144,21 @@ public static class WindowsCredentialPrompt
                 {
                     if (LogonUser(tryUser, tryDomain, credentials.Password, logonType, provider, out var token))
                     {
-                        CloseHandle(token);
-                        win32Error = 0;
-                        return true;
+                        try
+                        {
+                            using var identity = new WindowsIdentity(token);
+                            if (identity.User?.Equals(expectedSid) != true)
+                                continue;
+                            if (!IsAdministrator(identity))
+                                throw new UnauthorizedAccessException(UpdaterAccountRequirement);
+
+                            win32Error = 0;
+                            return true;
+                        }
+                        finally
+                        {
+                            CloseHandle(token);
+                        }
                     }
 
                     win32Error = Marshal.GetLastWin32Error();
@@ -149,6 +169,30 @@ public static class WindowsCredentialPrompt
         return false;
     }
 
+    private static bool IsAdministrator(WindowsIdentity identity)
+    {
+        if (new WindowsPrincipal(identity).IsInRole(AccountIdentity.Administrators))
+            return true;
+
+        // An interactive logon under UAC can return an administrator's filtered token.
+        const int tokenLinkedToken = 19;
+        if (!GetTokenInformation(identity.Token, tokenLinkedToken, out var linked, IntPtr.Size, out _))
+            return false;
+        try
+        {
+            using var full = new WindowsIdentity(linked);
+            return new WindowsPrincipal(full).IsInRole(AccountIdentity.Administrators);
+        }
+        finally
+        {
+            CloseHandle(linked);
+        }
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(
+        IntPtr token, int informationClass, out IntPtr information, int length, out int returned);
+
     private static IEnumerable<(string? Domain, string User)> LogonIdentities(string domain, string user)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -156,6 +200,16 @@ public static class WindowsCredentialPrompt
         bool Take(string? tryDomain, string tryUser)
         {
             return !string.IsNullOrEmpty(tryUser) && seen.Add($"{tryDomain ?? "<null>"}\\{tryUser}");
+        }
+
+        foreach (var tryDomain in new[] { domain, ".", Environment.MachineName, "MicrosoftAccount" })
+        {
+            if (string.IsNullOrEmpty(tryDomain) || !Take(tryDomain, user))
+            {
+                continue;
+            }
+
+            yield return (tryDomain, user);
         }
 
         foreach (var email in MicrosoftAccountProbe.Emails())
@@ -169,16 +223,6 @@ public static class WindowsCredentialPrompt
             {
                 yield return (null, email);
             }
-        }
-
-        foreach (var tryDomain in new[] { domain, ".", Environment.MachineName, "MicrosoftAccount" })
-        {
-            if (string.IsNullOrEmpty(tryDomain) || !Take(tryDomain, user))
-            {
-                continue;
-            }
-
-            yield return (tryDomain, user);
         }
     }
 

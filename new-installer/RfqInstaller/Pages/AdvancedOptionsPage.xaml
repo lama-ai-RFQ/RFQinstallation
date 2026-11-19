@@ -101,13 +101,12 @@
             <StackPanel x:Name="ServiceAccountSection">
                 <TextBlock Text="Service account" Style="{StaticResource FieldLabelStyle}" Margin="0,24,0,6"/>
                 <TextBlock Style="{StaticResource PageSubtitleStyle}" Margin="0,0,0,8" TextWrapping="Wrap">
-                    Which Windows identity the background service uses. Does not need to be an administrator
-                    account, even for Current User.
+                    The application and updater run under this account. The Windows updater requires local administrator rights.
                 </TextBlock>
                 <ComboBox x:Name="ServiceAccountCombo" Style="{StaticResource ModernComboBoxStyle}"
                           SelectionChanged="ServiceAccountCombo_SelectionChanged">
                     <ComboBoxItem Content="Current User (recommended)"/>
-                    <ComboBoxItem Content="Network Service"/>
+                    <ComboBoxItem Content="Network Service" IsEnabled="False" ToolTip="The Windows updater requires local administrator rights."/>
                     <ComboBoxItem Content="Local System"/>
                 </ComboBox>
                 <TextBlock x:Name="ServiceAccountHelp" Style="{StaticResource PageSubtitleStyle}" Margin="0,8,0,0" TextWrapping="Wrap"/>

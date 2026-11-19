@@ -451,9 +451,9 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         ServiceAccountHelp.Text = _state.ServiceAccount switch
         {
             ServiceAccountKind.CurrentUser =>
-                "Recommended. Windows will ask for this account's password on the next page (not a PIN) so the service can log on as you.",
+                "Use a Windows account with local administrator rights. Windows will ask for its password on the next page.",
             ServiceAccountKind.NetworkService =>
-                "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
+                RfqInstaller.Core.Security.WindowsCredentialPrompt.UpdaterAccountRequirement,
             _ =>
                 "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
         };
@@ -466,6 +466,9 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
     public bool Validate()
     {
+        if (_state.Mode == InstallMode.WindowsService && _state.ServiceAccount == ServiceAccountKind.NetworkService)
+            return false;
+
         if (!ValidatePostgresPasswords())
         {
             return false;

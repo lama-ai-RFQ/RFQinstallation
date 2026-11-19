@@ -67,6 +67,9 @@ public class InstallOrchestrator
 
         try
         {
+            if (plan.Mode == InstallMode.WindowsService && plan.ServiceAccount == ServiceAccountKind.NetworkService)
+                return new InstallResult(false, WindowsCredentialPrompt.UpdaterAccountRequirement, null);
+
             progress.Report(new InstallStepProgress("Validating license key", 0.0, null));
             var localCheck = LocalLicenseValidator.Validate(plan.LicenseKey);
             if (!localCheck.SignatureValid || localCheck.Expired)
@@ -75,6 +78,13 @@ public class InstallOrchestrator
             }
             if (DefaultPaths.InstallFolderProblem(plan.InstallPath) is { } problem)
                 return new InstallResult(false, problem, null);
+
+            if (plan.Mode == InstallMode.WindowsService && plan.ServiceAccount == ServiceAccountKind.CurrentUser)
+            {
+                var credentials = new WindowsAccountCredentials(ServiceAccountName(plan), plan.ServiceAccountPassword ?? "");
+                if (credentials.Password.Length == 0 || !WindowsCredentialPrompt.TryValidateLogon(credentials, out _))
+                    return new InstallResult(false, "Confirm the Windows service account and its password before installing.", null);
+            }
 
             using var setupLock = AcquireSetupLock();
             var release = await brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
@@ -280,6 +290,11 @@ public class InstallOrchestrator
             var nssm = new NssmServiceManager(File.Exists(_bundledNssmPath) ? _bundledNssmPath : "nssm.exe");
             if (plan.Mode == InstallMode.WindowsService)
             {
+                var updaterAccount = ExistingInstallDetector.ReadServiceAccount(UpdaterServiceName);
+                if (AccountIdentity.TryResolve(updaterAccount)?.Equals(AccountIdentity.NetworkService) == true)
+                    return new InstallResult(false, WindowsCredentialPrompt.UpdaterAccountRequirement +
+                        " Run Setup and choose Install to change the service account.", null);
+
                 foreach (var serviceName in new[] { AppServiceName, UpdaterServiceName })
                 {
                     if (!await nssm.ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))

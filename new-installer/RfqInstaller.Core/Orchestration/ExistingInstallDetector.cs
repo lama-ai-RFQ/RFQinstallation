@@ -29,10 +29,13 @@ public static class ExistingInstallDetector
     private const string AppServiceName = "RFQapplication";
     private const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\RFQApplication";
 
+    internal static string? ReadServiceAccount(string serviceName) =>
+        ReadLocalMachineValue(ServicesKey + serviceName, "ObjectName");
+
     public static ExistingInstallation? Detect()
     {
         var appServiceDirectory = ReadLocalMachineValue(ServicesKey + AppServiceName + @"\Parameters", "AppDirectory");
-        var serviceAccount = ReadLocalMachineValue(ServicesKey + AppServiceName, "ObjectName");
+        var serviceAccount = ReadServiceAccount(AppServiceName);
         var postgresImagePath = ReadLocalMachineValue(ServicesKey + PostgresProvisioner.ServiceName, "ImagePath");
         var uninstallLocation = ReadLocalMachineValue(UninstallKey, "InstallLocation");
 
