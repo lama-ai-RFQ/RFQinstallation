@@ -238,6 +238,7 @@ public sealed class PasswordReset
             Username = "postgres",
             Database = "postgres",
             Timeout = 15,
+            Pooling = false,
         };
         if (password is not null)
         {

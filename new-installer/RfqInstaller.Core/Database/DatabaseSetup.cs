@@ -20,16 +20,18 @@ public static class DatabaseSetup
         IProgress<string>? progress,
         CancellationToken cancellationToken)
     {
-        var maintenanceConnString = new NpgsqlConnectionStringBuilder
+        var settings = new NpgsqlConnectionStringBuilder
         {
             Host = "127.0.0.1",
             Port = port,
             Username = "postgres",
             Password = superUserPassword,
             Database = "postgres",
-        }.ConnectionString;
+            // Setup stops and restarts this server between installation and repair.
+            Pooling = false,
+        };
 
-        await using (var connection = new NpgsqlConnection(maintenanceConnString))
+        await using (var connection = new NpgsqlConnection(settings.ConnectionString))
         {
             try
             {
@@ -74,16 +76,8 @@ public static class DatabaseSetup
                 .ConfigureAwait(false);
         }
 
-        var dbConnString = new NpgsqlConnectionStringBuilder
-        {
-            Host = "127.0.0.1",
-            Port = port,
-            Username = "postgres",
-            Password = superUserPassword,
-            Database = DatabaseName,
-        }.ConnectionString;
-
-        await using var dbConnection = new NpgsqlConnection(dbConnString);
+        settings.Database = DatabaseName;
+        await using var dbConnection = new NpgsqlConnection(settings.ConnectionString);
         await OpenWhenReadyAsync(dbConnection, progress, cancellationToken).ConfigureAwait(false);
 
         progress?.Report("Setting up schema permissions...");
