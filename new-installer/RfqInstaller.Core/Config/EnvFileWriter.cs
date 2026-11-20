@@ -10,7 +10,7 @@ namespace RfqInstaller.Core.Config;
 /// </summary>
 public static class EnvFileWriter
 {
-    private static readonly HashSet<string> RetiredDistributionKeys = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> RetiredDistributionKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "AWS_KEY",
         "AWS_SECRET",
@@ -29,49 +29,35 @@ public static class EnvFileWriter
         var lines = File.Exists(envPath)
             ? File.ReadAllLines(envPath).ToList()
             : LoadTemplateLines();
-        lines.RemoveAll(line =>
+        var managed = values.ToDictionary(pair => pair.Key, StringComparer.OrdinalIgnoreCase);
+        var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var output = new List<string>(lines.Count);
+        foreach (var line in lines)
         {
-            var trimmed = line.TrimStart();
-            if (trimmed.StartsWith('#') || !trimmed.Contains('='))
+            var key = EnvFileReader.AssignmentKey(line);
+            if (key is null || !managed.TryGetValue(key, out var entry))
             {
-                return false;
-            }
-
-            var key = trimmed[..trimmed.IndexOf('=')].Trim();
-            return RetiredDistributionKeys.Contains(key);
-        });
-
-        var remaining = new Dictionary<string, string>(values, StringComparer.Ordinal);
-
-        for (var i = 0; i < lines.Count; i++)
-        {
-            var line = lines[i];
-            var trimmed = line.TrimStart();
-            if (trimmed.StartsWith('#') || !trimmed.Contains('='))
-            {
+                if (key is null || !RetiredDistributionKeys.Contains(key))
+                    output.Add(line);
                 continue;
             }
 
-            var key = trimmed[..trimmed.IndexOf('=')].Trim();
-            if (remaining.TryGetValue(key, out var newValue))
-            {
-                lines[i] = $"{key}={newValue}";
-                remaining.Remove(key);
-            }
+            if (written.Add(key))
+                output.Add($"{entry.Key}={entry.Value}");
         }
 
-        if (remaining.Count > 0)
+        if (written.Count < managed.Count)
         {
-            lines.Add("");
-            lines.Add("# Added by installer");
-            foreach (var (key, value) in remaining)
-            {
-                lines.Add($"{key}={value}");
-            }
+            output.Add("");
+            output.Add("# Added by installer");
+            foreach (var (key, value) in values)
+                if (!written.Contains(key))
+                    output.Add($"{key}={value}");
         }
 
         Directory.CreateDirectory(installPath);
-        File.WriteAllLines(envPath, lines, Encoding.UTF8);
+        // python-dotenv treats a UTF-8 BOM as part of the first key.
+        File.WriteAllLines(envPath, output);
     }
 
     private static List<string> LoadTemplateLines()

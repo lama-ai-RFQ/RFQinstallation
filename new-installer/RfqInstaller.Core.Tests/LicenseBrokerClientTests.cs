@@ -35,6 +35,16 @@ public sealed class LicenseBrokerClientTests
     }
 
     [Fact]
+    public async Task RejectsTwoArtifactsThatDownloadToTheSameWindowsFile()
+    {
+        using var http = new HttpClient(new BrokerHandler(duplicateFileName: true));
+        using var client = new LicenseBrokerClient(http, "https://license-api.example.test", new MemoryCredentialStore(), maxAttempts: 1);
+        await client.ActivateAsync("RFQ.payload.signature");
+        var error = await Assert.ThrowsAsync<BrokerClientException>(() => client.GetLatestWindowsReleaseAsync("customer"));
+        Assert.Contains("invalid Windows release catalog", error.Message);
+    }
+
+    [Fact]
     public async Task FailedBrokerResponsesIncludeStatusCodePathAndRequestId()
     {
         using var http = new HttpClient(new FailureHandler());
@@ -79,7 +89,7 @@ public sealed class LicenseBrokerClientTests
         Assert.True(handler.RuntimeSignWasRequested);
     }
 
-    private sealed class BrokerHandler : HttpMessageHandler
+    private sealed class BrokerHandler(bool duplicateFileName = false) : HttpMessageHandler
     {
         private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         public bool ActivationProofWasPresent { get; private set; }
@@ -113,6 +123,9 @@ public sealed class LicenseBrokerClientTests
             Assert.Equal("access-1", request.Headers.Authorization?.Parameter);
             if (path == "/v1/releases/windows/customer/latest")
             {
+                var extra = duplicateFileName
+                    ? $$""",{"artifact_id":"other","name":"APP-EXECUTABLE.ZIP","size":5,"sha256":"{{Sha}}"}"""
+                    : "";
                 return Json(HttpStatusCode.OK, $$"""
                     {
                       "schema_version":1,
@@ -126,7 +139,7 @@ public sealed class LicenseBrokerClientTests
                         "size":4,
                         "sha256":"{{Sha}}",
                         "content_type":"application/octet-stream"
-                      }]
+                      }{{extra}}]
                     }
                     """);
             }

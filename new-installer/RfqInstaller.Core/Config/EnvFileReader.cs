@@ -5,7 +5,7 @@ public static class EnvFileReader
 {
     public static Dictionary<string, string> Read(string installPath)
     {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var envPath = Path.Combine(installPath, ".env");
         if (!File.Exists(envPath))
         {
@@ -14,18 +14,23 @@ public static class EnvFileReader
 
         foreach (var line in File.ReadAllLines(envPath))
         {
-            var trimmed = line.TrimStart();
-            if (trimmed.StartsWith('#') || !trimmed.Contains('='))
-            {
-                continue;
-            }
-
-            var separatorIndex = trimmed.IndexOf('=');
-            var key = trimmed[..separatorIndex].Trim();
-            var value = trimmed[(separatorIndex + 1)..].Trim();
-            result[key] = value;
+            if (AssignmentKey(line) is { } key)
+                result[key] = line[(line.IndexOf('=') + 1)..].Trim();
         }
 
         return result;
+    }
+    // python-dotenv also accepts exported assignments and single-quoted keys.
+    internal static string? AssignmentKey(string line)
+    {
+        int separator = line.IndexOf('=');
+        if (separator < 0) return null;
+        var key = line[..separator].Trim();
+        if (key.StartsWith('#')) return null;
+        if (key.Length > 6 && key.StartsWith("export", StringComparison.Ordinal) && char.IsWhiteSpace(key[6]))
+            key = key[7..].TrimStart();
+        if (key.Length >= 2 && key[0] == '\'' && key[^1] == '\'')
+            key = key[1..^1];
+        return key.Length == 0 ? null : key;
     }
 }

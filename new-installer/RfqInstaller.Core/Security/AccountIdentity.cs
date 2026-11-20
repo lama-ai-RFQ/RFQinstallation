@@ -50,6 +50,11 @@ public static class AccountIdentity
             name = Environment.MachineName + name[1..];
         }
 
+        if (string.Equals(name, @"NT AUTHORITY\NetworkService", StringComparison.OrdinalIgnoreCase))
+        {
+            return NetworkService;
+        }
+
         if (string.Equals(name, "LocalSystem", StringComparison.OrdinalIgnoreCase))
         {
             return LocalSystem;

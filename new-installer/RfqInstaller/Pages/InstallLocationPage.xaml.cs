@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using RfqInstaller.Core.Config;
 using RfqInstaller.Models;
 
 namespace RfqInstaller.Pages;
@@ -46,8 +47,9 @@ public partial class InstallLocationPage : UserControl, IWizardPage
 
     public bool Validate()
     {
-        if (string.IsNullOrWhiteSpace(_state.InstallPath))
+        if (DefaultPaths.InstallFolderProblem(_state.InstallPath) is { } problem)
         {
+            ErrorText.Text = problem;
             ErrorText.Visibility = Visibility.Visible;
             return false;
         }

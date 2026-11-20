@@ -5,6 +5,7 @@ using System.Windows.Media;
 using RfqInstaller.Core.Config;
 using RfqInstaller.Core.Database;
 using RfqInstaller.Core.Licensing;
+using RfqInstaller.Core.Security;
 using RfqInstaller.Dialogs;
 using RfqInstaller.Models;
 
@@ -382,6 +383,15 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
             return false;
         }
 
+        var storageProblem = (!_existingPostgresCluster ? PasswordPolicy.StorageProblem(_state.CustomSqlSuperUserPassword) : null)
+            ?? PasswordPolicy.StorageProblem(_state.CustomRfqUserPassword);
+        if (storageProblem is not null)
+        {
+            PostgresPasswordError.Text = storageProblem;
+            PostgresPasswordError.Visibility = Visibility.Visible;
+            return false;
+        }
+
         return true;
     }
 
@@ -416,7 +426,9 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
     /// </summary>
     private void UpdateCredentialManagerAvailability()
     {
-        var credentialManagerViable = _state.Mode == InstallMode.Standalone || _state.ServiceAccount == ServiceAccountKind.CurrentUser;
+        var credentialManagerViable = _state.Mode == InstallMode.Standalone
+            ? SignedInUser.IsSetupAccount(_state.SignedInUserSid)
+            : _state.ServiceAccount == ServiceAccountKind.CurrentUser;
 
         CredentialManagerRadio.IsEnabled = credentialManagerViable;
         // When Credential Manager isn't viable, .env isn't really a choice anymore — it's the only
@@ -439,7 +451,7 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         {
             PasswordStorageHelp.Text = CredentialManagerRadio.IsEnabled
                 ? "Passwords will be written in plain text to the app's .env file. Anyone with file access to the install folder can read them."
-                : "Passwords will be written in plain text to the app's .env file — Windows Credential Manager doesn't work with the service account selected below.";
+                : "Passwords will be written in plain text to the app's .env file — the account running the application cannot access this Windows Credential Manager.";
             PasswordStorageHelp.Foreground = WarningBrush;
         }
         else
@@ -451,9 +463,9 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
         ServiceAccountHelp.Text = _state.ServiceAccount switch
         {
             ServiceAccountKind.CurrentUser =>
-                "Recommended. Windows will ask for this account's password on the next page (not a PIN) so the service can log on as you.",
+                "Use a Windows account with local administrator rights. Windows will ask for its password on the next page.",
             ServiceAccountKind.NetworkService =>
-                "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
+                RfqInstaller.Core.Security.WindowsCredentialPrompt.UpdaterAccountRequirement,
             _ =>
                 "No password is needed for this account. It cannot use Windows Credential Manager — see the note above.",
         };
@@ -466,6 +478,9 @@ public partial class AdvancedOptionsPage : UserControl, IWizardPage
 
     public bool Validate()
     {
+        if (_state.Mode == InstallMode.WindowsService && _state.ServiceAccount == ServiceAccountKind.NetworkService)
+            return false;
+
         if (!ValidatePostgresPasswords())
         {
             return false;

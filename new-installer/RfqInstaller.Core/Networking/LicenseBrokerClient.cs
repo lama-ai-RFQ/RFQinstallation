@@ -113,17 +113,19 @@ public sealed class LicenseBrokerClient : IDisposable
         };
     }
 
-    public Task<WindowsRelease> GetLatestWindowsReleaseAsync(
+    public async Task<WindowsRelease> GetLatestWindowsReleaseAsync(
         string channel,
         CancellationToken cancellationToken = default)
     {
         ValidateLogicalId(channel, nameof(channel));
-        return AuthorizedRequestAsync<WindowsRelease>(
+        var release = await AuthorizedRequestAsync<WindowsRelease>(
             HttpMethod.Get,
             $"v1/releases/windows/{Uri.EscapeDataString(channel)}/latest",
             body: null,
             retryable: true,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        ValidateRelease(release, channel);
+        return release;
     }
 
     public async Task<SignedArtifactResponse> SignReleaseAsync(
@@ -192,7 +194,6 @@ public sealed class LicenseBrokerClient : IDisposable
     {
         await ActivateAsync(licenseKey, cancellationToken).ConfigureAwait(false);
         var release = await GetLatestWindowsReleaseAsync(channel, cancellationToken).ConfigureAwait(false);
-        ValidateRelease(release, channel);
         var signed = await SignReleaseAsync(
             release.ReleaseId,
             release.Artifacts.Select(artifact => artifact.ArtifactId),
@@ -594,8 +595,13 @@ public sealed class LicenseBrokerClient : IDisposable
             release.Artifacts.Any(artifact =>
                 !LogicalIdPattern.IsMatch(artifact.ArtifactId) ||
                 string.IsNullOrWhiteSpace(artifact.Name) ||
+                artifact.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                artifact.Name.EndsWith('.') || artifact.Name.EndsWith(' ') ||
+                artifact.Name.EndsWith(".part", StringComparison.OrdinalIgnoreCase) ||
                 artifact.Size <= 0 ||
-                !Sha256Pattern.IsMatch(artifact.Sha256)))
+                !Sha256Pattern.IsMatch(artifact.Sha256)) ||
+            release.Artifacts.Select(artifact => artifact.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != release.Artifacts.Count)
         {
             throw new BrokerClientException("Broker returned an invalid Windows release catalog.");
         }

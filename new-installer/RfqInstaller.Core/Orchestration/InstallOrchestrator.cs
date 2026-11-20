@@ -1,3 +1,4 @@
+using System.Globalization;
 using RfqInstaller.Core.Archive;
 using RfqInstaller.Core.Certificates;
 using RfqInstaller.Core.Config;
@@ -66,17 +67,70 @@ public class InstallOrchestrator
 
         try
         {
+            if (plan.Mode == InstallMode.WindowsService && plan.ServiceAccount == ServiceAccountKind.NetworkService)
+                return new InstallResult(false, WindowsCredentialPrompt.UpdaterAccountRequirement, null);
+
             progress.Report(new InstallStepProgress("Validating license key", 0.0, null));
             var localCheck = LocalLicenseValidator.Validate(plan.LicenseKey);
             if (!localCheck.SignatureValid || localCheck.Expired)
             {
                 return new InstallResult(false, localCheck.Message, null);
             }
+            if (DefaultPaths.InstallFolderProblem(plan.InstallPath) is { } problem)
+                return new InstallResult(false, problem, null);
+
+            if (OperatingSystem.IsWindows() && !ElevationHelper.IsElevated())
+                return new InstallResult(false, "Administrator approval is required to install the PostgreSQL service.", null);
+            if (PasswordReset.Problem(ManagedPassword.Settings, plan.SettingsPassword) is { } settingsProblem)
+                return new InstallResult(false, $"Settings password: {settingsProblem}", null);
+
+            if (plan.Mode == InstallMode.WindowsService && plan.ServiceAccount == ServiceAccountKind.CurrentUser)
+            {
+                var credentials = new WindowsAccountCredentials(ServiceAccountName(plan), plan.ServiceAccountPassword ?? "");
+                if (credentials.Password.Length == 0 || !WindowsCredentialPrompt.TryValidateLogon(credentials, out _))
+                    return new InstallResult(false, "Confirm the Windows service account and its password before installing.", null);
+            }
+
+            using var setupLock = AcquireSetupLock();
+            bool hasDatabase = PostgresProvisioner.IsAlreadyInitialized(plan.InstallPath);
+            if (!plan.AutoGeneratePostgresPasswords)
+            {
+                foreach (var value in hasDatabase ? new[] { plan.CustomRfqUserPassword }
+                    : new[] { plan.CustomSqlSuperUserPassword, plan.CustomRfqUserPassword })
+                {
+                    if (value is null || value.Length < 8)
+                        return new InstallResult(false, "Custom database passwords must be at least 8 characters.", null);
+                    if (PasswordPolicy.StorageProblem(value) is { } storageProblem)
+                        return new InstallResult(false, $"Database password: {storageProblem}", null);
+                }
+            }
+            string superUserPassword;
+            if (hasDatabase)
+            {
+                var existing = StoredCredentialsResolver.ResolveAll(plan.InstallPath)
+                    .FirstOrDefault(c => c.EnvKey == "SQL_SUPER_USER");
+                superUserPassword = existing?.Value
+                    ?? throw new InvalidOperationException(
+                        "Found an existing PostgreSQL data directory, but its superuser password could not be recovered " +
+                        "from Credential Manager or .env. Restore the credential or use the password reset in Repair.");
+            }
+            else if (!plan.AutoGeneratePostgresPasswords &&
+                     !string.IsNullOrWhiteSpace(plan.CustomSqlSuperUserPassword))
+            {
+                superUserPassword = plan.CustomSqlSuperUserPassword;
+            }
+            else
+            {
+                superUserPassword = PasswordGenerator.Generate();
+            }
 
             var release = await brokerClient.ActivateAndGetSignedWindowsReleaseAsync(
                 plan.LicenseKey,
                 plan.UpdateChannel,
                 cancellationToken).ConfigureAwait(false);
+
+            var provisioner = await PrepareDatabaseAsync(brokerClient, plan.InstallPath,
+                hasDatabase ? superUserPassword : null, progress, cancellationToken).ConfigureAwait(false);
 
             var downloadCacheDir = DownloadCacheDir;
             if (plan.CleanReinstall && Directory.Exists(downloadCacheDir))
@@ -90,35 +144,6 @@ public class InstallOrchestrator
             await DownloadAndExtractComponentsAsync(release, downloadCacheDir, plan.InstallPath, progress, cancellationToken)
                 .ConfigureAwait(false);
 
-            progress.Report(new InstallStepProgress("Generating credentials", 0.4, null));
-            // rfq_user's password is safe to regenerate every run — DatabaseSetup always ALTERs it
-            // to match, so Credential Manager/.env and the real role stay in sync either way. The
-            // postgres superuser is different: if a data directory from a prior install already
-            // exists, its password was fixed once during that original initdb and can't be changed
-            // by generating a new one here — reuse the real existing value instead, or the
-            // maintenance connection below will fail to authenticate against the cluster that's
-            // actually there.
-            string superUserPassword;
-            if (PostgresProvisioner.IsAlreadyInitialized(plan.InstallPath))
-            {
-                var existing = StoredCredentialsResolver.ResolveAll(plan.InstallPath)
-                    .FirstOrDefault(c => c.EnvKey == "SQL_SUPER_USER");
-                superUserPassword = existing?.Value
-                    ?? throw new InvalidOperationException(
-                        "Found an existing PostgreSQL data directory, but its superuser password could not be recovered " +
-                        "from Credential Manager or .env. Delete the 'pgdata' folder under the install path to start a " +
-                        "fresh database, or restore the missing credential before reinstalling.");
-            }
-            else if (!plan.AutoGeneratePostgresPasswords &&
-                     !string.IsNullOrWhiteSpace(plan.CustomSqlSuperUserPassword))
-            {
-                superUserPassword = plan.CustomSqlSuperUserPassword;
-            }
-            else
-            {
-                superUserPassword = PasswordGenerator.Generate();
-            }
-
             var appUserPassword = !plan.AutoGeneratePostgresPasswords &&
                                   !string.IsNullOrWhiteSpace(plan.CustomRfqUserPassword)
                 ? plan.CustomRfqUserPassword
@@ -131,19 +156,12 @@ public class InstallOrchestrator
             PersistSuperUserPasswordForRecovery(plan, superUserPassword);
 
             progress.Report(new InstallStepProgress("Setting up database", 0.45, null));
-            var provisioner = new PostgresProvisioner(_downloader);
             var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Setting up database", 0.45, msg)));
-            var postgresBinaries = await ResolvePostgresBinariesAsync(
-                    brokerClient,
-                    plan.InstallPath,
-                    cancellationToken)
-                .ConfigureAwait(false);
             var instance = await provisioner.ProvisionAsync(
                     plan.InstallPath,
                     superUserPassword,
                     pgProgress,
-                    cancellationToken,
-                    postgresBinaries)
+                    cancellationToken)
                 .ConfigureAwait(false);
             await DatabaseSetup.EnsureDatabaseAndUserAsync(instance.Port, superUserPassword, appUserPassword, pgProgress, cancellationToken)
                 .ConfigureAwait(false);
@@ -264,15 +282,26 @@ public class InstallOrchestrator
         try
         {
             progress.Report(new InstallStepProgress("Checking the existing installation", 0.0, null));
+            if (DefaultPaths.InstallFolderProblem(plan.InstallPath) is { } problem)
+                return new InstallResult(false, problem, null);
+            using var setupLock = AcquireSetupLock();
             var readiness = RepairPreflight.Check(plan.InstallPath, plan.RepairDatabase);
             if (!readiness.CanRepair)
             {
                 return new InstallResult(false, string.Join(Environment.NewLine + Environment.NewLine, readiness.Problems), null);
             }
 
+            if (OperatingSystem.IsWindows() && !ElevationHelper.IsElevated())
+                return new InstallResult(false, "Administrator approval is required to repair this installation.", null);
+
             var nssm = new NssmServiceManager(File.Exists(_bundledNssmPath) ? _bundledNssmPath : "nssm.exe");
             if (plan.Mode == InstallMode.WindowsService)
             {
+                var updaterAccount = ExistingInstallDetector.ReadServiceAccount(UpdaterServiceName);
+                if (AccountIdentity.TryResolve(updaterAccount)?.Equals(AccountIdentity.NetworkService) == true)
+                    return new InstallResult(false, WindowsCredentialPrompt.UpdaterAccountRequirement +
+                        " Run Setup and choose Install to change the service account.", null);
+
                 foreach (var serviceName in new[] { AppServiceName, UpdaterServiceName })
                 {
                     if (!await nssm.ExistsAsync(serviceName, cancellationToken).ConfigureAwait(false))
@@ -297,6 +326,11 @@ public class InstallOrchestrator
                 readiness.UpdateChannel,
                 cancellationToken).ConfigureAwait(false);
 
+            var provisioner = readiness.HasBundledDatabase
+                ? await PrepareDatabaseAsync(brokerClient, plan.InstallPath, readiness.SuperUserPassword, progress, cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
+
             // A repair shouldn't reuse whatever an earlier run left in the download cache.
             var downloadCacheDir = DownloadCacheDir;
             if (Directory.Exists(downloadCacheDir))
@@ -313,17 +347,11 @@ public class InstallOrchestrator
             // Installs from the legacy installer use a system-wide Postgres instead of pgdata. Repair
             // leaves that database alone; only the private, installer-owned instance (stopped above
             // so its files could be replaced) is started again.
-            if (readiness.HasBundledDatabase)
+            if (provisioner is not null)
             {
                 progress.Report(new InstallStepProgress("Starting database", 0.45, null));
                 var pgProgress = new Progress<string>(msg => progress.Report(new InstallStepProgress("Starting database", 0.45, msg)));
-                var postgresBinaries = await ResolvePostgresBinariesAsync(brokerClient, plan.InstallPath, cancellationToken)
-                    .ConfigureAwait(false);
-                var instance = await new PostgresProvisioner(_downloader).StartExistingAsync(
-                        plan.InstallPath,
-                        pgProgress,
-                        cancellationToken,
-                        postgresBinaries)
+                var instance = await provisioner.StartExistingAsync(plan.InstallPath, pgProgress, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (plan.RepairDatabase)
@@ -397,6 +425,18 @@ public class InstallOrchestrator
 
     private static string DownloadCacheDir => Path.Combine(Path.GetTempPath(), "RfqInstallerDownloads");
 
+    // All destinations share the same Windows services. Hold the named handle across awaits
+    // without taking thread-affine mutex ownership. Windows closes it if Setup exits.
+    internal static Mutex AcquireSetupLock()
+    {
+        var handle = new Mutex(false, @"Global\Scint.RfqInstaller.Setup", out var created);
+        if (created)
+            return handle;
+
+        handle.Dispose();
+        throw new InvalidOperationException("Another RFQ setup is running. Wait for it to finish, then retry.");
+    }
+
     private void InstallUninstaller(string installPath)
     {
         if (_bundledUninstallerPath is null || !File.Exists(_bundledUninstallerPath))
@@ -428,24 +468,30 @@ public class InstallOrchestrator
             : $"{exception.GetType().Name}: {exception.Message}{Environment.NewLine}{root.GetType().Name}: {root.Message}";
     }
 
-    private async Task<SignedArtifact?> ResolvePostgresBinariesAsync(
-        LicenseBrokerClient brokerClient,
-        string installPath,
-        CancellationToken cancellationToken)
+    private async Task<PostgresProvisioner> PrepareDatabaseAsync(LicenseBrokerClient broker, string installPath,
+        string? existingPassword, IProgress<InstallStepProgress> progress, CancellationToken token)
     {
-        if (File.Exists(Path.Combine(installPath, "pgsql", "bin", "postgres.exe")) ||
-            !string.IsNullOrWhiteSpace(PostgresBinariesConfig.DownloadUrl))
+        var provisioner = new PostgresProvisioner(_downloader);
+        if (!File.Exists(Path.Combine(installPath, "pgsql", "bin", "postgres.exe")))
         {
-            return null;
+            progress.Report(new InstallStepProgress("Preparing the PostgreSQL engine", 0.06, null));
+            SignedArtifact? binaries = null;
+            if (string.IsNullOrWhiteSpace(PostgresBinariesConfig.DownloadUrl))
+            {
+                var signed = await broker.SignRuntimeAssetsAsync([PostgresBinariesConfig.RuntimeAssetId], token).ConfigureAwait(false);
+                binaries = signed.Artifacts.Single();
+            }
+            await provisioner.EnsureBinariesAsync(installPath, null, token, binaries).ConfigureAwait(false);
         }
-
-        var signed = await brokerClient.SignRuntimeAssetsAsync(
-            new[] { PostgresBinariesConfig.RuntimeAssetId },
-            cancellationToken).ConfigureAwait(false);
-        return signed.Artifacts[0];
+        if (existingPassword is not null)
+        {
+            progress.Report(new InstallStepProgress("Checking the existing database password", 0.08, null));
+            await provisioner.VerifyExistingPasswordAsync(installPath, existingPassword, token).ConfigureAwait(false);
+        }
+        return provisioner;
     }
 
-    private async Task DownloadAndExtractComponentsAsync(
+    internal async Task DownloadAndExtractComponentsAsync(
         SignedWindowsRelease release,
         string downloadCacheDir,
         string installPath,
@@ -477,11 +523,12 @@ public class InstallOrchestrator
             }
             var destination = Path.Combine(downloadCacheDir, fileName);
 
+            var artifactIndex = i;
             var dlProgress = new Progress<DownloadProgress>(p =>
             {
                 // Reserve 35-40% for staging/extraction so progress never intentionally moves
                 // backwards after the final download callback.
-                var fraction = 0.1 + 0.25 * (i + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
+                var fraction = 0.1 + 0.25 * (artifactIndex + (p.TotalBytes is > 0 ? (double)p.BytesReceived / p.TotalBytes.Value : 0)) /
                     Math.Max(1, release.Artifacts.Count);
                 progress.Report(new InstallStepProgress("Downloading application components", fraction, fileName));
             });
@@ -497,30 +544,10 @@ public class InstallOrchestrator
             downloaded.Add(destination);
         }
 
-        var multipartArchives = downloaded
-            .Where(path => path.EndsWith(".zip.part1", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        var standaloneArchives = downloaded
-            .Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
         var archivesToExtract = new List<string>();
 
-        foreach (var firstPart in multipartArchives)
+        foreach (var (archivePath, parts) in MultipartArchives(downloaded))
         {
-            var archivePath = firstPart[..^".part1".Length];
-            var partPrefix = Path.GetFileName(archivePath) + ".part";
-            var partNumbers = downloaded
-                .Select(Path.GetFileName)
-                .Where(name => name is not null && name.StartsWith(partPrefix, StringComparison.OrdinalIgnoreCase))
-                .Select(name => int.TryParse(name![partPrefix.Length..], out var number) ? number : 0)
-                .Where(number => number > 0)
-                .Order()
-                .ToArray();
-            if (partNumbers.Length == 0 ||
-                !partNumbers.SequenceEqual(Enumerable.Range(1, partNumbers[^1])))
-            {
-                throw new InvalidDataException($"Archive '{Path.GetFileName(archivePath)}' has missing or malformed parts.");
-            }
             await using (var output = new FileStream(
                              archivePath,
                              FileMode.Create,
@@ -529,9 +556,8 @@ public class InstallOrchestrator
                              1 << 20,
                              useAsync: true))
             {
-                foreach (var partNumber in partNumbers)
+                foreach (var partPath in parts)
                 {
-                    var partPath = $"{archivePath}.part{partNumber}";
                     await using var input = new FileStream(
                         partPath,
                         FileMode.Open,
@@ -547,36 +573,97 @@ public class InstallOrchestrator
                 // Repair deliberately starts with an empty cache. Once the verified
                 // segments have been joined, retaining both copies wastes several GB
                 // while the existing application and new staging tree also occupy disk.
-                foreach (var partNumber in partNumbers)
+                foreach (var partPath in parts)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    File.Delete($"{archivePath}.part{partNumber}");
+                    File.Delete(partPath);
                 }
             }
             archivesToExtract.Add(archivePath);
         }
 
-        archivesToExtract.AddRange(standaloneArchives);
-        var verifiedArchiveContainsUpdater = false;
-        if (archivesToExtract.Count > 0)
+        archivesToExtract.AddRange(downloaded.Where(path => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)));
+        var stagingRoot = CreateStagingRoot(installPath);
+        try
         {
-            verifiedArchiveContainsUpdater = await ExtractArchivesFromStagingAsync(
-                    archivesToExtract,
-                    installPath,
-                    progress,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            StageRelease(archivesToExtract, release.Release.Artifacts, downloaded, stagingRoot, progress, cancellationToken);
+            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
+            progress.Report(new InstallStepProgress("Installing application files", 0.39, null));
+            MoveDirectoryContents(stagingRoot, installPath, cancellationToken);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stagingRoot)!, recursive: true);
+        }
+    }
+
+    // A missing first part must fail even when a different component is a complete ZIP.
+    internal static IEnumerable<(string Archive, string[] Parts)> MultipartArchives(IReadOnlyList<string> downloads)
+    {
+        var groups = downloads
+            .Where(path => Path.GetExtension(path).StartsWith(".part", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(path => Path.ChangeExtension(path, null)!, StringComparer.OrdinalIgnoreCase);
+        foreach (var group in groups.Where(group => group.Key.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (downloads.Contains(group.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"Archive '{Path.GetFileName(group.Key)}' is listed both whole and in parts.");
+            }
+
+            var parts = new string[group.Count()];
+            foreach (var path in group)
+            {
+                var suffix = Path.GetExtension(path)[".part".Length..];
+                if (!int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var number) ||
+                    suffix.StartsWith('0') || number < 1 || number > parts.Length || parts[number - 1] is not null)
+                {
+                    throw new InvalidDataException($"Archive '{Path.GetFileName(group.Key)}' has missing or malformed parts.");
+                }
+                parts[number - 1] = path;
+            }
+            yield return (group.Key, parts);
+        }
+    }
+
+    internal void StageRelease(
+        IReadOnlyList<string> archives, IReadOnlyList<ReleaseArtifact> artifacts, IReadOnlyList<string> downloaded,
+        string stagingRoot, IProgress<InstallStepProgress> progress, CancellationToken cancellationToken)
+    {
+        foreach (var archive in archives)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress.Report(new InstallStepProgress("Extracting application files", 0.36, Path.GetFileName(archive)));
+            ZipExtractor.Extract(archive, stagingRoot, progress: null, cancellationToken);
+        }
+
+        var app = new FileInfo(Path.Combine(stagingRoot, "RFQ_Application.exe"));
+        if (!app.Exists || app.Length == 0)
+        {
+            throw new InvalidDataException("The Windows release is missing the RFQ Application executable or it is empty.");
+        }
+
+        // These files belong to the installation. A packaging error must not replace them on repair.
+        string[] reservedPaths = [
+            ".env", "pgdata", "cert.pem", "key.pem", "user_config.yaml",
+            Path.Combine("backend", "main", "user_config.yaml"), StagingFolderName,
+        ];
+        foreach (var reserved in reservedPaths)
+        {
+            if (Path.Exists(Path.Combine(stagingRoot, reserved)))
+            {
+                throw new InvalidDataException($"The Windows release contains the reserved install path '{reserved}'.");
+            }
         }
 
         var manifest = downloaded.FirstOrDefault(path =>
             string.Equals(Path.GetFileName(path), "manifest.json", StringComparison.OrdinalIgnoreCase));
         if (manifest is not null)
         {
-            File.Copy(manifest, Path.Combine(installPath, "local_manifest.json"), overwrite: true);
+            File.Copy(manifest, Path.Combine(stagingRoot, "local_manifest.json"), overwrite: true);
         }
-
-        File.Copy(_bundledNssmPath, Path.Combine(installPath, "nssm.exe"), overwrite: true);
-        InstallUpdaterFromRelease(release.Release.Artifacts, downloaded, installPath, verifiedArchiveContainsUpdater);
+        File.Copy(_bundledNssmPath, Path.Combine(stagingRoot, "nssm.exe"), overwrite: true);
+        var updater = new FileInfo(Path.Combine(stagingRoot, ReleaseUpdaterArtifact.InstalledFileName));
+        InstallUpdaterFromRelease(artifacts, downloaded, stagingRoot, updater.Exists && updater.Length > 0);
     }
 
     internal static void InstallUpdaterFromRelease(
@@ -611,47 +698,6 @@ public class InstallOrchestrator
             updaterDownload,
             Path.Combine(installPath, ReleaseUpdaterArtifact.InstalledFileName),
             overwrite: true);
-    }
-
-    private async Task<bool> ExtractArchivesFromStagingAsync(
-        IReadOnlyList<string> archivePaths,
-        string installPath,
-        IProgress<InstallStepProgress> progress,
-        CancellationToken cancellationToken)
-    {
-        var stagingRoot = CreateStagingRoot(installPath);
-        try
-        {
-            foreach (var archivePath in archivePaths)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                progress.Report(new InstallStepProgress(
-                    "Extracting application files",
-                    0.36,
-                    Path.GetFileName(archivePath)));
-                ZipExtractor.Extract(archivePath, stagingRoot, progress: null, cancellationToken);
-            }
-
-            // The old installer extracted away from the live installation, stopped processes once,
-            // then transferred the complete staged tree into place. This avoids repeatedly decompressing
-            // an archive while some unrelated live file is locked.
-            await EnsureInstallFilesUnlockedAsync(installPath, progress, cancellationToken).ConfigureAwait(false);
-            progress.Report(new InstallStepProgress(
-                "Installing application files",
-                0.39,
-                null));
-            var archiveContainsUpdater = File.Exists(Path.Combine(stagingRoot, ReleaseUpdaterArtifact.InstalledFileName));
-            MoveDirectoryContents(stagingRoot, installPath, cancellationToken);
-            return archiveContainsUpdater;
-        }
-        finally
-        {
-            var stagingParent = Path.GetDirectoryName(stagingRoot)!;
-            if (Directory.Exists(stagingParent))
-            {
-                Directory.Delete(stagingParent, recursive: true);
-            }
-        }
     }
 
     internal const string StagingFolderName = ".install-staging";
@@ -853,11 +899,12 @@ public class InstallOrchestrator
     /// passwords: they go in .env instead.
     /// </summary>
     internal static bool UsesCredentialManager(InstallPlan plan) =>
-        UsesCredentialManager(plan, AccountIdentity.CurrentSid(), AccountIdentity.TryResolve(ServiceAccountName(plan)));
+        UsesCredentialManager(plan, AccountIdentity.CurrentSid(), plan.Mode == InstallMode.Standalone
+            ? SignedInSid(plan) : AccountIdentity.TryResolve(ServiceAccountName(plan)));
 
     internal static bool UsesCredentialManager(InstallPlan plan, SecurityIdentifier setupAccount, SecurityIdentifier? serviceAccount) =>
         plan.UseCredentialManager &&
-        plan.ServiceAccount == ServiceAccountKind.CurrentUser &&
+        (plan.Mode == InstallMode.Standalone || plan.ServiceAccount == ServiceAccountKind.CurrentUser) &&
         serviceAccount is not null &&
         serviceAccount.Equals(setupAccount);
 

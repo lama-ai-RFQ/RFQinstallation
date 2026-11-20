@@ -294,49 +294,13 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // Elevate as early as each mode actually determines it's needed — never assuming the
-            // current account is already an administrator, and never collecting so much as one
-            // page of data before knowing whether elevation will even succeed:
-            //  - Windows Service always needs it, decided the moment that's chosen, so a decline
-            //    leaves "Run as a standalone application" one click away on the very same page.
-            //  - Standalone only needs it if the install path itself turns out to be privileged
-            //    (e.g. Program Files), which isn't known until InstallLocation is chosen.
-            // Both reuse the same check/relaunch logic; it's a no-op once already elevated.
-            if (_current == WizardStep.Welcome && _state.Repair)
+            // Both modes install the private PostgreSQL service, including standalone in
+            // a user-writable folder. Ask before collecting passwords or activating a device.
+            if ((_current == WizardStep.Welcome && _state.Repair) || _current == WizardStep.InstallMode)
             {
-                // Repair always stops and restarts services (at least the bundled PostgreSQL), so it
-                // always needs admin, whatever the run mode or folder.
-                switch (HandleElevationIfNeeded(WizardStep.ReadyToInstall))
-                {
-                    case ElevationOutcome.RelaunchedElevated:
-                        ForceClose();
-                        return;
-                    case ElevationOutcome.Declined:
-                        return;
-                }
-            }
-            else if (_current == WizardStep.InstallMode && _state.Mode == InstallMode.WindowsService)
-            {
-                switch (HandleElevationIfNeeded(WizardStep.InstallLocation))
-                {
-                    case ElevationOutcome.RelaunchedElevated:
-                        ForceClose();
-                        return;
-                    case ElevationOutcome.Declined:
-                        // Stay on InstallMode — Standalone is right there to switch to, or Next tries again.
-                        return;
-                }
-            }
-            else if (_current == WizardStep.InstallLocation)
-            {
-                switch (HandleElevationIfNeeded(GetNext(_current)))
-                {
-                    case ElevationOutcome.RelaunchedElevated:
-                        ForceClose();
-                        return;
-                    case ElevationOutcome.Declined:
-                        return;
-                }
+                var outcome = HandleElevationIfNeeded(GetNext(_current));
+                if (outcome == ElevationOutcome.RelaunchedElevated) ForceClose();
+                if (outcome != ElevationOutcome.NotNeeded) return;
             }
 
             GoTo(GetNext(_current));
@@ -354,35 +318,16 @@ public partial class MainWindow : Window
         Declined,
     }
 
-    /// <summary>
-    /// Service installs (and standalone installs into a machine-wide folder like Program Files)
-    /// need admin rights. Rather than always demanding elevation at startup like the old Inno
-    /// installer, we only ask for it right before it's actually needed, and only once — but we
-    /// explain why first, in our own dialog, before Windows' own UAC prompt appears, so it never
-    /// just pops up out of nowhere. Never assumes the current account is already an administrator:
-    /// whether Windows' own approval step ends up being a one-click consent or a full credential
-    /// prompt depends on the account and the machine's policy, neither of which we assume here.
-    /// </summary>
     private ElevationOutcome HandleElevationIfNeeded(WizardStep resumeStep)
     {
-        if (ElevationHelper.IsElevated() || (!_state.Repair && !ElevationHelper.RequiresElevation(
-                _state.Mode == InstallMode.WindowsService ? Core.Models.InstallMode.WindowsService : Core.Models.InstallMode.Standalone,
-                _state.InstallPath)))
-        {
-            return ElevationOutcome.NotNeeded;
-        }
+        if (ElevationHelper.IsElevated()) return ElevationOutcome.NotNeeded;
 
-        // This is about the *installer process* being allowed to register a Windows service and
-        // write to a system folder — a Windows OS restriction that applies no matter which account
-        // the service will run as. It's unrelated to the Current User password step later (if
-        // applicable): that step never needs an administrator account, just some account's
-        // password, and only happens after this one, on a separate page.
         if (!AppDialog.Confirm(
             this,
             "Administrator approval needed",
             _state.Repair
                 ? "Repairing RFQ Application stops and restarts its services and replaces files in its install folder, which requires administrator approval. Windows will ask you to approve this now."
-                : "Registering a Windows service (or installing into a system folder) requires administrator approval for this installer, regardless of which account the service will run as. Windows will ask you to approve this now.",
+                : "Both installation modes register a Windows service for PostgreSQL. Windows will ask for administrator approval now.",
             confirmText: "Continue",
             dismissText: "Cancel"))
         {
@@ -407,16 +352,12 @@ public partial class MainWindow : Window
         var process = ElevationHelper.RelaunchElevated(new[] { ElevationHandoff.ResumeArgument, handoffPath });
         if (process is null)
         {
-            // Declined (or failed) the actual UAC prompt — stay put. If Windows Service is still
-            // selected, Next tries again; Standalone is available on the same page as an
-            // immediate alternative that needs no approval at all (unless its install path is
-            // itself privileged).
             TryDeleteQuietly(handoffPath);
             TryDeleteQuietly(readyPath);
             AppDialog.Inform(this, "Administrator approval required",
                 _state.Repair
                     ? "Administrator approval wasn't given, so RFQ Application can't be repaired right now. Click Get Started to try again."
-                    : "Administrator approval wasn't given, so this can't continue as a Windows service (or into that folder) right now. Click Next to try again, or choose \"Run as a standalone application\" instead.");
+                    : "Administrator approval is required to install the database service. Click Next to try again.");
             return ElevationOutcome.Declined;
         }
 

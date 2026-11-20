@@ -21,9 +21,18 @@ public static class ReleaseUpdaterArtifact
         ArgumentNullException.ThrowIfNull(artifacts);
         var candidates = artifacts.ToList();
 
+        var explicitUpdater = candidates.FirstOrDefault(artifact =>
+            string.Equals(artifact.ArtifactId, "updater", StringComparison.OrdinalIgnoreCase));
+        if (explicitUpdater is not null)
+        {
+            if (!FileName(explicitUpdater.Name).EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The Windows release lists an updater that is not an executable.");
+            return explicitUpdater;
+        }
+
         foreach (var artifact in candidates)
         {
-            if (IsPreferred(artifact))
+            if (PreferredName.IsMatch(FileName(artifact.Name)))
             {
                 return artifact;
             }
@@ -46,16 +55,6 @@ public static class ReleaseUpdaterArtifact
     {
         ArgumentNullException.ThrowIfNull(artifact);
         return FileName(artifact.Name);
-    }
-
-    private static bool IsPreferred(ReleaseArtifact artifact)
-    {
-        if (string.Equals(artifact.ArtifactId, "updater", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return PreferredName.IsMatch(FileName(artifact.Name));
     }
 
     private static string FileName(string? name)

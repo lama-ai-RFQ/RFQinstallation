@@ -106,20 +106,8 @@ public sealed class PasswordReset
             return "Enter a new password.";
         }
 
-        // .env is also read by python-dotenv, which strips quotes/comments and expands ${...}.
-        // The updater strips boundary quotes too; embedded quotes are literal in both readers.
-        // Keep values literal for every existing reader rather than changing the file format.
-        if (password.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)) ||
-            password[0] is '\'' or '"' || password[^1] is '\'' or '"' ||
-            password.Contains("${", StringComparison.Ordinal))
-        {
-            return "Use a password without whitespace, control characters, ${ sequences, or quotes at the start or end.";
-        }
-
-        if (password == CredentialManagerWriter.Sentinel)
-        {
-            return "Choose a password other than the reserved Credential Manager marker.";
-        }
+        if (PasswordPolicy.StorageProblem(password) is { } problem)
+            return problem;
 
         if (which == ManagedPassword.Settings)
         {
@@ -238,6 +226,7 @@ public sealed class PasswordReset
             Username = "postgres",
             Database = "postgres",
             Timeout = 15,
+            Pooling = false,
         };
         if (password is not null)
         {

@@ -17,8 +17,8 @@ public record ExistingInstallation(
 /// Finds an existing install so the wizard can offer Repair. An install folder is any candidate
 /// folder holding an .env file. Candidates are checked in order: the RFQapplication service's NSSM
 /// AppDirectory, the folder the RFQPostgreSQL service runs from, the Add/Remove Programs entry, and
-/// the wizard's default path. That way an install on another drive (e.g. D:\Program Files) is
-/// still found, even though the current installer never writes the uninstall entry. Read-only.
+/// the wizard's default path. This also finds older installations on another drive that have
+/// no uninstall registration. Detection is read-only.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class ExistingInstallDetector
@@ -29,10 +29,13 @@ public static class ExistingInstallDetector
     private const string AppServiceName = "RFQapplication";
     private const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\RFQApplication";
 
+    internal static string? ReadServiceAccount(string serviceName) =>
+        ReadLocalMachineValue(ServicesKey + serviceName, "ObjectName");
+
     public static ExistingInstallation? Detect()
     {
         var appServiceDirectory = ReadLocalMachineValue(ServicesKey + AppServiceName + @"\Parameters", "AppDirectory");
-        var serviceAccount = ReadLocalMachineValue(ServicesKey + AppServiceName, "ObjectName");
+        var serviceAccount = ReadServiceAccount(AppServiceName);
         var postgresImagePath = ReadLocalMachineValue(ServicesKey + PostgresProvisioner.ServiceName, "ImagePath");
         var uninstallLocation = ReadLocalMachineValue(UninstallKey, "InstallLocation");
 
