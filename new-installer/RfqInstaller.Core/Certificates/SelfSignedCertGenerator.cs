@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -67,8 +68,23 @@ public static class SelfSignedCertGenerator
         var names = new List<string> { "localhost" };
         void Add(string? name)
         {
-            if (!string.IsNullOrWhiteSpace(name) && Uri.CheckHostName(name) == UriHostNameType.Dns
-                && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(name) || Uri.CheckHostName(name) != UriHostNameType.Dns)
+            {
+                return;
+            }
+
+            try
+            {
+                // Windows/Uri can accept names such as "PSD-" that the certificate
+                // builder's IDN conversion rejects. Keep localhost usable on those PCs.
+                name = new IdnMapping().GetAscii(name);
+            }
+            catch (ArgumentException)
+            {
+                return;
+            }
+
+            if (!names.Contains(name, StringComparer.OrdinalIgnoreCase))
             {
                 names.Add(name.ToLowerInvariant());
             }
